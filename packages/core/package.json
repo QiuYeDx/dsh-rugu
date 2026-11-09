@@ -1,0 +1,54 @@
+{
+  "name": "rugu-core",
+  "version": "0.1.0-beta.0",
+  "description": "如故的记忆核心：一个人设只有一段人生——感知入库、认人认物、情节与事实、激活与遗忘、五路回想、分寸判断。不认识任何宿主和入口。",
+  "keywords": [
+    "memory",
+    "persona",
+    "agent-memory",
+    "rugu"
+  ],
+  "license": "MIT",
+  "author": "QiuYeDx",
+  "homepage": "https://github.com/QiuYeDx/dsh-rugu#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QiuYeDx/dsh-rugu.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/QiuYeDx/dsh-rugu/issues"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./contract": "./src/contract/index.js",
+    "./testing": "./test/fakes/index.js",
+    "./testing/fake-platform": "./test/fixtures/fake-platform.js",
+    "./package.json": "./package.json",
+    "./testing/memory-eval": "./test/eval/memory-eval.js"
+  },
+  "files": [
+    "src",
+    "test/fakes",
+    "test/fixtures",
+    "test/eval",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.16"
+  },
+  "peerDependencies": {
+    "@node-rs/jieba": "*"
+  },
+  "peerDependenciesMeta": {
+    "@node-rs/jieba": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node ../../scripts/run-tests.mjs core"
+  }
+}

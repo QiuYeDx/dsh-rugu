@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>banner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 400px; background: transparent; }
+  body { font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+  .banner { position: relative; width: 1280px; height: 400px; border-radius: 28px; overflow: hidden; color: #F7EFDC;
+    background: radial-gradient(900px 500px at 78% 12%, #363A8E 0%, rgba(54,58,142,0) 62%), linear-gradient(120deg, #181A48 0%, #1E2158 48%, #12133A 100%); }
+  .stars { position: absolute; inset: 0; background-image: radial-gradient(rgba(255,244,214,.55) 1px, transparent 1.4px), radial-gradient(rgba(255,244,214,.3) 1px, transparent 1.4px);
+    background-size: 150px 130px, 97px 83px; background-position: 20px 16px, 68px 48px; mask-image: linear-gradient(180deg, #000 0%, transparent 62%); }
+  .scene { position: absolute; right: 0; top: 0; width: 640px; height: 400px; }
+  .left { position: absolute; left: 76px; top: 0; bottom: 0; display: flex; align-items: center; gap: 32px; }
+  .icon { width: 132px; height: 132px; filter: drop-shadow(0 14px 30px rgba(0,0,0,.42)); flex: none; }
+  .icon svg { width: 100%; height: 100%; display: block; }
+  .text { display: flex; flex-direction: column; gap: 10px; }
+  .title { font-size: 68px; font-weight: 800; letter-spacing: 8px; line-height: 1.05; color: #FFF4D6; }
+  .pkg { font: 600 21px/1 "Cascadia Code", "JetBrains Mono", Consolas, monospace; color: #B9BBE3; letter-spacing: .5px; }
+  .tagline { margin-top: 8px; font-size: 24px; font-weight: 500; color: #F2E9D4; }
+  .sub { font-size: 18px; color: #B9BBE3; }
+</style>
+</head>
+<body>
+<div class="banner">
+  <div class="stars"></div>
+  <svg class="scene" viewBox="0 0 640 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#F5C97B" stop-opacity=".42"/><stop offset="1" stop-color="#F5C97B" stop-opacity="0"/></radialGradient>
+      <radialGradient id="moon" cx=".42" cy=".36" r=".72"><stop offset="0" stop-color="#FFF7E2"/><stop offset="1" stop-color="#F3C577"/></radialGradient>
+      <linearGradient id="fade" x1="0" x2="1"><stop offset=".38" stop-color="#F5C97B" stop-opacity="0"/><stop offset=".62" stop-color="#F5C97B"/><stop offset=".9" stop-color="#F5C97B"/><stop offset="1" stop-color="#F5C97B" stop-opacity="0"/></linearGradient>
+    </defs>
+    <circle cx="372" cy="126" r="172" fill="url(#glow)"/>
+    <circle cx="372" cy="126" r="66" fill="url(#moon)"/>
+    <g stroke="url(#fade)" stroke-linecap="round">
+      <path stroke-width="6" d="M80 298c48-30 96-30 146 0s98 30 146 0 98-30 146 0 96 30 122 12"/>
+      <path stroke-width="5" opacity=".66" d="M40 340c48-26 96-26 146 0s98 26 146 0 98-26 146 0 96 26 162 8"/>
+      <path stroke-width="4" opacity=".4" d="M0 378c48-22 96-22 146 0s98 22 146 0 98-22 146 0 96 22 202 6"/>
+    </g>
+  </svg>
+  <div class="left">
+    <div class="icon"><!-- ICON --></div>
+    <div class="text">
+      <div class="title">如故</div>
+      <div class="pkg">dsh-rugu · DeepSeek Harness 插件</div>
+      <div class="tagline">让 Agent 像一个真实存在的人：有独立的记忆，只有一段人生</div>
+      <div class="sub">QQ 群、私聊、DSH 桌面，她都是同一个她，记得自己经历过什么</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

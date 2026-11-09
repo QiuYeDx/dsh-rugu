@@ -1,0 +1,12 @@
+{
+  "name": "dsh-rugu",
+  "description": "如故：让 Agent 像一个真实存在的人——有独立的记忆，只有一段人生（含设置页「记忆」）",
+  "version": "0.1.0-beta.0",
+  "entry": {
+    "name": "dsh-rugu",
+    "inject": [
+      "tools",
+      "connection"
+    ]
+  }
+}

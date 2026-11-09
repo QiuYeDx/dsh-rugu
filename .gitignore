@@ -1,0 +1,13 @@
+node_modules/
+.tmp/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.db.*
+*.sqlite
+*.gguf
+*.key
+*.pmpack
+.env
+*.log

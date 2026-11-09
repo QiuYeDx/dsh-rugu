@@ -1,0 +1,4 @@
+# DSH bundle 补丁：往 profile 里插一行全局插件（§10.1）。配置不写在这里，写在 ~/.dsh/persona-memory.json（§12.1）。
+- insert:
+    - id: persona-memory
+      name: dsh-rugu

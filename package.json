@@ -1,0 +1,16 @@
+{
+  "name": "dsh-rugu-monorepo",
+  "private": true,
+  "description": "如故：通用的人设记忆核心（rugu-core）和它的 DSH 插件（dsh-rugu）",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.16"
+  },
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "check": "node scripts/check-boundaries.mjs"
+  }
+}

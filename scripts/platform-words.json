@@ -1,0 +1,4 @@
+{
+  "说明": "核心里不该出现的平台词（scripts/check-boundaries.mjs 的字面量提示，整词匹配，命中只是提示）。已注册适配器的 id 会从 packages/dsh/src/adapters/*.js 的 ADAPTER_ID 自动加进来，这里只放外部适配器和平台特有的词。",
+  "words": ["bili", "bilibili", "bvid", "onebot", "snowluma", "napcat", "mcp__", "wechat", "weixin", "discord", "telegram"]
+}
