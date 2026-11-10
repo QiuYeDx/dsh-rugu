@@ -11,3 +11,6 @@ node_modules/
 *.pmpack
 .env
 *.log
+
+# 本机的 Agent 约定（私有路径、笔记位置），不进仓库
+CLAUDE.local.md

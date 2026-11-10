@@ -11,6 +11,8 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "check": "node scripts/check-boundaries.mjs"
+    "check": "node scripts/check-boundaries.mjs",
+    "readme": "node scripts/sync-readme.mjs",
+    "check:private": "node scripts/check-private-words.mjs"
   }
 }
