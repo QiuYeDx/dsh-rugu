@@ -66,6 +66,69 @@ test('日记：汇总今天的「今天到目前为止」写一条 diary 情节�
   } finally { await w.cleanup(); }
 });
 
+/** 模型：「要写日记的日子」里每一天各写一篇。 */
+const diaryLLM = () => new FakeLLM({ fallback: { sleep: reply((req, text) => [...text.matchAll(/【(d\d+)】/g)].map((m) => ({ type: 'diary', day: m[1], text: `那天的日记 ${m[1]}` }))) } });
+
+test('D138 日记缺的那一天第二晚补上：前一晚到了上限没写，第二晚两天各写一篇；补完就不再缺', async () => {
+  const llm = diaryLLM();
+  const w = await world({ llm });
+  try {
+    const { core } = w;
+    const G = w.setting();
+    const a = w.entity({ name: '阿明' });
+    w.episode(G, [[a, '显卡涨价了', T0], ['self', '等等再买', T0 + MIN]], { kind: 'summary', narrative: '和大家聊显卡涨价' });
+    const night1 = T0 + 10.5 * HOUR;
+    let r = await selfStep(core, { run: { calls: 12, max: 12 }, at: night1 });
+    assert.equal(r.skipped, 'llm-cap');
+    assert.equal(r.diaryPending, 1, '没写成的那天记着');
+    w.episode(G, [[a, '今天去哪', T0 + DAY], ['self', '在家', T0 + DAY + MIN]], { kind: 'summary', narrative: '第二天在家' });
+    r = await selfStep(core, { run: newRun(12), at: night1 + DAY });
+    assert.equal(r.diaries, 2);
+    assert.equal(r.diaryPending, 0);
+    assert.equal(llm.calls.length, 1, '两天在同一次调用里');
+    const ds = w.rec.writeEpisode.filter((x) => x.ep.kind === 'diary').map((x) => x.ep).sort((x, y) => x.tStart - y.tStart);
+    assert.deepEqual(ds.map((d) => [d.tStart, d.tEnd]), [[T0, T0 + MIN], [T0 + DAY, T0 + DAY + MIN]]);
+    // 第三晚：都补上了，只看新的
+    r = await selfStep(core, { run: newRun(12), at: night1 + 2 * DAY });
+    assert.equal(r.diaries, 0);
+    assert.equal(r.skipped, 'nothing-to-do');
+  } finally { await w.cleanup(); }
+});
+
+test('D138 日记一晚最多补 diary.maxDaysPerNight 天（最近的先写），更早的下一晚接着补', async () => {
+  const llm = diaryLLM();
+  const w = await world({ llm, config: { sleep: { diary: { maxDaysPerNight: 2 } } } });
+  try {
+    const { core } = w;
+    const G = w.setting();
+    const a = w.entity({ name: '阿明' });
+    for (let d = 0; d < 3; d++) w.episode(G, [[a, `第${d}天`, T0 + d * DAY], ['self', '嗯', T0 + d * DAY + MIN]], { kind: 'summary', narrative: `第${d}天的事` });
+    const at = T0 + 2 * DAY + 10.5 * HOUR;
+    let r = await selfStep(core, { run: newRun(12), at });
+    assert.deepEqual({ diaries: r.diaries, pending: r.diaryPending }, { diaries: 2, pending: 1 });
+    const starts = () => w.rec.writeEpisode.filter((x) => x.ep.kind === 'diary').map((x) => x.ep.tStart).sort((x, y) => x - y);
+    assert.deepEqual(starts(), [T0 + DAY, T0 + 2 * DAY], '最近的两天先写');
+    r = await selfStep(core, { run: newRun(12), at: at + DAY });
+    assert.deepEqual({ diaries: r.diaries, pending: r.diaryPending }, { diaries: 1, pending: 0 });
+    assert.deepEqual(starts(), [T0, T0 + DAY, T0 + 2 * DAY]);
+  } finally { await w.cleanup(); }
+});
+
+test('D138 日记只补最近 diary.backfillDays 天里缺的：更早的日子不回头重写', async () => {
+  const llm = diaryLLM();
+  const w = await world({ llm, config: { sleep: { diary: { backfillDays: 2 } } } });
+  try {
+    const { core } = w;
+    const G = w.setting();
+    const a = w.entity({ name: '阿明' });
+    for (let d = 0; d < 4; d++) w.episode(G, [[a, `第${d}天`, T0 + d * DAY], ['self', '嗯', T0 + d * DAY + MIN]], { kind: 'summary', narrative: `第${d}天的事` });
+    const r = await selfStep(core, { run: newRun(12), at: T0 + 3 * DAY + 10.5 * HOUR });
+    assert.deepEqual({ diaries: r.diaries, pending: r.diaryPending }, { diaries: 2, pending: 0 });
+    const starts = w.rec.writeEpisode.filter((x) => x.ep.kind === 'diary').map((x) => x.ep.tStart).sort((x, y) => x - y);
+    assert.deepEqual(starts, [T0 + 2 * DAY, T0 + 3 * DAY], '只写最近两天，更早的两天不补');
+  } finally { await w.cleanup(); }
+});
+
 test('§12.7 日记：汇总了被隐藏的小结的日记一写出来就跟着对别人隐藏（小结 → 日记）；被「忘掉」的小结不写进日记', async () => {
   const llm = new FakeLLM({ fallback: { sleep: reply((req, text) => {
     assert.ok(!text.includes('那件要忘掉的事'), '忘掉的小结不进提示词');

@@ -1,7 +1,10 @@
 // 夜间整理（§7.7 的 10 步；D124 起加第 11 步「回顾做事的经验」，放在最后）。每天 04:30（本地时间，sleep.at）之后跑一次；距上次超过 catchUpH 小时就补跑。
 //   - 开始前先让 backup 做日包（backup.runScheduled，第 0 步）；每一步自己 try/catch，失败只跳过这一步，记进报告。
-//   - LLM 调用一晚 ≤ sleep.maxLlmCalls（第 1 步的复核也算在内，调用之前先占额度；提炼批次是 use='extract'，不算），
-//     超了的步顺延到下一晚：它们的水位线、上次时间都没推进，下一晚自然接着做。预算不允许的那一步整步跳过（§10.6）。
+//   - LLM 调用（D138）：每一步一晚最多调几次登记在 stepCalls 里（以各步自己的参数为准）；总上限 sleep.maxLlmCalls 默认 null =
+//     各步之和，写成数字就按它封顶。「她自己」（日记、成长）和经验回顾的名额先留出来（RESERVED），前面的步骤用不到——以前
+//     前面各步的上限加起来正好等于总上限，越活跃的晚上越轮不到日记。第 1 步的复核也算在内，调用之前先占额度；提炼批次是
+//     use='extract'，不算。到了上限的步顺延到下一晚：它们的水位线、上次时间都没推进，下一晚自然接着做；哪一步因为上限少做了
+//     记在报告的 capped 里，也有计数（consolidate.sleep.llmCap.<步名>）。预算不允许的那一步整步跳过（§10.6）。
 //   - 「节省」预设（sleepDepth='essential'）只做必要项：封口和复核、重放、印象、时间维护、故事线、向量和运维；
 //     泛化、反思、社区、日记和自我概念留到宽松的时候。
 //   - 第 1 步把原文窗口（intake.flushWindows force）和切分缓冲（encode.segment force）都封口。
@@ -107,6 +110,63 @@ async function runExtractJobs(core, p, signal) {
 
 /** encode.reviewFlagged 的契约：一批复核用一次 LLM（use='sleep'）。 */
 const REVIEW_CALLS = 1;
+
+/**
+ * 每一步一晚最多调几次模型（D138）。以各步自己的参数和写法为准：
+ * 复核 1；纠错 correct.maxCalls；泛化 generalize.maxCalls；反思 2（先问问题、再写洞见）；印象 2（公开的一层、私下的一层）；
+ * 回头问问 1；故事线 1 + 社区 1；她自己 1（日记和自我概念一次调用）；经验回顾 lessons.maxCalls。
+ * 节省档（essential）不做的部分记 0。新加要调模型的步，先在这里登记，否则它一次也调不到（编排按这张表给每一步封顶）。
+ * @returns {Map<number, number>}
+ */
+export function stepCalls(p) {
+  const full = (n) => (p.depth === 'essential' ? 0 : Math.max(0, Number(n) || 0));
+  return new Map([
+    [1, REVIEW_CALLS],
+    [2, Math.max(0, Number(p.correct?.maxCalls) || 0)],
+    [3, full(p.generalize.maxCalls)],
+    [4, full(2)],
+    [5, 2],
+    [6, full(1)],
+    [7, 1 + full(1)],
+    [8, full(1)],
+    [11, full(p.lessons.maxCalls)],
+  ]);
+}
+/** 前面的步骤无论怎么用都要轮得到的步：她自己（日记、心境、成长块）、经验回顾。名额按这个顺序先留出来。 */
+const RESERVED = [8, 11];
+
+/**
+ * 一晚的调用计划：total = 总上限（sleep.maxLlmCalls，null = 各步之和）；reserve = 给 RESERVED 留的名额
+ * （总上限比它们的和还小时，排在前面的先拿）。
+ * @returns {{total: number, sum: number, steps: Map<number, number>, reserve: Map<number, number>}}
+ */
+export function sleepCallPlan(p) {
+  const steps = stepCalls(p);
+  const sum = [...steps.values()].reduce((a, n) => a + n, 0);
+  const total = Number.isFinite(p.maxLlmCalls) ? Math.max(0, Math.floor(p.maxLlmCalls)) : sum;
+  const reserve = new Map();
+  let left = total;
+  for (const n of RESERVED) {
+    const k = Math.min(steps.get(n) ?? 0, left);
+    reserve.set(n, k);
+    left -= k;
+  }
+  return { total, sum, steps, reserve };
+}
+
+/** 第 n 步这次能用到第几次（run.max）：不超过它自己登记的次数，也不动后面保留的名额。 */
+function stepLimit(plan, n, calls) {
+  let later = 0;
+  for (const [m, k] of plan.reserve) if (m > n) later += k;
+  return Math.max(calls, Math.min(calls + (plan.steps.get(n) ?? 0), plan.total - later));
+}
+
+/** 一步的结果里有没有「到上限了」（整步跳过，或者里面某一段，比如复核、纠错、回头问问、社区）。 */
+function hitCap(v, depth = 0) {
+  if (v === 'llm-cap') return true;
+  if (!v || typeof v !== 'object' || depth > 3) return false;
+  return Object.values(v).some((x) => hitCap(x, depth + 1));
+}
 
 async function stepSeal(core, ctx) {
   const { p, at, signal, run } = ctx;
@@ -319,17 +379,28 @@ const short = (d) => {
 
 async function runSleep(core, at, signal) {
   const p = params(core);
-  const run = newRun(p.maxLlmCalls);
-  const report = { startedAt: at, finishedAt: at, steps: [], llmCalls: 0 };
+  const plan = sleepCallPlan(p);
+  const run = newRun(plan.total);
+  const report = { startedAt: at, finishedAt: at, steps: [], llmCalls: 0, llmMax: plan.total, capped: [] };
   setMeta(core.store, 'sleep.attemptAt', at);
-  info(core, 'sleep.start', { maxLlmCalls: run.max, depth: p.depth });
+  info(core, 'sleep.start', { maxLlmCalls: plan.total, depth: p.depth });
   const ctx = { p, at, signal, run };
+  const push = (entry) => {
+    if (hitCap(entry.skipped) || hitCap(entry.detail)) {
+      // 因为上限少做了（整步或其中一段）：报告里看得到，计数按步累计
+      entry.capped = true;
+      report.capped.push(entry.name);
+      metric(core, `sleep.llmCap.${entry.name}`);
+    }
+    report.steps.push(entry);
+  };
   const step = async (n, name, fn, { llm = false } = {}) => {
     const before = run.calls;
+    run.max = stepLimit(plan, n, run.calls);   // 这一步的额度：各步自己的次数，后面保留的名额不动
     const entry = { step: n, name, ok: true, llmCalls: 0 };
-    if (signal?.aborted) { entry.ok = false; entry.skipped = 'aborted'; report.steps.push(entry); return; }
-    if (p.depth === 'essential' && !ESSENTIAL.has(n)) { entry.skipped = 'saving-preset'; report.steps.push(entry); return; }
-    if (llm && run.calls >= run.max) { entry.skipped = 'llm-cap'; report.steps.push(entry); return; }
+    if (signal?.aborted) { entry.ok = false; entry.skipped = 'aborted'; push(entry); return; }
+    if (p.depth === 'essential' && !ESSENTIAL.has(n)) { entry.skipped = 'saving-preset'; push(entry); return; }
+    if (llm && run.calls >= run.max) { entry.skipped = 'llm-cap'; push(entry); return; }
     try {
       const r = (await fn()) ?? {};
       if (r.skipped) entry.skipped = r.skipped;
@@ -342,7 +413,7 @@ async function runSleep(core, at, signal) {
       warn(core, 'sleep.step', { step: n, error: errCode(e) });
     }
     entry.llmCalls = run.calls - before;
-    report.steps.push(entry);
+    push(entry);
   };
   const wrap = (r) => {
     // 各步的结果：skipped 单独拿出来，其余当 detail
@@ -403,6 +474,7 @@ async function runSleep(core, at, signal) {
 
   // 印象、日记、成长、故事线都可能变了：所有场合的常驻区标脏（§10.4，只标脏，不换文本）。中止的那次前面几步也可能写过
   residentDirty(core);
+  run.max = plan.total;
   report.finishedAt = Math.max(at, core.now());
   report.llmCalls = run.calls;
   if (!signal?.aborted) {

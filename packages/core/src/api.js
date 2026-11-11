@@ -13,7 +13,7 @@ import {
 } from './contract/index.js';
 import {
   openStore, openVectorStore, dataFiles, mainDbIdOf, loadOrCreateKey, makeKeyring, bumpMetric, checkSchema,
-  MIGRATIONS, SCHEMA_VERSION, schemaVersionOf,
+  MIGRATIONS, SCHEMA_VERSION, schemaVersionOf, getMetaJson,
 } from './store/index.js';
 import { normalizePorts } from './ports/index.js';
 import { toConfigHandle } from './config/defaults.js';
@@ -55,6 +55,30 @@ const RESTORING_LAYERS = Object.freeze({ items: Object.freeze([]), degradeLevel:
  * @property {boolean} [readOnly]              以只读方式打开（工具、诊断用）
  * @property {boolean} [startWorker]           起 worker 线程（默认 true；测试里可以关）
  */
+
+/**
+ * 上一次夜间整理的摘要（D138，给管理页的诊断）：只有数字和步名。读的是 consolidate 存下的报告（meta 'sleep.lastReport'）。
+ * capped：因为模型调用上限少做了的步；generalize：问了几组、归纳出几条、问过没变跳过几组、留到下一晚的；diary：写了几天、还缺几天。
+ * @param {any} store
+ */
+function lastSleepOf(store) {
+  let r = null;
+  try { r = getMetaJson(store, 'sleep.lastReport'); } catch { return null; }
+  if (!r || typeof r !== 'object') return null;
+  const steps = Array.isArray(r.steps) ? r.steps : [];
+  const detail = (name) => steps.find((x) => x?.name === name)?.detail ?? null;
+  const num = (v) => (Number.isFinite(v) ? v : null);
+  const g = detail('generalize');
+  const me = detail('self');
+  return {
+    at: num(r.startedAt),
+    llmCalls: num(r.llmCalls),
+    llmMax: num(r.llmMax),
+    capped: Array.isArray(r.capped) ? r.capped.filter((x) => typeof x === 'string').slice(0, 12) : [],
+    generalize: g && { asked: num(g.asked), written: num(g.written), skippedAsked: num(g.skippedAsked), left: num(g.left) },
+    diary: me && { written: num(me.diaries), pending: num(me.diaryPending) },
+  };
+}
 
 /**
  * 打开记忆核心。失败只在两种情况下抛错：数据目录或密钥不可用、迁移前的备份做不了（这时不迁移，宁可不启动）。
@@ -206,6 +230,7 @@ function buildApi(core, { startup, files }) {
         adapters: [...core.adapters.keys()],
         startup: { ...startup },
         files: { main: path.basename(files.main), vectors: path.basename(files.vectors) },
+        sleep: store && !store.closed ? lastSleepOf(store) : null,
       };
     },
 

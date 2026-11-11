@@ -94,6 +94,8 @@ test('诊断：自检统一成 {status, area}；结果缓存一分钟，「重�
   assert.deepEqual(d.host.claims.byAdapter, { QQ: 3, 'DSH 网页': 1 }, '入口用管理页上的名字，不是原始 id（D111）');
   assert.equal(d.host.embedPort.version, '0.12.5');
   assert.equal(d.host.unclassifiedTools[0].tool, 'mcp__some_server__post_message');
+  assert.deepEqual(d.store.sleep.capped, ['generalize'], '夜间整理：到上限少做了的步（D138）');
+  assert.equal(d.store.sleep.generalize.skippedAsked, 4);
   assert.equal(s.hostCallsOf('selfCheck').length, 1);
   await s.view('diagnostics');
   assert.equal(s.hostCallsOf('selfCheck').length, 1, '一分钟内用缓存');

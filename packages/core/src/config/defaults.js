@@ -494,7 +494,10 @@ export const DEFAULTS = deepFreeze({
     at: '04:30',                         // 本地时间（time.tzOffsetMin）
     catchUpH: 24,                        // 距上次超过 24 小时，启动时补跑
     retryMin: 60,                        // 上次开始了没跑完（进程崩了）：至少隔这么久才重跑
-    maxLlmCalls: 12,
+    // 一晚的 LLM 调用总上限（D138）。null = 各步上限之和（sleep.js 的 stepCalls：复核 1 + 纠错 correct.maxCalls + 泛化 generalize.maxCalls
+    // + 反思 2 + 印象 2 + 回头问问 1 + 故事线和社区 2 + 她自己 1 + 经验回顾 lessons.maxCalls；完整做 14 次，节省档只做必要项 6 次）。
+    // 写成数字就按它封顶；不管多少，「她自己」和经验回顾的名额先留出来，前面的步骤用不到
+    maxLlmCalls: null,
     planGraceH: 6,                       // 计划的时间点过了多久没下文才标 unknown（§5.5 第 5 条、第 6 步）
     extract: { maxJobs: 100, maxMs: 10 * MIN, retryFailedDays: 7, retryMax: 3, reviewLimit: 40 },   // 第 1 步：顺手跑的提炼、补跑失败批次、复核
     replay: { maxItems: 50, hotEntities: 20, hotWindowDays: 7, recurrenceSoonDays: 14 },   // 第 2 步：分诊和重放
@@ -515,6 +518,7 @@ export const DEFAULTS = deepFreeze({
     generalize: {                        // 第 3 步：≥ 3 段、跨 ≥ 2 天
       minEpisodes: 3, minDays: 2,
       windowDays: 60,
+      maxEpisodes: 400,                  // 情节聚类一次最多看多少段：窗口里最近的这些（D138）
       minCos: 0.78, minJaccard: 0.3,     // 情节聚类：向量余弦；没有向量时用词元 Jaccard
       groupsPerCall: 6, maxCalls: 2, itemsPerGroup: 8,   // 1–3 次调用
       confidenceCap: 0.7,
@@ -547,7 +551,10 @@ export const DEFAULTS = deepFreeze({
       maxChangesPerNight: 1,             // 每次只改一点（§5.7）
       sameChangeSim: 0.5,                // 换个说法的同一变化也绕不过撤销
     },
-    diary: { maxChars: 300, minGapH: 12 },   // 两篇日记至少隔这么久（同一晚补跑不重写）
+    // minGapH：两晚的日记至少隔这么久（同一晚补跑不重写）；maxDaysPerNight：一晚最多写几天的日记（D138：前几晚没写成的那几天
+    // 一起补，最近的先写；缺得更多的下一晚接着补。不是记忆的时间窗，只是一次补多少）；backfillDays：只补最近这么多天里缺的
+    // （更早的、升级以前就没写的日子不回头重写：补日记是为了不因为一两晚没跑成就缺掉，不是重写历史）
+    diary: { maxChars: 300, minGapH: 12, maxDaysPerNight: 3, backfillDays: 7 },
     // 第 9、10 步：embedBatches 是每一轮的批数上限（一轮接一轮，直到活动空间的队列清空，§7.6 白天推迟的夜里做完）；
     // retierRounds 是重排层级跑完一整遍之外多给的批数（一整遍 = ceil(行数 / activation.retierBatch)）
     maintenance: { embedBatches: 50, shadowBatches: 50, retierRounds: 20, ftsMergeSteps: 4, vacuumPages: 2000 },

@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 import { world, reply, T0, MIN, DAY } from './world.js';
 import { FakeLLM } from '../fakes/index.js';
 import { generalizeStep, candidateGroups } from '../../src/consolidate/generalize.js';
-import { newRun } from '../../src/consolidate/util.js';
+import { newRun, dateText } from '../../src/consolidate/util.js';
+import { getMetaJson } from '../../src/store/index.js';
+
+const dateOf = (core, ep) => dateText(core, core.store.get('SELECT t_end FROM episodes WHERE id = ?', ep.id).t_end);
 
 const AT = T0 + 10 * DAY;
 
@@ -135,15 +138,86 @@ test('模型说归纳不了、给了不在候选里的主体：什么都不写�
   try {
     const { core } = w;
     saturdays(w);
-    let r = await generalizeStep(core, { run: newRun(12), at: AT });
-    assert.equal(r.written, 0);
-    r = await generalizeStep(core, { run: { calls: 12, max: 12 }, at: AT });
+    let r = await generalizeStep(core, { run: { calls: 12, max: 12 }, at: AT });
     assert.equal(r.skipped, 'llm-cap');
-    assert.equal(llm.calls.length, 1);
+    assert.equal(r.left, 1, '没问到的留到下一晚');
+    assert.equal(llm.calls.length, 0);
     llm.fail('sleep');
     r = await generalizeStep(core, { run: newRun(12), at: AT });
     assert.equal(r.skipped, 'llm-failed');
+    assert.equal(r.asked, 0, '调用失败不算问过');
+    r = await generalizeStep(core, { run: newRun(12), at: AT });
+    assert.equal(r.written, 0);
+    assert.equal(r.asked, 1);
     w.logger.assertNoText('某游戏', '阿明');
+  } finally { await w.cleanup(); }
+});
+
+/** 模型：什么都归纳不出来。 */
+const noneLLM = () => new FakeLLM({ fallback: { sleep: reply((req, text) => [...text.matchAll(/【(g\d+)】/g)].map((m) => ({ type: 'none', group: m[1] }))) } });
+
+test('D138：情节超过上限时取最近的那些——最新的几段进得了聚类，更早的滑出去', async () => {
+  const w = await world({ llm: patternLLM(), config: { sleep: { generalize: { maxEpisodes: 3 } } } });
+  try {
+    const { core } = w;
+    // 更早的 4 段各不相干（不同场合、不同的人），最近的 3 段是同一类事
+    for (let i = 0; i < 4; i++) {
+      const S = w.setting();
+      const x = w.entity({ name: `路人${i}` });
+      w.episode(S, [[x, `随便聊聊第${i}件事`, T0 - (20 - i) * DAY], ['self', '嗯嗯', T0 - (20 - i) * DAY + MIN]]);
+    }
+    const { ming } = saturdays(w);
+    const groups = await candidateGroups(core, { at: AT });
+    assert.equal(groups.length, 1, '最新的 3 段聚成一组');
+    assert.ok(groups[0].subjects.includes(ming));
+    // 同一批情节再取一次：组一模一样（聚类稳定）
+    const again = await candidateGroups(core, { at: AT });
+    assert.deepEqual(again.map((g) => g.items.map((i) => i.ref)), groups.map((g) => g.items.map((i) => i.ref)));
+  } finally { await w.cleanup(); }
+});
+
+test('D138：问过、答了归纳不出来的组第二晚不再问（重启也记得）；成员变了再问；计数分得清', async () => {
+  const llm = noneLLM();
+  const w = await world({ llm });
+  try {
+    const { core } = w;
+    const x = saturdays(w);
+    let r = await generalizeStep(core, { run: newRun(12), at: AT });
+    assert.deepEqual({ asked: r.asked, written: r.written, skippedAsked: r.skippedAsked }, { asked: 1, written: 0, skippedAsked: 0 });
+    assert.equal(llm.calls.length, 1);
+    // 第二晚：成员没变，不再问（记在库里：换一个新的 run 也一样）
+    r = await generalizeStep(core, { run: newRun(12), at: AT + DAY });
+    assert.deepEqual({ asked: r.asked, skippedAsked: r.skippedAsked }, { asked: 0, skippedAsked: 1 });
+    assert.equal(llm.calls.length, 1);
+    assert.equal(Object.keys(getMetaJson(core.store, 'sleep.generalize.asked')).length, 1);
+    // 又多了一段：成员变了，再问一次
+    w.episode(x.G, [[x.ming, '周六一起打某游戏吗', T0 + 21 * DAY], ['self', '好呀我来', T0 + 21 * DAY + MIN]]);
+    r = await generalizeStep(core, { run: newRun(12), at: T0 + 22 * DAY });
+    assert.deepEqual({ asked: r.asked, skippedAsked: r.skippedAsked }, { asked: 1, skippedAsked: 0 });
+    assert.equal(llm.calls.length, 2);
+    assert.equal(Object.keys(getMetaJson(core.store, 'sleep.generalize.asked')).length, 1, '旧签名不再要');
+  } finally { await w.cleanup(); }
+});
+
+test('D138：一晚只能问一组时，没问过的组排在前面——不会每晚反复问同一组归纳不出来的', async () => {
+  const llm = noneLLM();
+  const w = await world({ llm, config: { sleep: { generalize: { maxCalls: 1, groupsPerCall: 1 } } } });
+  try {
+    const { core } = w;
+    const a = saturdays(w, { days: [0, 7, 14] });
+    const b = saturdays(w, { days: [1, 8, 15] });
+    let r = await generalizeStep(core, { run: newRun(12), at: T0 + 16 * DAY });
+    assert.deepEqual({ asked: r.asked, left: r.left }, { asked: 1, left: 1 });
+    const first = llm.calls[0].messages[0].content;
+    assert.ok(first.includes(dateOf(core, b.eps[2])), '最近有动静的先问');
+    r = await generalizeStep(core, { run: newRun(12), at: T0 + 17 * DAY });
+    assert.deepEqual({ asked: r.asked, skippedAsked: r.skippedAsked, left: r.left }, { asked: 1, skippedAsked: 1, left: 0 });
+    const second = llm.calls[1].messages[0].content;
+    assert.ok(second.includes(dateOf(core, a.eps[2])) && !second.includes(dateOf(core, b.eps[2])), '第二晚问的是没问过的那一组');
+    r = await generalizeStep(core, { run: newRun(12), at: T0 + 18 * DAY });
+    assert.equal(r.asked, 0);
+    assert.equal(r.skippedAsked, 2);
+    assert.equal(llm.calls.length, 2);
   } finally { await w.cleanup(); }
 });
 
