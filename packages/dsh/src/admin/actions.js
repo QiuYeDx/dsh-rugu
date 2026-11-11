@@ -332,7 +332,16 @@ export function createActions(deps) {
       },
       run: (p) => exclusive('purge', async () => {
         const r = await pm.admin.purge(p.refs, { alsoBackups: p.alsoBackups });
-        return { deleted: r?.deleted ?? {}, sessions: Array.isArray(r?.sessions) ? r.sessions.length : 0 };
+        // 【D143】成长块去掉了几行、WAL 截没截断、备份包改写了几个和没改成的（原因）：管理页照实显示，没改成的不当成功
+        const n = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+        const b = r?.backups;
+        return {
+          deleted: r?.deleted ?? {}, sessions: Array.isArray(r?.sessions) ? r.sessions.length : 0,
+          growth: { lines: n(r?.growth?.lines), versions: n(r?.growth?.versions), unknown: n(r?.growth?.unknown) },
+          wal: { main: String(r?.wal?.main ?? 'skipped'), vectors: String(r?.wal?.vectors ?? 'skipped') },
+          ...(b ? { backups: { rewritten: n(b.rewritten), unchanged: n(b.unchanged), failed: n(b.failed),
+            failures: (Array.isArray(b.failures) ? b.failures : []).slice(0, 20).map((f) => ({ id: f?.id ?? null, reason: String(f?.reason ?? 'error').slice(0, 60) })) } } : {}),
+        };
       }),
     },
 

@@ -307,6 +307,106 @@ export function rollbackGrowthImpl(core, toVersion, ctx) {
   metric(core, 'growth.rollback');
 }
 
+// ── 彻底删除（D143） ──────────────────────────────────────────────────────
+
+const RANK = { ok: 0, unknown: 1, tainted: 2 };
+const worse = (a, b) => (RANK[a] >= RANK[b] ? a : b);
+const tableIn = (db, name) => !!db.get("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?", name);
+
+/**
+ * 每一行成长是从哪儿来的（按版本历史重放）：
+ *   - 一行文字由 add / revise 那一版写出来（after），那一版的依据（evidence_ids）就是它的依据；同样的文字被写过几次，几次的依据都算；
+ *   - revise 写出来的一行还继承被改的那一行（before）的来历：改写可能还带着原来那句的意思；
+ *   - 依据里有一条在彻底删除之前就有、后来被删掉了（gone 里有它，删除时间不早于那一版）→ tainted；
+ *   - 从来没有被 add / revise 写出来过的行（整块替换、历史缺了几版）→ unknown：判断不了是不是由被删的内容写出来的。
+ * @returns {Map<string, 'ok'|'unknown'|'tainted'>}   键是 normText(行)
+ */
+function lineOrigins(rows, gone) {
+  const status = new Map();
+  for (const r of rows) {
+    const ch = safeJson(r.change_json, {}) ?? {};
+    const ev = safeJson(r.evidence_ids, []);
+    const bad = Array.isArray(ev) && ev.some((x) => typeof x === 'string' && gone.has(x) && gone.get(x) >= r.created_at);
+    const after = typeof ch.after === 'string' ? normText(ch.after) : '';
+    if ((ch.op !== 'add' && ch.op !== 'revise') || !after) continue;
+    let s = bad ? 'tainted' : 'ok';
+    if (ch.op === 'revise') {
+      const before = typeof ch.before === 'string' ? normText(ch.before) : '';
+      s = worse(s, before ? (status.get(before) ?? 'unknown') : 'unknown');
+    }
+    status.set(after, worse(status.get(after) ?? 'ok', s));
+  }
+  return status;
+}
+
+/**
+ * 【D143】彻底删除之后清成长块：依据里有被删内容的行（以及判断不了来历的行，removeUnknown 时），从当前文本里去掉，
+ * 存成新的一版（change.op = 'purge'，只记去掉了几行，不记那几行的文字）；历史版本里同样把这些行抹掉（文本、
+ * 变化里的 before / after / 签名）——彻底删除优先于可以撤销：撤销、回滚都只能回到抹过的文本。
+ * 在调用方的事务里调用（同步），db 可以是主库，也可以是解开的备份副本（副本上不标脏常驻区）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {import('../store/db.js').Store} db
+ * @param {{gone: {ref: string, at: number}[], removeUnknown?: boolean, clearPending?: boolean, by?: string, at: number}} opt
+ *        gone：被彻底删除的记忆引用和删除时间（这次的、以及墓碑表里以前的）；clearPending：逐条批准的预览文本一起清掉
+ * @returns {{removed: number, versions: number, version: number|null, unknown: number}}   removed：从当前文本去掉的行数；versions：抹过的历史版本数
+ */
+export function purgeGrowthImpl(core, db, opt) {
+  const out = { removed: 0, versions: 0, version: null, unknown: 0 };
+  if (!tableIn(db, 'core_block_versions') || !tableIn(db, 'core_blocks')) return out;
+  const gone = new Map();
+  for (const g of opt.gone ?? []) {
+    if (typeof g?.ref !== 'string' || !Number.isFinite(g.at)) continue;
+    gone.set(g.ref, Math.max(gone.get(g.ref) ?? -Infinity, g.at));
+  }
+  const rows = db.all('SELECT version, text, change_json, evidence_ids, created_at FROM core_block_versions WHERE name = ? ORDER BY version', NAME);
+  const cur = db.get('SELECT text, version, pending_text FROM core_blocks WHERE name = ?', NAME);
+  const origin = lineOrigins(rows, gone);
+  const drop = (line) => {
+    const s = origin.get(normText(line)) ?? 'unknown';
+    return s === 'tainted' || (s === 'unknown' && !!opt.removeUnknown);
+  };
+  const scrub = (text) => {
+    const lines = linesOf(text);
+    const keep = lines.filter((l) => !drop(l));
+    return { text: keep.join('\n'), removed: lines.length - keep.length };
+  };
+  // 历史版本：文本里抹掉这些行；变化里提到这些行的，文字和签名都抹掉（normalizeChange 认不出来，撤销、「撤销过不再写回」都跳过它）
+  for (const r of rows) {
+    const t = scrub(r.text);
+    const ch = safeJson(r.change_json, {}) ?? {};
+    let chChanged = false;
+    for (const k of ['before', 'after']) {
+      if (typeof ch[k] === 'string' && drop(ch[k])) { ch[k] = null; chChanged = true; }
+    }
+    if (ch.op === 'replace' && t.removed) chChanged = true;
+    if (chChanged) { ch.signature = `purged:${r.version}`; ch.purged = true; }
+    if (!t.removed && !chChanged) continue;
+    db.run('UPDATE core_block_versions SET text = ?, change_json = ? WHERE name = ? AND version = ?', t.text, JSON.stringify(ch), NAME, r.version);
+    out.versions += 1;
+  }
+  if (!cur) return out;
+  const now = scrub(cur.text);
+  // 留下来的行里判断不了来历的有几行（整块替换写进来的、主人自己手写的……）：不去掉，只报个数，让主人自己看
+  out.unknown = linesOf(now.text).filter((l) => (origin.get(normText(l)) ?? 'unknown') === 'unknown').length;
+  const clearPending = cur.pending_text != null && (!!opt.clearPending || now.removed > 0 || scrub(cur.pending_text).removed > 0);
+  if (now.removed) {
+    const version = Math.max(cur.version, rows.at(-1)?.version ?? 0) + 1;
+    const by = opt.by === 'sleep' ? 'sleep' : 'owner';
+    db.run('UPDATE core_blocks SET text = ?, version = ?, updated_at = ?, updated_by = ?, pending_text = CASE WHEN ? THEN NULL ELSE pending_text END WHERE name = ?',
+      now.text, version, opt.at, by, clearPending, NAME);
+    db.run(`INSERT INTO core_block_versions(name, version, text, change_json, evidence_ids, created_at, created_by) VALUES (?, ?, ?, ?, '[]', ?, ?)`,
+      NAME, version, now.text, JSON.stringify({ op: 'purge', removed: now.removed, before: null, after: null, signature: `purge:${version}` }), opt.at, by);
+    out.removed = now.removed;
+    out.version = version;
+  } else if (clearPending) {
+    db.run('UPDATE core_blocks SET pending_text = NULL WHERE name = ?', NAME);
+  }
+  // 成长块在每个场合的常驻区里（§10.4）：文本变了就全部标脏；备份副本上没有常驻区
+  if (now.removed && db === core.store) residentDirty(core);
+  if (out.removed || out.versions) metric(core, 'growth.purged');
+  return out;
+}
+
 export function growthVersionsImpl(core) {
   return core.store.all('SELECT * FROM core_block_versions WHERE name = ? ORDER BY version', NAME).map((r) => ({
     version: r.version,

@@ -2,9 +2,9 @@
 //   来源（先查到的算）：认领这个会话的适配器绑定声明的（含 sessionScoped：平台会转述的 DSH 自带工具）→ 别的适配器绑定声明的
 //   （MCP 工具带完整前缀）→ 主人补的分类（egress.extraTools，只给没有适配器声明的工具；对集成层和 DSH 自带的工具只能往严里改）→
 //   集成层自己的工具（memory_*）→ DSH 自带的工具（不往别人那儿说话）。
-//   都查不到 = 没有分类：记忆开着（live，每类场合的默认）时参数里又有较长的自由文本就拒绝，并在管理页提示补分类；主人把记忆关掉的场合只记录。
+//   都查不到 = 没有分类：放行（D113，原来记忆开着时参数里有较长的自由文本就拒绝），计 unclassifiedPassed，管理页提示补分类。
 // 主人补成说话类的工具没有适配器替它解析目标：目标记成「不知道的场合」（核心的初筛一定送审，审不了就不说），
-// 参数里一句自由文本都找不到就当审不了（fail closed）。
+// 参数里一句自由文本都找不到就当审不了（宿主按 D113 处理：公开目标改口，其余放行）。
 import { opaqueFrom } from 'rugu-core/contract';
 import { SPEAKING_CLASSES, TOOL_CLASSES } from '../binding/index.js';
 
@@ -73,7 +73,7 @@ function configDecl(name, cls) {
   d.returns = false;   // 不知道她的话会不会回流成感知：原文交给 outcome，核心自己记成她说过的话
   d.resolveAll = (args, exec) => {
     const text = freeTexts(args);
-    if (!text.length) return [];   // 找不到她要说的话：审不了（fail closed）
+    if (!text.length) return [];   // 找不到她要说的话：审不了（D113：公开目标改口，其余放行）
     const channel = { targetSettingId: UNKNOWN_TARGET, persistence: cls === 'speak' ? 'once' : 'recurring-context', formHint: '没有适配器声明的工具' };
     if (cls === 'defer') channel.delayMs = 60_000;
     const origin = { path: 'tool' };

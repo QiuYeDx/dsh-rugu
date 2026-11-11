@@ -90,6 +90,10 @@ test('彻底删除：不带确认 428；先预览（原文开头、来源数、�
   assert.equal(ok.status, 200);
   assert.deepEqual(s.callsOf('admin.purge')[0].args, [['a1', 'a3'], { alsoBackups: true }]);
   assert.equal(ok.body.result.sessions, 2, '只回会话个数（提示「已经注入过的文字收不回」）');
+  // D143：成长块去掉的行、WAL、备份包的结果（没改成的和原因）照实带回去
+  assert.deepEqual(ok.body.result.growth, { lines: 1, versions: 2, unknown: 0 });
+  assert.deepEqual(ok.body.result.wal, { main: 'truncated', vectors: 'busy' });
+  assert.deepEqual(ok.body.result.backups, { rewritten: 2, unchanged: 1, failed: 1, failures: [{ id: 7, reason: 'no-key' }] });
   // 令牌一次性
   const again = await s.act('memory.purge', { refs: ['a1', 'a3'], confirm: { token: pr.token, typed: '彻底删除 2 条' } });
   assert.equal(again.status, 428);

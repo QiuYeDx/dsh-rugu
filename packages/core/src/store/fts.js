@@ -5,6 +5,7 @@
 //     词的挑选（按 IDF 排序、剔掉常见词）由 retrieve / worker 做，这里只负责把词安全地拼成 MATCH 串。
 //   - 原文表按月分表：percepts_fts_YYYYMM（UTC 月），第一次写到某个月时创建并登记进 fts_shards。
 //   - 改 FTS_TOKENIZE 必须配一份重建全部 FTS 表的迁移。
+//   - 全部 FTS 表开 secure-delete（D143，enableFtsSecureDelete）；彻底删除之后对删过行的表 optimize 一次（ftsOptimize）。
 
 export const FTS_TOKENIZE = "unicode61 remove_diacritics 0 tokenchars '_'";
 export const MAX_MATCH_TERMS = 12;
@@ -85,9 +86,39 @@ export function ensurePerceptShard(store, at) {
   if (known) return known.name;
   store.tx((db) => {
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${assertTable(name)} USING fts5(tokens, content='', contentless_delete=1, tokenize="${FTS_TOKENIZE}")`);
+    setSecureDelete(db, name);
     db.run('INSERT OR IGNORE INTO fts_shards(name, month, created_at) VALUES (?, ?, ?)', name, month, db.now());
   });
   return name;
+}
+
+/** 一张 FTS5 表打开 secure-delete（持久的表配置，存在 <表>_config 里）。已经开着就不写。 */
+function setSecureDelete(store, name) {
+  const t = assertTable(name);
+  const on = store.get(`SELECT v FROM ${t}_config WHERE k = 'secure-delete'`);
+  if (Number(on?.v) === 1) return false;
+  store.run(`INSERT INTO ${t}(${t}, rank) VALUES ('secure-delete', 1)`);
+  return true;
+}
+
+/**
+ * 【D143】库里所有的 FTS5 表打开 secure-delete：删一行时把它的词元从索引页里真的抹掉，而不是只记一个「已删」标记、
+ * 等以后合并段时才清（不开的话，删掉的词元在合并之前一直留在文件里）。要 SQLite ≥ 3.42（node:sqlite 自带的版本满足）。
+ * 只对以后的删除生效；之前删掉、还没合并掉的词元要等 FTS 的合并（夜里的小步合并）才清。
+ * 打开主库（迁移之后）、建新的原文分表、彻底删除开始前（主库和解开的备份副本）都调一次；已经开着的表不写。
+ * @param {import('./db.js').Store} store
+ * @returns {{enabled: number, failed: number}}   failed：开不了的表数（SQLite 太旧之类），调用方记日志
+ */
+export function enableFtsSecureDelete(store) {
+  let enabled = 0;
+  let failed = 0;
+  if (store.readOnly) return { enabled, failed };
+  const names = store.all("SELECT name FROM sqlite_schema WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE%' AND lower(sql) LIKE '%using fts5%'").map((r) => r.name);
+  for (const name of names) {
+    if (!TABLE_RE.test(name)) continue;
+    try { if (setSecureDelete(store, name)) enabled += 1; } catch { failed += 1; }
+  }
+  return { enabled, failed };
 }
 
 /**
@@ -109,6 +140,15 @@ export function ftsInsert(store, table, rowid, tokens) {
 /** 删一行词元（无内容表靠 contentless_delete=1 支持按 rowid 删除）。 */
 export function ftsDelete(store, table, rowid) {
   store.run(`DELETE FROM ${assertTable(table)} WHERE rowid = ?`, rowid);
+}
+
+/**
+ * 【D143】把一张 FTS 表整个合并成一段（FTS5 的 'optimize'）。secure-delete 删掉了行的位置信息，但一个词在段里已经没有任何行时，
+ * 词本身还可能留在段的页里；合并时只写还有行的词，旧段的页放回空闲列表（secure_delete=ON 时抹成零）。彻底删除对删过行的表做一次。
+ */
+export function ftsOptimize(store, table) {
+  const t = assertTable(table);
+  store.run(`INSERT INTO ${t}(${t}) VALUES ('optimize')`);
 }
 
 /** 替换一行词元（先删后插）。 */

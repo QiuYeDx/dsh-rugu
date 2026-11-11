@@ -330,7 +330,8 @@ test('彻底删除时「同时从所有本地备份里清除」：按墓碑重�
     seedAssertion(core, { text: '阿明喜欢猫', subjects: [A], speaker: A, settingKey: sk });
     const [daily] = await core.mods.backup.createPack(core, { kind: 'daily' });
     const [weekly] = await core.mods.backup.createPack(core, { kind: 'weekly' });
-    await core.mods.admin.purge(core, [`p${p}`], { by: 'owner', alsoBackups: true, at: core.now() });
+    const res = await core.mods.admin.purge(core, [`p${p}`], { by: 'owner', alsoBackups: true, at: core.now() });
+    assert.deepEqual(res.backups, { rewritten: 3, unchanged: 0, failed: 0, failures: [] }, '日包、周包、这次的操作前快照都改写了（D143：结果带回去）');
     for (const pk of [daily, weekly]) {
       assert.equal((await core.mods.backup.verifyPack(core, pk.path)).ok, true, '重写后照样验证通过（登记的 sha256 也更新了）');
       const out = path.join(core.dataDir, `unpacked-${pk.kind}`);
@@ -347,6 +348,31 @@ test('彻底删除时「同时从所有本地备份里清除」：按墓碑重�
     const pre = core.store.get("SELECT path FROM backups WHERE kind = 'pre-op' AND reason = 'purge'").path;
     const u = await core.mods.backup.unpack(core, pre, { dest: path.join(core.dataDir, 'unpacked-pre') });
     assert.ok(!fs.readFileSync(u.files['main.db']).includes(Buffer.from('绝密内容甲乙丙')));
+  } finally { await h.cleanup(); }
+});
+
+test('连备份一起删（D143）：解不开的包、文件不见了的包算「没改成」，带着原因回去，原包留着；改写成的照常', async () => {
+  const h = await createBackupCore({ name: 'bk-scrub-fail', config: FAST, mods: quietMods({ encode: { derivedFrom: sqlDerivedFrom } }) });
+  const { core } = h;
+  try {
+    const sk = seedSetting(core);
+    const p = seedPercept(core, { settingKey: sk, text: '要从包里清掉的一句' });
+    const [daily] = await core.mods.backup.createPack(core, { kind: 'daily' });
+    const [weekly] = await core.mods.backup.createPack(core, { kind: 'weekly' });
+    const buf = fs.readFileSync(weekly.path);
+    buf[buf.length - 30] ^= 0x5a;
+    fs.writeFileSync(weekly.path, buf);
+    const r = await core.mods.admin.purge(core, [`p${p}`], { by: 'owner', alsoBackups: true, at: core.now() });
+    assert.equal(r.backups.rewritten, 2, '日包和这次的操作前快照');
+    assert.equal(r.backups.failed, 1);
+    assert.equal(r.backups.failures[0].id, weekly.id);
+    assert.equal(typeof r.backups.failures[0].reason, 'string');
+    assert.deepEqual(fs.readFileSync(weekly.path), buf, '没改成的包原样留着');
+    assert.equal((await core.mods.backup.verifyPack(core, daily.path)).ok, true);
+    fs.rmSync(daily.path);
+    const p2 = seedPercept(core, { settingKey: sk, text: '又一句' });
+    const r2 = await core.mods.admin.purge(core, [`p${p2}`], { by: 'owner', alsoBackups: true, at: core.now() });
+    assert.ok(r2.backups.failures.some((f) => f.id === daily.id && f.reason === 'missing'), '文件不见了也说出来');
   } finally { await h.cleanup(); }
 });
 
