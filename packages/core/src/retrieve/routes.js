@@ -94,6 +94,12 @@ export async function denseRoute(ctx, pseudoSources) {
   // 名次按 dense.windowWeight 打折再和主线索的名次融合。原来几条向量对每条记忆取最大相似度，换了话题以后窗口里大半是上一个话题，
   // 稠密前几名一半是上一个话题的东西。窗口不丢：「那 X 呢」这种短句要靠它提供话题，两边都靠前的排得最前
   const win = ctx.pseudo || !ctx.cues.windowText ? -1 : ctx.cues.queryTexts.indexOf(ctx.cues.windowText);
+  // 焦点那一句没有内容（D151：寒暄、叫她一声）：它不是线索，只用窗口（和预取的改写）查一次——窗口提供话题，
+  // 群里聊着天有人「@她 在吗」，窗口里的话题照旧起作用；「哈喽」自己的向量只会找到以前打招呼的话
+  if (ctx.cues.focusContent === false && win >= 0 && win < vectors.length && vectors.length >= 2) {
+    const nq = ctx.cues.queryTexts.length;
+    return routeOf('dense', await search(vectors.filter((_, i) => i === win || i >= nq)), t0, ctx);
+  }
   const ww = Number(rcfg.windowWeight);
   if (vectors.length >= 2 && win >= 0 && win < vectors.length && Number.isFinite(ww) && ww >= 0 && ww < 1) {
     const [main, aux] = await Promise.all([search(vectors.filter((_, i) => i !== win)), search([vectors[win]])]);

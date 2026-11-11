@@ -151,3 +151,11 @@ test('termClass（D150）：虚词是汉语的封闭词类（代词、疑问词�
   // 随机语言标签、混合文字照样按文字分派到 zh
   assert.equal(lang.termClass(core, '吗', { lang: 'x-abc' }), 'function');
 }));
+
+test('termClass（D151）：叹词和寒暄语也是封闭词类（整词）；单字「早」「好」不算，「早饭」「好吃」「早上」是实词', () => withLang((core) => {
+  const { lang } = core.mods;
+  for (const t of ['喂', '嗨', '嘿', '哎', '唉', '呃', '哼', '哈喽', '哈啰', '你好', '您好', '大家好', '早安', '晚安', '早上好', '晚上好', '拜拜', '再见', '在吗', '哈哈', '喂喂']) {
+    assert.equal(lang.termClass(core, t), 'function', t);
+  }
+  for (const t of ['早', '好', '早饭', '好吃', '早上', '喂猫', '活着']) assert.equal(lang.termClass(core, t), null, t);
+}));

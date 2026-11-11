@@ -3,7 +3,9 @@
 // 数据是编的，形状照一次实测：对方名下很多条近来的琐事，一条相关的旧事只有稠密路找得到。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { retrieveCore, seedEntity, seedPercept, seedSetting, seedAssertion, seedPresence, T0, MIN } from './fixtures.js';
+import { retrieveCore, seedEntity, seedPercept, seedSetting, seedAssertion, seedPresence, T0, MIN, DAY } from './fixtures.js';
+import { buildZhAnalyzer } from '../../src/lang/zh.js';
+import { hasContent } from '../../src/retrieve/cues.js';
 
 const R = (core, s, opt) => core.mods.retrieve.recall(core, { trigger: 'message', ...s }, { deadlineMs: 800, ...opt });
 
@@ -148,5 +150,90 @@ test('门槛和排序分开：sample 用 A + ε 过门槛，过了的按不带�
     core.config.update({ activation: { tauInvoluntary: 0 } });
     const out = dyn.sample(core, [mk('a1', 1.0, -0.5), mk('a2', 0.6, 1.5), mk('a3', 0.3, -0.6)], { mode: 'involuntary', seed: [] });
     assert.deepEqual(out.map((c) => c.ref), ['a1', 'a2'], 'a3 的噪声让它这一回没想起来；a2 的噪声不让它排到 a1 前面');
+  } finally { await w.cleanup(); }
+});
+
+// ── D151：没有内容的话（寒暄、叫一声）不当回想的线索 ─────────────────────────────
+
+/** 用真的 zh 词类（D151 判断有没有内容靠它）；别的照旧是替身。 */
+async function zhWorld() {
+  const zh = buildZhAnalyzer({});
+  return world({ rerank: false, mods: { lang: { termClass: (core, t) => zh.termClass(t) } } });
+}
+
+test('有没有内容（D151）：去掉 @ 她和她的名字以后，剩下的全是虚词、叹词、寒暄语就没有内容；名字、实词算内容', async () => {
+  const zh = buildZhAnalyzer({});
+  const core = { mods: { lang: { termClass: (c, t) => zh.termClass(t) } } };
+  for (const t of ['哈喽？', '在吗', '你好吗', '早上好呀', '在不在', '哈哈哈', '晚安~', '嗯嗯', '🍚']) assert.equal(hasContent(core, t, 'zh'), false, t);
+  for (const t of ['那“墨”呢？', '你觉得呢', '你能看懂吗', '早饭吃了吗', '你还活着吗', '还记得吗', '阿明呢']) assert.equal(hasContent(core, t, 'zh'), true, t);
+  // 分析器不给词类的（null）一律算有内容
+  assert.equal(hasContent({ mods: { lang: {} } }, '哈喽', 'zh'), true);
+});
+
+test('一对一里「哈喽？」（D151）：不放大匹配、稠密只用窗口查一次；说话的人就是线索——想起来的不是以前打招呼时的事', async () => {
+  const w = await zhWorld();
+  try {
+    const { core, worker, B, calls } = w;
+    const old = seedAssertion(core, { text: '老板早上说哈喽，我问他昨晚头疼好了没', subjects: [w.boss] });
+    B[`a${old}`] = -1.2;
+    worker.addDoc(`a${old}`, '老板早上说哈喽，我问他昨晚头疼好了没');
+    const recent = seedAssertion(core, { text: '老板今晚想吃夜宵', subjects: [w.boss] });
+    B[`a${recent}`] = 0.8;
+    worker.addDoc(`a${recent}`, '老板今晚想吃夜宵');
+    seedPercept(core, { settingKey: 'D', at: T0 - 5 * DAY, actor: w.boss, text: '今晚想吃夜宵', addressed: 'to-her' });
+    const q = seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '哈喽？', addressed: 'to-her' });
+    const set = await R(core, { settingKey: 'D', focusPerceptId: q });
+    assert.equal(set.cues.focusContent, false);
+    assert.equal(set.cues.focusDirected, true);
+    const mw = core.config.get().recall.matchWeight;
+    for (const c of set.items) if (c.cParts) assert.equal(c.cParts.boost, mw.overheard, c.ref);
+    const dense = calls.denseSearch.at(-1);
+    assert.equal(dense.vectors.length, 1, '只用窗口那条查询');
+    const sw = core.config.get().recall.entity.seedWeights;
+    const seed = calls.pprSearch.at(-1).seeds.find((s) => s.entityId === w.boss);
+    const act = core.config.get().activation;
+    const spec = Math.log(act.fanMinTotal / 2) / Math.log(act.fanMinTotal);
+    assert.ok(Math.abs(seed.weight - sw.alone * spec) < 1e-9, `说话的人按 alone：${seed.weight}`);
+    const facts = set.items.filter((c) => c.meta?.kind === 'assertion').map((c) => c.ref);
+    assert.ok(facts.indexOf(`a${recent}`) >= 0 && (facts.indexOf(`a${old}`) < 0 || facts.indexOf(`a${recent}`) < facts.indexOf(`a${old}`)),
+      `和他最近的事在前 ${JSON.stringify(facts)}`);
+  } finally { await w.cleanup(); }
+});
+
+test('「@她 在吗」（D151）：@ 的是她（群名片被认成了别的人也一样）——不是被提到的人、不是正文里的名字、也不是内容；「@她 那阿明呢」有内容', async () => {
+  const w = await zhWorld();
+  try {
+    const { core } = w;
+    const dup = seedEntity(core, { name: '秋夜小鱼' });   // 她的群名片被认成了另一个人
+    const at = (who) => [{ entityId: dup, self: false, actor: { claims: [{ kind: 'display-name', name: who }] } }, { entityId: w.me, self: true, actor: { claims: [], self: true } }];
+    const q = seedPercept(core, { settingKey: 'G', at: T0 - 2 * MIN, actor: w.ming, text: '@秋夜小鱼 在吗', addressed: 'mentions-her', mentions: at('秋夜小鱼') });
+    const set = await R(core, { settingKey: 'G', focusPerceptId: q });
+    assert.equal(set.cues.focusContent, false);
+    assert.ok(!set.cues.mentioned.includes(dup), JSON.stringify(set.cues.mentioned));
+    assert.ok(!set.cues.names.some((n) => n.entityId === dup), JSON.stringify(set.cues.names));
+    const q2 = seedPercept(core, { settingKey: 'G', at: T0 - MIN, actor: w.ming, text: '@秋夜小鱼 那阿明呢', addressed: 'mentions-her', mentions: at('秋夜小鱼') });
+    const set2 = await R(core, { settingKey: 'G', focusPerceptId: q2 });
+    assert.equal(set2.cues.focusContent, true);
+    // 别人被 @ 照旧是线索
+    const q3 = seedPercept(core, { settingKey: 'G', at: T0, actor: w.ming, text: '@小刚 你来一下', addressed: 'ambient',
+      mentions: [{ entityId: w.cousin, self: false, actor: { claims: [{ kind: 'display-name', name: '小刚' }] } }] });
+    const set3 = await R(core, { settingKey: 'G', focusPerceptId: q3 });
+    assert.ok(set3.cues.mentioned.includes(w.cousin));
+  } finally { await w.cleanup(); }
+});
+
+test('有意回想带着有内容的 query（D151）：照旧按有意回想放大；query 自己没有内容才不放大', async () => {
+  const w = await zhWorld();
+  try {
+    const { core, worker } = w;
+    const a = seedAssertion(core, { text: '小刚开网约车', subjects: [w.cousin] });
+    worker.addDoc(`a${a}`, '小刚开网约车');
+    const q = seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '在吗', addressed: 'to-her' });
+    const mw = core.config.get().recall.matchWeight;
+    const s1 = await R(core, { settingKey: 'D', focusPerceptId: q, trigger: 'simulate' }, { mode: 'deliberate', query: '小刚开什么车' });
+    assert.equal(s1.cues.focusContent, true);
+    assert.equal(s1.items.find((c) => c.ref === `a${a}`)?.cParts.boost, mw.deliberate);
+    const s2 = await R(core, { settingKey: 'D', focusPerceptId: q, trigger: 'simulate' }, { mode: 'deliberate', query: '你好呀' });
+    assert.equal(s2.cues.focusContent, false);
   } finally { await w.cleanup(); }
 });

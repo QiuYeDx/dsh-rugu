@@ -276,10 +276,14 @@ function rankScore(p, rank) {
  * C 的倍数（D149）：线索有多直接。有意回想（工具、被判定在问过去）最大；这一轮有一句对她说的话（焦点是 to-her / mentions-her）次之；
  * 只是旁听的群聊保持原来的比例（那时「她心里正想着什么」——基础激活——主导是对的）。被直接问到时，相关度比「最近」更重要：
  * 名次分一路第 1 名才 1.0，基础激活的范围大约 −1 到 0.8，不放大的话「刚发生的不相干的事」和「相关的旧事」打平。
+ *
+ * D151：焦点那一句（有意回想时是 query）没有内容（寒暄、叫她一声）时不放大，按旁听：「哈喽」在稠密路上的第 1 名是以前打招呼的话，
+ * 放大以后想起来的全是以前的寒暄和那时问过的事。
  */
 export function matchBoost(p, mode, cues) {
   const m = p.recall.matchWeight ?? {};
-  const v = mode === 'deliberate' ? m.deliberate : cues?.focusDirected ? m.directed : m.overheard;
+  const content = cues?.focusContent !== false;
+  const v = !content ? m.overheard : mode === 'deliberate' ? m.deliberate : cues?.focusDirected ? m.directed : m.overheard;
   return Number.isFinite(v) && v > 0 ? v : 1;
 }
 
@@ -478,7 +482,9 @@ async function rerank(core, p, ctx, sampled, mode) {
   if (top.length < 2) return false;
   // 重排的查询和稠密路一样以焦点为主（D149）：有意回想的 query、对她说的那句；都没有才用窗口
   const c0 = ctx.cues.queryTexts[0];
-  const query = (c0 && c0 !== ctx.cues.windowText ? c0 : null) ?? ctx.cues.directedText ?? c0 ?? '';
+  // 焦点那一句没有内容（D151）时用窗口
+  const query = ctx.cues.focusContent === false ? (ctx.cues.windowText || c0 || '')
+    : (c0 && c0 !== ctx.cues.windowText ? c0 : null) ?? ctx.cues.directedText ?? c0 ?? '';
   if (!query) return false;
   const docs = top.map((c) => safe(core, 'sanitize', () => core.mods.intake.sanitizeForPrompt(core, c.meta.text), c.meta.text));
   const ms = Math.min(p.recall.rerank.budgetMs, remaining(ctx));

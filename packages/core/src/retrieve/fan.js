@@ -66,7 +66,8 @@ export function entitySeeds(core, cues, sw, factEntities = []) {
   }
   for (const e of cues.mentioned ?? []) add(e, num(sw.mentioned, 1));
   const content = cues.contentCue !== false;
-  add(cues.focusSpeaker, num(sw.focus, 1));
+  // 对她说的那句没有内容（D151：「哈喽」「@她 在吗」）：浮上来的是和这个人最近的事——说话的人就是线索（按 alone），别的在场的人照旧
+  add(cues.focusSpeaker, cues.focusContent === false ? num(sw.alone, num(sw.focus, 1)) : num(sw.focus, 1));
   for (const e of cues.present ?? []) add(e, content ? num(sw.present, 0.5) : num(sw.alone, num(sw.present, 0.5)));
   for (const e of factEntities) add(e, num(sw.fact, 0.5));
   const total = memoryTotal(core);

@@ -18,7 +18,7 @@ const DIRECTED = new Set(['to-her', 'mentions-her']);
  * @param {{settingKey: string, focusPerceptId?: number|null, query?: string|null, about?: string|null, time?: string|null,
  *          extraQueries?: string[]}} s
  * @returns {import('../core-types.js').Cues & {directedText: string|null, focusSpeaker: number|null, aboutEntityIds: number[],
- *          windowText: string, windowPlain: string, rewrites: string[], contentCue: boolean, focusDirected: boolean}}
+ *          windowText: string, windowPlain: string, rewrites: string[], contentCue: boolean, focusDirected: boolean, focusContent: boolean}}
  */
 export function buildCues(core, s) {
   const { recall: rc, x } = params(core);
@@ -104,8 +104,21 @@ export function buildCues(core, s) {
   const windowIds = window.map((w) => w.perceptId);
   const extra = safe(core, 'mentions', () => rowsByIds(core.store,
     'SELECT id, adapter, mentions_json, quote_json, reply_to_key FROM percepts WHERE id IN (?*)', windowIds), []);
+  // D151：@ 的是她（结构化提及里标着她自己；或者同一条消息 @ 了她、另一项的显示名里带着她的名字——她的群名片被认成了别人的时候）。
+  // 这样的提及不是线索：不进被提到的人，那个显示名不算正文里的名字，也不算焦点那句的内容
+  const selfNames = selfNamesOf(core, me);
+  const selfMention = { names: new Set(), ids: new Set() };
   for (const r of extra) {
-    for (const m of parseJson(r.mentions_json, []) ?? []) for (const id of mentionEntityIds(core, m)) mentioned.add(id);
+    const ms = (parseJson(r.mentions_json, []) ?? []).filter((m) => m && typeof m === 'object');
+    const toHer = ms.some((m) => m.self === true || (me != null && m.entityId === me));
+    for (const m of ms) {
+      const shown = mentionNames(m);
+      const isSelf = m.self === true || (me != null && m.entityId === me)
+        || (toHer && shown.some((n) => selfNames.some((x) => n.includes(x))));
+      if (!isSelf) { for (const id of mentionEntityIds(core, m)) mentioned.add(id); continue; }
+      for (const n of shown) selfMention.names.add(n);
+      if (Number.isInteger(m.entityId) && m.entityId !== me) selfMention.ids.add(m.entityId);
+    }
     const q = parseJson(r.quote_json, null);
     if (q) for (const id of mentionEntityIds(core, q.author ?? q)) mentioned.add(id);
     if (r.reply_to_key) {
@@ -129,6 +142,7 @@ export function buildCues(core, s) {
       const hits = safe(core, 'nameScan', () => matcher.scan(sc.text, { settingKey, anchors: sc.anchors, at }), []) ?? [];
       for (const h of Array.isArray(hits) ? hits : []) {
         if (!h || !Number.isInteger(h.entityId)) continue;
+        if (selfMention.ids.has(h.entityId) || selfMention.names.has(normName(h.name))) continue;   // @ 她的那个显示名（D151）
         const prev = nameHits.get(h.entityId);
         const focus = !!sc.focus || !!prev?.focus;
         if (!prev || h.score > prev.score) nameHits.set(h.entityId, { entityId: h.entityId, name: h.name, score: Number(h.score) || 0, focus });
@@ -172,6 +186,11 @@ export function buildCues(core, s) {
   const qCue = reg && cueText ? Number(safe(core, 'questionCue', () => reg.questionCue(cueText, lang), 0)) || 0 : 0;
   const pastQuestion = pastTime || qCue >= (params(core).x.past.cueMin);
 
+  // ── 焦点那一句（有意回想时是 query）有没有内容（D151）：去掉 @ 她和她自己的名字以后，还有没有不是虚词的词。
+  // 「哈喽」「@她 在吗」是打招呼、叫她，不是在说某件事——人听到这种话不会想起哪件具体的事
+  const focusText = q || focusLine?.text || '';
+  const focusContent = !!focusText && hasContent(core, stripNames(focusText, [...selfMention.names, ...selfNames]), lang);
+
   const empty = !windowText && !q && !timeWindows.length && !nameList.length;
   const hash = empty ? 'empty' : sha(JSON.stringify([settingKey, windowIds, q, s.time ?? null, (s.extraQueries ?? []).length]));
 
@@ -199,7 +218,60 @@ export function buildCues(core, s) {
     contentCue: !!(q || focusLine),
     // D149：焦点那一句是对她说的（to-her / mentions-her）：被直接问到时，和线索的匹配比「最近」更重要
     focusDirected: !!(focusLine && DIRECTED.has(focusLine.addressed)),
+    // D151：焦点那一句（有意回想时是 query）有内容：没有的（寒暄、叫她一声）不放大匹配、不当稠密的主线索
+    focusContent,
   };
+}
+
+const normName = (n) => String(n ?? '').normalize('NFKC').toLowerCase().trim();
+
+/** 她自己名下的名字（两个字以上；规范化）。 */
+function selfNamesOf(core, me) {
+  if (me == null) return [];
+  const rows = safe(core, 'selfNames', () => core.store.all('SELECT text_raw AS t FROM entity_names WHERE entity_id = ?', me), []) ?? [];
+  return [...new Set(rows.map((r) => normName(r.t)).filter((t) => [...t].length >= 2))];
+}
+
+/** 一项结构化提及带的显示名（规范化）。 */
+function mentionNames(m) {
+  const out = [];
+  for (const c of [...(Array.isArray(m?.actor?.claims) ? m.actor.claims : []), ...(Array.isArray(m?.claims) ? m.claims : [])]) {
+    if (c && typeof c.name === 'string' && c.name.trim()) out.push(normName(c.name));
+  }
+  if (typeof m?.name === 'string' && m.name.trim()) out.push(normName(m.name));
+  return out;
+}
+
+/** 把这些名字（连同前面的 @）从文字里去掉，剩下的 @ 也去掉。 */
+function stripNames(text, names) {
+  let t = String(text ?? '').normalize('NFKC').toLowerCase();
+  for (const n of [...new Set(names)].filter(Boolean).sort((a, b) => b.length - a.length)) t = t.split(`@${n}`).join(' ').split(n).join(' ');
+  return t.replaceAll('@', ' ');
+}
+
+const LETTER = /[\p{L}\p{N}]/u;
+const CONTENT_SCAN_MAX = 80;   // 再长的一句话不会全是虚词：不逐段问词类
+const CONTENT_SPAN_MAX = 6;
+
+/**
+ * 一句话里有没有内容（D151）：逐段问语言层的词类（lang.termClass）——分析器认得的整词（名字、别名）算内容；
+ * 虚词（代词、疑问词、语气词、叹词、寒暄语……这门语言的封闭词类）盖住它的字；还剩没被盖住的字就是有内容。
+ * 词类表在各语言的分析器里，核心不放词表；分析器不给词类的语言（null）一律算有内容。
+ */
+export function hasContent(core, text, lang) {
+  const chars = [...String(text ?? '')];
+  if (chars.length > CONTENT_SCAN_MAX) return true;
+  const cls = (t) => safe(core, 'termClass', () => core.mods.lang.termClass?.(core, t, { lang }) ?? null, null);
+  const covered = new Uint8Array(chars.length);
+  for (let i = 0; i < chars.length; i++) {
+    for (let len = 1; len <= CONTENT_SPAN_MAX && i + len <= chars.length; len++) {
+      if (!LETTER.test(chars[i + len - 1])) break;
+      const c = cls(chars.slice(i, i + len).join(''));
+      if (c === 'word' && len >= 2) return true;
+      if (c === 'function') covered.fill(1, i, i + len);
+    }
+  }
+  return chars.some((c, i) => LETTER.test(c) && !covered[i]);
 }
 
 const MIN_LINE_TEXT = 8;
