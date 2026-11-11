@@ -90,6 +90,10 @@ async function openWorld(root, name) {
       return pm.recall({ settingId: fp.settings[where].id, focusObsId: o.id, trigger: 'message', ...(sessionId ? { sessionId } : {}), ...(tools ? { tools } : {}) },
         { mode, deadlineMs: 3000, budgetChars: 900 });
     },
+    /** 有记忆：她自己开启的一轮（空闲唤醒，没有触发消息，D132）。 */
+    selfTurn(where, { sessionId } = {}) {
+      return pm.recall({ settingId: fp.settings[where].id, trigger: 'idle', ...(sessionId ? { sessionId } : {}) }, { mode: 'involuntary', deadlineMs: 3000, budgetChars: 900 });
+    },
     /** 没有记忆：这个会话自己看得到的聊天记录（这个场合从 since 起的原话）。 */
     sessionText(where, since) {
       const key = core.keys.settingKey(fp.namespace, fp.settings[where].id);
@@ -192,6 +196,26 @@ export const CASES = Object.freeze([
       await w.flush();
       const r = await w.recall('groupA', q);
       return score(/收衣服/, r, w.sessionText('groupA', since));
+    },
+  },
+  {
+    // 她自己开口（D132）：没有人在问她。他昨晚在私聊里说头疼，早上在群里答过好多了；她过一会儿在私聊里主动开口时得知道，不再问一遍
+    id: 'self-open', name: '她自己开口：他在别的群答过的话，私聊里主动开口时知道', source: '实测问题 #38、用户反馈第 25 轮',
+    async run(w) {
+      const ache = w.say('oneOnOne', 'principal', '我头有点疼，先睡了');
+      w.say('oneOnOne', 'her', '快去睡，明天还疼的话跟我说');
+      await w.flush();
+      w.bind('eval-dm-self', 'oneOnOne');
+      await w.recall('oneOnOne', ache, { sessionId: 'eval-dm-self' });
+      w.clock.advance(9 * HOUR);
+      w.say('groupA', 'her', '头还疼吗');
+      w.say('groupA', 'principal', '好多了，已经不疼了', { addressed: 'ambient', attention: 'peripheral' });
+      w.say('groupA', 'her', '那就好');
+      await w.flush();
+      w.clock.advance(20 * MIN);
+      const since = w.clock.now();
+      const r = await w.selfTurn('oneOnOne', { sessionId: 'eval-dm-self' });
+      return score(/不疼了/, r, w.sessionText('oneOnOne', since));
     },
   },
   {

@@ -14,6 +14,8 @@
 // 话题词里方括号的占位（［图片］［视频］［表情包:…］）不算（D113：媒体占位不是话题，原来两张图片「同一个话题」）；有看过的媒体的说明时
 // 拿说明的文字来比（row.note：她看过的媒体的说明，D116 的 intake.seenMedia）。
 // 这里从不看「这里能不能说」（§8.2）：能不能放进心里、说出口是哪一档，由 discretion.admitWorking 判；装哪几段由 context 按软预算定。同步、零 LLM。
+// 她自己开口的一轮（D132）没有「眼前这个人」：context 按「这里的听众」取——recentPartners 给出她最近在别处来往过、又在这里的人，
+// 每个人照样走 workingSet（focusPerceptId 为空：话题只拿他在这里最近的几句算）。
 import { safe, selfId, metric } from './util.js';
 
 const COLS = 'id, setting_key, at, actor_entity_id, actor_self, kind, text, w_enc, visible_to, addressed, mentions_json, media_json';
@@ -240,6 +242,49 @@ export function workingSet(core, q, opt = {}) {
   out.lines = [...pick.values()].map(({ row, ...l }) => ({ ...l, context: l.context ?? [], primary: !!l.primary, anchor: !!l.anchor, unitKey: l.unitKey ?? null }));
   if (kept.some((u) => u.fallback)) metric(core, 'retrieve.working.unitFallback');
   metric(core, 'retrieve.working.sets');
+  return out;
+}
+
+/**
+ * 她最近在别的场合来往过的人里，哪几个在这里（D132，retrieve.recentPartners 的实现）：别处对她说话的人、她在别处接着回的那个人
+ * （她那一句前面最近一条别人亲口说的话，同一场合），按最近一次来往从新到旧；among 是这里的听众（权利层确认的同一个人也算在这里）。
+ * 没有时间窗：一次只往回看 recall.working.candidatePool 条；隔得久了的由 workingSet 的 A / tau 自然淡掉（返回了也装不进东西）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{settingKey: string}} q
+ * @param {{among: number[], max?: number}} opt
+ * @returns {number[]}  听众里的实体 id（among 里的那个），最近来往的在前，最多 max 个
+ */
+export function recentPartners(core, q, opt = {}) {
+  const W = core.config.get().recall.working;
+  const here = q?.settingKey;
+  const among = new Set((opt.among ?? []).filter((x) => Number.isSafeInteger(x)));
+  const max = Math.max(1, Math.floor(opt.max ?? W?.maxTriggers ?? 3));
+  if (!W?.enabled || typeof here !== 'string' || !here || !among.size) return [];
+  const me = selfId(core);
+  const pool = Math.max(1, Math.floor(W.candidatePool));
+  const kinds = TRIGGER_KINDS.map(() => '?').join(',');
+  // 别处对她说的话
+  const toHer = safe(core, 'partnersToHer', () => core.store.all(
+    `SELECT id, actor_entity_id AS e FROM percepts WHERE setting_key <> ? AND actor_self = 0 AND actor_entity_id IS NOT NULL AND kind IN (${kinds})
+        AND addressed IN ('to-her','mentions-her') AND standing <> 'material' ORDER BY id DESC LIMIT ?`, here, ...TRIGGER_KINDS, pool), []) ?? [];
+  // 她在别处说的话各自接的是谁（前面最近一条别人亲口说的，同一场合）
+  const replied = safe(core, 'partnersReplied', () => core.store.all(
+    `SELECT s.id AS id, (SELECT o.actor_entity_id FROM percepts o WHERE o.setting_key = s.setting_key AND o.id < s.id AND o.actor_self = 0
+                           AND o.kind IN (${kinds}) ORDER BY o.id DESC LIMIT 1) AS e
+       FROM percepts s WHERE s.setting_key <> ? AND s.actor_self = 1 AND s.kind IN (${SELF_KINDS.map(() => '?').join(',')}) ORDER BY s.id DESC LIMIT ?`,
+    ...TRIGGER_KINDS, here, ...SELF_KINDS, pool), []) ?? [];
+  const rows = [...toHer, ...replied].filter((r) => Number.isSafeInteger(r.e) && r.e !== me).sort((x, y) => y.id - x.id);
+  const out = [];
+  const seen = new Set();
+  for (const r of rows) {
+    if (out.length >= max) break;
+    if (seen.has(r.e)) continue;
+    seen.add(r.e);
+    // 在这里的是他本人，或者权利层确认的同一个人（另一个平台上的他）
+    const hereId = among.has(r.e) ? r.e : equivalents(core, r.e).find((x) => among.has(x)) ?? null;
+    if (hereId == null || out.includes(hereId)) continue;
+    out.push(hereId);
+  }
   return out;
 }
 

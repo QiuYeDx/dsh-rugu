@@ -28,6 +28,7 @@ export function params(core) {
     background: r.background,
     contextSim: r.contextSim,
     prefetchCacheMax: r.prefetchCacheMax,
+    prefetchTtlMin: r.prefetchTtlMin,
     windowMaxGapH: r.window.maxGapH,
   };
   return {

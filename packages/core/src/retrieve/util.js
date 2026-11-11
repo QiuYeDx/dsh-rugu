@@ -132,6 +132,11 @@ export function selfId(core) {
 }
 
 /** 这个场合最新一条感知的 id（预取缓存键的一半，§8.1）。 */
+/** 全库最新一条感知的 id（D132：别处有没有新的事；没有感知是 0）。 */
+export function latestPerceptAnywhere(core) {
+  const row = core.store.get('SELECT MAX(id) AS id FROM percepts');
+  return row?.id ?? 0;
+}
 export function latestPerceptOf(core, settingKey) {
   const row = core.store.get('SELECT MAX(id) AS id FROM percepts WHERE setting_key = ?', settingKey);
   return row?.id ?? 0;

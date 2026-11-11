@@ -9,6 +9,8 @@
 //   - intentions：encode.dueIntentions → 按激活排序 → 浮上来前 encode.recheckIntention（评审:SC-08）→ 意图和它指向的事实都过关口①；
 //   - working（工作记忆，§8.10，D100）：第一步就同步算好（working.js），眼前这个人刚在别处跟她说过、她回过他的话确定地在她心里，
 //     写进 recallCached 的缓存（整个回想超时了也拿得到）；放进来的从普通回想的候选里去掉。
+//     她自己开口的一轮（空闲唤醒，D132）没有「眼前这个人」，按「她要对谁说」取（addresseesFor：这里的听众里，一对一就是对方，
+//     群里是她最近在别处来往过、又在这里的人）；这些人也算在场（人物卡、在场者近况、对着他的意图），「今天到目前为止」也给。
 // 「看起来在问过去」（§6.6、§8.5）：对她说的话看起来在问过去，就把这一轮切到有意回想（τ_del、可以等到 3 秒）。
 // 重新开始（§10.5、§17 Q6）：只给常驻区和长期记忆，不给「这里最近在聊什么」（暖启动、时间间隔、重新开始前不久的原文），
 // 等下一次压缩结束再恢复。
@@ -305,7 +307,9 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   // 直接对她说的消息触发的这一轮（D99，实测问题 #5）：关口①第二段没判过的条目，这一轮可以等它到有意回想的截止时间
   //（集成层本来就按这个时间等，见 dsh/src/host/context.js 的 recallWaitMs），不留到下一轮——人被直接叫到时也会停一下想一想（§9.3.5）。
   // 只延长等第二段的那一段，召回、渲染照不自主回想的时间算；第二段的条数、每小时次数、预算照旧
-  const directTurn = mode === 'involuntary' && !background && s.trigger === 'message' && !!focus && isToHer(focus);
+  // 她自己开口的一轮也等（D132）：没有人对她说话，这个场合就没有预取替它先判过第二段；不等的话，别处刚发生、还没评估过的事
+  // 这一轮判不完，要到下一轮才给——她自己开口的下一轮可能是几个小时以后
+  const directTurn = mode === 'involuntary' && !background && ((s.trigger === 'message' && !!focus && isToHer(focus)) || selfTurn);
   // 预取时替这一轮先判的在后台：等第二段自己的超时（不到点就记「判不完、待定」，那是这一轮的事，不该算到预取头上）
   const gateWait = directTurn ? () => Math.max(left(), cfg.recall.deliberate.deadlineMs - (performance.now() - t0))
     : prefetch ? () => (cfg.discretion?.stage2?.timeoutMs ?? 8000) + 500 : null;
@@ -342,10 +346,16 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   const latestId = latest?.id ?? 0;
   const cacheKey = cacheKeyOf(key, s.sessionId);
 
+  // 0a. 她自己开口的一轮（D132）：没有人在问她，但她要对这里的人说话——工作记忆按「她要对谁说」取，每个人各算一份。
+  //     不记成触发者（noteTurn 记的是 triggers）：外发守护的「被回答的人」照旧是空的
+  const addressees = selfTurn && !prefetch ? guard('addressees', () => addresseesFor(core, target, { key, selfId, cfg }), []) : [];
+  if (addressees.length) { try { bumpMetric(core.store, 'wm.selfTurn'); } catch { /* 只是计数 */ } }
+  const wmTriggers = selfTurn ? addressees.map((id) => ({ entityId: id, focus: null })) : triggers;
+
   // 0b. 工作记忆（§8.10，D100）：同步、零 LLM、不抽样，第一段判完就写进 recallCached 的缓存。预取时替这一轮先判的不做（它只预热第二段）
   const noWm = { entries: [], admitted: new Set(), top: [] };
   const wm = prefetch ? noWm
-    : guard('working', () => buildWorking(core, { key, focus, triggerEntityId, at, target, cfg, sent, placeOk, selfId, triggers, fault: diag.fault }) ?? noWm, noWm);
+    : guard('working', () => buildWorking(core, { key, focus, triggerEntityId, at, target, cfg, sent, placeOk, selfId, triggers: wmTriggers, fault: diag.fault }) ?? noWm, noWm);
   if (!prefetch && wm.entries.length) {
     guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries: wm.entries, degradeLevel: degrade(core), mode, at, partial: true, triggerEntityId }));
   }
@@ -381,7 +391,9 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   // 3. 各层的候选（每一层单独兜住：一层出错只少这一层）
   const restart = session?.restart_marker != null;
   const pendingL = session ? guard('ledger', () => pendingLayers(core, session), () => new Set()) : new Set();
-  const present = guard('present', () => presentOf(core, cset, key, at, selfId, triggerEntityId, cfg), () => (triggerEntityId != null ? [triggerEntityId] : []));
+  // 她要对着说的人也算在场（D132）：人物卡、对着他的意图跟着来
+  const lead = [triggerEntityId, ...addressees].filter(Number.isInteger);
+  const present = guard('present', () => presentOf(core, cset, key, at, selfId, lead, cfg), () => lead);
   const cueIds = guard('cues', () => [...new Set([...(cset?.cues?.names ?? []).map((n) => n.entityId), ...(cset?.cues?.mentioned ?? [])])].filter(Number.isInteger), []);
   const seed = [s.sessionId ?? key, String(latest?.id ?? 0)];
   /** @type {{ref: string, layer: string, role: string, group: string, order: number, cand?: object, extra?: object}[]} */
@@ -421,7 +433,8 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
     }
   });
 
-  if (mode === 'deliberate') {
+  // 她自己开口的一轮也给「今天到目前为止」（D132）：开口之前先知道今天在别处过得怎么样
+  if (mode === 'deliberate' || selfTurn) {
     for (const e of guard('today', () => todayFor(core, key, at, tz, cset?.cues?.timeWindows ?? [], cfg), [])) addExtra({ ref: e, layer: 'todaySoFar', role: 'today', group: `d:${e}` });
   }
 
@@ -634,7 +647,7 @@ function warmFor(core, key, focus, cfg) {
   return out;
 }
 
-function presentOf(core, cset, key, at, selfId, triggerEntityId, cfg) {
+function presentOf(core, cset, key, at, selfId, lead, cfg) {
   let ids = cset?.cues?.present;
   if (!Array.isArray(ids)) {
     // retrieve 没给线索：最近 recall.presentSpeakerWindowMin 分钟在这里亲自发过言的人（评审:PS-13）
@@ -643,8 +656,24 @@ function presentOf(core, cset, key, at, selfId, triggerEntityId, cfg) {
       .map((r) => r.id);
   }
   const out = [];
-  for (const id of [triggerEntityId, ...ids]) if (Number.isInteger(id) && id !== selfId && !out.includes(id)) out.push(id);
+  for (const id of [...lead, ...ids]) if (Number.isInteger(id) && id !== selfId && !out.includes(id)) out.push(id);
   return out;
+}
+
+/**
+ * 她自己开口的一轮要对谁说（D132）：这里的听众（名单 + 最近在这里说过话的人）里——一对一就是对方；别的场合是她最近在别处来往过、
+ * 又在这里的人（retrieve.recentPartners：按最近一次来往从新到旧，没有时间窗，最多 recall.working.maxTriggers 个）。
+ * 公开的、不认识的场合没有（工作记忆本来就不进这些场合）。只决定工作记忆替谁算、谁算在场；能不能进来照旧由 discretion.admitWorking 判。
+ * @returns {number[]}
+ */
+function addresseesFor(core, target, { key, selfId, cfg }) {
+  const a = target?.audience;
+  if (!a?.known || a.publicLike) return [];
+  const people = [...new Set([...(a.members ?? []), ...(a.recentSpeakers ?? [])])].filter((x) => Number.isSafeInteger(x) && x !== selfId);
+  if (!people.length) return [];
+  if (a.oneOnOne && people.length === 1) return people;
+  const max = Math.max(1, Math.floor(cfg.recall.working?.maxTriggers ?? 3));
+  return (core.mods.retrieve.recentPartners?.(core, { settingKey: key }, { among: people, max }) ?? []).filter((x) => Number.isSafeInteger(x) && x !== selfId);
 }
 
 function personsFor(present, triggerEntityId, selfId, sent, cfg) {

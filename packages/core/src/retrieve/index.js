@@ -17,9 +17,9 @@ import { render as renderImpl } from './render.js';
 import { looksLikePast as looksLikePastImpl } from './past.js';
 import { onPercepts as onPerceptsImpl, prefetch as prefetchImpl, cached as cachedImpl, cacheEntry, store as storeCache } from './prefetch.js';
 import { backgroundForExtraction as backgroundImpl } from './background.js';
-import { workingSet as workingSetImpl, topicSimilarity } from './working.js';
+import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, topicSimilarity } from './working.js';
 import { staticLevel, storeOk } from './level.js';
-import { errKind, latestPerceptOf, log, metric, safe } from './util.js';
+import { errKind, latestPerceptAnywhere, latestPerceptOf, log, metric, safe } from './util.js';
 
 /**
  * 一路的结果。
@@ -41,7 +41,7 @@ export function init(core) {
     breaker: { failures: 0, openUntil: 0 },   // 查询嵌入熔断（§8.8）
     exemplars: new Map(),         // 「看起来在问过去」的示例问法向量（按语言 + 空间）
     pastCache: new Map(),
-    lastSeen: new Map(),          // 场合键 → 上次回想时的最新感知 id（纯超时唤醒跳过）
+    lastSeen: new Map(),          // 场合键 → 上次回想时「这个场合最新一条:全库最新一条」感知的 id（纯超时唤醒、哪儿都没有新的事才跳过，D132）
     selfId: null,
     disposed: false,
   };
@@ -95,19 +95,21 @@ export async function recall(core, s, opt) {
     const plain = !opt?.query && !opt?.about && !opt?.time && !opt?.includeHistory;
     const entry = cacheEntry(core, s.settingKey);
     const fresh = entry && !entry.stale ? entry : null;
-    if (mode === 'involuntary' && plain && fresh && (fresh.full || staticLevel(core) >= 3 || s.trigger === 'idle')) {
+    // 她自己开启的一轮（idle）沿用缓存、或者干脆不回想，都要「别处也没有新的事」（D132）：原来只看这个场合有没有新消息，
+    // 安静了一夜的私聊里她主动开口时，拿到的是昨晚那一刻算好的候选（或者什么都没有），早上在别处发生的事一条都想不起来
+    if (mode === 'involuntary' && plain && fresh && (s.trigger === 'idle' ? !fresh.elsewhere : fresh.full || staticLevel(core) >= 3)) {
       metric(core, 'retrieve.cache.hit');
       return fresh.set;
     }
-    // 纯超时唤醒、没有新消息：不重新回想（§8.1）
-    const latest = latestPerceptOf(core, s.settingKey);
+    // 纯超时唤醒、哪儿都没有新消息：不重新回想（§8.1）
+    const latest = `${latestPerceptOf(core, s.settingKey)}:${latestPerceptAnywhere(core)}`;
     if (s.trigger === 'idle' && plain && st.lastSeen.get(s.settingKey) === latest) return emptySet(null, staticLevel(core));
     // 预取时（直接对她说的消息）做过的指代改写，同一份线索的回想接着用（有意回想的查询扩展，§6.6）
     const rewrites = fresh?.rewrites ?? [];
     const { set, queryVectors } = await runRecall(core, s, opt ?? { mode, deadlineMs: 0 }, { queryVectors: entry?.queryVectors ?? null, rewrites });
     st.lastSeen.set(s.settingKey, latest);
     if (mode === 'involuntary' && plain && CACHEABLE_TRIGGERS.has(s.trigger) && set.cues) {
-      storeCache(core, s.settingKey, { key: set.cues.latestPerceptId, cueHash: set.cues.hash, full: true, set, queryVectors, rewrites, at: core.now() });
+      storeCache(core, s.settingKey, { key: set.cues.latestPerceptId, cueHash: set.cues.hash, full: true, set, queryVectors, rewrites, at: core.now(), any: latestPerceptAnywhere(core) });
     }
     return set;
   } catch (e) {
@@ -137,7 +139,7 @@ export function onPercepts(core, settingKey, rows) { onPerceptsImpl(core, settin
 export async function prefetch(core, settingKey, opt) { return prefetchImpl(core, settingKey, opt ?? { full: false }); }
 
 /**
- * 预取缓存（同步）。键 = （场合键，最新感知 id）；对不上返回 null。
+ * 预取缓存（同步）。键 = （场合键，最新感知 id）；对不上、或者算好以后过了 recall.prefetchTtlMin（D132）返回 null。
  * @param {import('../core-types.js').CoreContext} core
  * @param {string} settingKey
  * @returns {import('../core-types.js').CandidateSet|null}
@@ -228,6 +230,24 @@ export function workingSet(core, cues, opt) {
     metric(core, 'retrieve.working.error');
     log(core, 'warn', 'retrieve.working.failed', { error: errKind(e) });
     return { triggerEntityId: opt?.triggerEntityId ?? null, people: [], lines: [], units: [], candidates: 0, aboveTau: 0 };
+  }
+}
+
+/**
+ * 【补】她最近在别的场合来往过的人里，哪几个在这里（D132；同步、零 LLM）：她自己开口的一轮没有「眼前这个人」，context 拿它定
+ * 「她要对谁说」，再按每个人各算一份 workingSet。来往 = 别处对她说的话、她在别处接着回的那个人；among 是这里的听众（权利层确认的
+ * 同一个人也算在这里）。按最近一次来往从新到旧，最多 max 个（默认 recall.working.maxTriggers）；没有时间窗，一次往回看
+ * recall.working.candidatePool 条。不抛错：出问题返回空的。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{settingKey: string}} q
+ * @param {{among: number[], max?: number}} opt
+ * @returns {number[]}
+ */
+export function recentPartners(core, q, opt) {
+  try { return recentPartnersImpl(core, q, opt ?? {}); } catch (e) {
+    metric(core, 'retrieve.working.error');
+    log(core, 'warn', 'retrieve.partners.failed', { error: errKind(e) });
+    return [];
   }
 }
 

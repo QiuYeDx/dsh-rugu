@@ -1,6 +1,6 @@
 // 线索（§8.1）：热路径确定性、零 LLM、只读几条 SQL。核心自己从感知库里组装 Situation（评审:AR-03）：
-//   窗口（最近 6–10 条，「名字：文字」，≤ 400 字）、在场者（成员能列全时是成员，否则最近 30 分钟在本场合亲自发过言的人；
-//   再加上正在对她说话的人和她自己，评审:PS-13）、被提到的人（@、引用、回复：只是线索，不算在场）、正文里的名字（entities.nameMatcher）、时间表达（lang）、
+//   窗口（最近 6–10 条，「名字：文字」，≤ 400 字）、在场者（成员能列全时是成员——名单拉到了的，或者场合本身定得出来的（一对一，D132）；
+//   否则最近 30 分钟在本场合亲自发过言的人；再加上正在对她说话的人和她自己，评审:PS-13）、被提到的人（@、引用、回复：只是线索，不算在场）、正文里的名字（entities.nameMatcher）、时间表达（lang）、
 //   查询文本（1–2 条：窗口一条，最新对她说的那句一条；有意回想的 query 放最前）、「看起来在问过去」的同步部分。
 import { charLen, clip, latestPerceptOf, parseJson, rowsByIds, safe, selfId, sha } from './util.js';
 import { nameOf } from './names.js';
@@ -73,8 +73,14 @@ export function buildCues(core, s) {
   const present = new Set();
   const ps = safe(core, 'presence', () => core.store.get(
     'SELECT members_json, completeness FROM presence_sets WHERE setting_key = ? ORDER BY at DESC, id DESC LIMIT 1', settingKey), null);
+  // 名单没拉到、但场合本身定得出成员的（一对一：她和唯一在这里说过话的那个人，discretion.audienceOf）：他就是在场的人（D132）。
+  // 原来只数「最近 30 分钟在这里说过话的」：隔了一夜她自己开口的一轮，在场的只剩她自己，在场者近况、人物卡、对着他的意图都没有
+  const fixed = ps?.completeness === 'exact' ? null
+    : safe(core, 'audience', () => { const a = core.mods.discretion.audienceOf(core, settingKey, at); return a?.known && a.completeness === 'exact' && Array.isArray(a.members) ? a.members : null; }, null);
   if (ps?.completeness === 'exact') {
     for (const id of parseJson(ps.members_json, [])) if (Number.isInteger(id)) present.add(id);
+  } else if (fixed) {
+    for (const id of fixed) if (Number.isInteger(id)) present.add(id);
   } else {
     const since = at - rc.presentSpeakerWindowMin * 60_000;
     const recent = safe(core, 'speakers', () => core.store.all(

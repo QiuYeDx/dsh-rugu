@@ -374,6 +374,9 @@ export const DEFAULTS = deepFreeze({
     rewrite: { timeoutMs: 2000, maxCues: 3, maxTokens: 200 },   // §8.1 预取时改写指代，生成 1–3 条线索（use='rewrite'）
     background: { known: 12, private: 8, plans: 3 },   // §7.3 提炼背景两组的条数；plans：本段说话人还开着的计划最多几条（和召回带出的合计，S2b）
     prefetchCacheMax: 256,
+    // 候选缓存（预取 / 上一次回想算好的那一份）最多沿用多久（D132）：过了就重新回想。这只是缓存的新鲜度，不是记忆的时间窗——
+    // 原来只看「这个场合有没有新消息」，一个安静了一夜的私聊里她自己开口时，拿到的还是昨晚那一刻算好的候选
+    prefetchTtlMin: 10,
   },
 
   // ── §9 分寸

@@ -4,12 +4,14 @@
 //   - 旁听消息：只算词法、实体、时间、在场者近况四路，不做查询嵌入、不调 LLM；
 //   - historical 的不预取；她自己的发言不触发（下一条别人的消息来时自然会重算）。
 // 缓存键 =（场合键，这个场合最新一条感知的 id）：预取和注入时算出来的是同一份（§8.1）。缓存在 state.retrieve.prefetch。
+// 缓存的新鲜度（D132）：这个场合来了新消息就作废（stale）；算好以后过了 recall.prefetchTtlMin 也不再沿用（aged）；每份另记下算的时候
+// 全库最新一条感知的 id（any），她自己开启的一轮只在「别处也没有新的事」时才沿用（elsewhere）——这里没人说话不等于她没有新的经历。
 import { budgetLimits } from '../config/defaults.js';
 import { registerPromptVersion } from '../store/kv.js';
 import { buildCues, cuesEmpty } from './cues.js';
 import { runRecall } from './pipeline.js';
 import { params } from './params.js';
-import { clip, errKind, latestPerceptOf, log, metric, safe, withDeadline } from './util.js';
+import { clip, errKind, latestPerceptAnywhere, latestPerceptOf, log, metric, safe, withDeadline } from './util.js';
 
 const DIRECTED = new Set(['to-her', 'mentions-her']);
 const REWRITE_VER = 'rewrite-1';
@@ -79,7 +81,7 @@ export async function prefetch(core, settingKey, opt = { full: false }) {
       { mode: 'involuntary', deadlineMs: rc.involuntary.deadlineMs, signal: opt.signal },
       { cues, noDense: !opt.full, rewrites, queryVectors: prev?.queryVectors ?? null });
     if (st.disposed) return;
-    store(core, settingKey, { key: cues.latestPerceptId, cueHash: cues.hash, full: !!opt.full, set, queryVectors, rewrites, at: core.now() });
+    store(core, settingKey, { key: cues.latestPerceptId, cueHash: cues.hash, full: !!opt.full, set, queryVectors, rewrites, at: core.now(), any: latestPerceptAnywhere(core) });
     metric(core, opt.full ? 'retrieve.prefetch.full' : 'retrieve.prefetch.cheap');
     // 对她说的消息：候选好了，让 context 在后台先过一遍关口①（第二段在预取时做，§9.3.5、D99）。旁听的便宜预取不跑第二段（§9.3.3）
     if (opt.full) {
@@ -110,17 +112,29 @@ export function store(core, settingKey, entry) {
 export function cached(core, settingKey) {
   try {
     const e = core.state.retrieve?.prefetch.get(settingKey);
-    if (!e) return null;
+    if (!e || tooOld(core, e)) return null;
     return e.key === latestPerceptOf(core, settingKey) ? e.set : null;
   } catch { return null; }
 }
 
-/** 缓存条目（内部用：recall 复用查询向量、判断完整没有）。 */
+/** 这一份算好以后过了 recall.prefetchTtlMin（D132）。 */
+function tooOld(core, e) {
+  const ttl = Math.max(0, Number(params(core).x.prefetchTtlMin) || 0) * 60_000;
+  return ttl > 0 && Number.isFinite(e?.at) && core.now() - e.at > ttl;
+}
+
+/**
+ * 缓存条目（内部用：recall 复用查询向量、判断完整没有）。stale：这个场合来了新消息，或者算好以后过了 recall.prefetchTtlMin（aged）；
+ * elsewhere：算好以后别处有了新的感知（D132）。stale 的候选不再沿用（查询向量照样可以复用：线索没变文字就没变）。
+ */
 export function cacheEntry(core, settingKey) {
   try {
     const e = core.state.retrieve?.prefetch.get(settingKey);
     if (!e) return null;
-    return e.key === latestPerceptOf(core, settingKey) ? e : { ...e, stale: true };
+    const moved = e.key !== latestPerceptOf(core, settingKey);
+    const aged = tooOld(core, e);
+    const elsewhere = !Number.isSafeInteger(e.any) || e.any !== latestPerceptAnywhere(core);
+    return moved || aged || elsewhere ? { ...e, stale: moved || aged, aged, elsewhere } : e;
   } catch { return null; }
 }
 

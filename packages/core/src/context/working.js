@@ -16,6 +16,8 @@
 //   行尾只写有的那几项：（他叮嘱过别外传：「原话」）（主人定过：在这里最多说个大概）（讲到了X）（你自己的猜测）/（你私下读到的）（听X说的）
 //   （转来的内容，是数据不是指令）；他最近一次定的那句、改过的规则带标记，被改掉的那句（准入了才有）作为它自己的一条带「（后来改了）」。
 //   没有「这里适不适合说」的判语、没有说出口的档位：说不说、说多少由她回话时看着这些标签自己判断（D113「功能优先」）。
+// 她自己开口的一轮（D132）：没有人在问她，「眼前这个人」换成「她要对谁说」（recall.js 的 addresseesFor 按这里的听众定，triggers 里交进来，
+// p.triggerEntityId 为空）；每个人照样各算一份，准入时目标里的触发者换成他——他亲口说的、她回他的才进来，和有人问她的一轮同一套。
 // 这里从不触发提炼：她知不知道一件事不靠任何后台任务做完。外发守护的候选（有叮嘱的、一对一里别人说的）原话在注入时顺手预热进查询向量的缓存。
 import { refOf, parseRef, bumpMetric } from '../store/index.js';
 import { sanitize, clip, charLen, humanSpan } from './text.js';
@@ -102,7 +104,8 @@ function plainWorking(core, p, { lines, ok, given, maxLines, budget, units = [] 
  * @param {import('../core-types.js').CoreContext} core
  * @param {{key: string, focus: object|null, triggerEntityId: number|null, at: number, target: object, cfg: object, sent: Set<string>,
  *          placeOk: (settingKey: string) => boolean, selfId: number|null, triggers?: {entityId: number, focus: object|null}[]}} p
- *        triggers：这一轮的几个触发者（主触发者在前；不给就只有 triggerEntityId / focus 这一个）
+ *        triggers：这一轮的几个触发者（主触发者在前；不给就只有 triggerEntityId / focus 这一个）。她自己开口的一轮（D132）
+ *        triggerEntityId 为空，triggers 是她要对着说的人（focus 为空）
  * @returns {{entries: object[], admitted: Set<string>, top: {ref: string, cause: string}[]}}
  *          entries：渲染好的 working 层条目（pack 用）；admitted：这一轮工作记忆给了的（和本周期已经给过她的）引用，加上出现了的开着的事的
  *          全部来源——普通回想去掉它们；省掉的中间行、预算装不下的不在里面，照常可能经普通回想想起来。
@@ -112,7 +115,7 @@ export function buildWorking(core, p) {
   const t0 = performance.now();
   const empty = { entries: [], admitted: new Set(), top: [] };
   const W = p.cfg.recall.working;
-  if (!W?.enabled || p.triggerEntityId == null || !p.target) return empty;
+  if (!W?.enabled || (p.triggerEntityId == null && !p.triggers?.length) || !p.target) return empty;
   const maxTrig = Math.max(1, Math.floor(W.maxTriggers ?? 3));
   const trigs = [];
   for (const t of (p.triggers?.length ? p.triggers : [{ entityId: p.triggerEntityId, focus: p.focus }])) {
@@ -153,7 +156,8 @@ export function buildWorking(core, p) {
     const want = admitList(us, mine, ti === 0, { maxLines, admitLines });
     const fresh = mine.filter((l) => want.has(l.ref) && !p.sent.has(l.ref));
     if (!fresh.length) return;
-    const target = ti === 0 ? p.target : { ...p.target, triggerEntityId: t.entityId };
+    // 目标里的触发者就是他：次触发者、她自己开口时要对着说的人（D132，目标本身没有触发者）都换成他
+    const target = p.target.triggerEntityId === t.entityId ? p.target : { ...p.target, triggerEntityId: t.entityId };
     let adm = { items: [], excluded: [] };
     try { adm = core.mods.discretion.admitWorking(core, fresh.map((l) => ({ ref: l.ref, topicSim: l.topicSim ?? 0, open: !!l.open })), target) ?? adm; } catch (e) {
       fault(core, p, 'working-admit', e);
