@@ -535,7 +535,8 @@ test('R8：早上的「乘3」之后他在同一个群里聊了一整天不相�
         const grp = wm.filter((i) => i.group === g);
         assert.ok(!grp.some((i) => /我这边第/.test(i.rendered)), `${variant}：不相干的话不算乘3 的后续 ${show(grp)}`);
         assert.ok(!/比他在这里跟你说过的都晚/.test(grp[0].rendered), `${variant}：${show(grp)}`);
-        assert.match(grp[0].rendered, /\d+ 小时前/, `${variant}：段头是乘3 那时候 ${show(grp)}`);
+        // 段头写乘3 那时候（D148：几个小时以前的写「今天下午 15:00」「昨天晚上 18:00」这样的钟点，不是「几分钟前」）
+        assert.match(grp[0].rendered, /^〔[^〕]*(?:今天|今晚|昨天)\S* \d{1,2}:\d\d(?! ·)[^〕]*〕/u, `${variant}：段头是乘3 那时候 ${show(grp)}`);
       } finally { await w.close(); }
     });
   }

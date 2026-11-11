@@ -169,12 +169,14 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  *   - 时态由 dynamics.pHold + tense 决定（「那天他加班了」「他之前说在加班，现在不知道」）；
  *   - 来源说法按来源和激活：「他自己说的 / 听阿明说 / 我猜」，激活低时可以说成「好像是听你们群里谁提过」；
  *   - 版本：最近被取代的带出来渲染成「之前……，后来……」；
- *   - verdict='share_vague' 时用第二段写好的含糊版本，来源也含糊；绝对时间一律写出来（F25）。
+ *   - verdict='share_vague' 时用第二段写好的含糊版本，来源也含糊；
+ *   - 时间按人感觉的写（D148，lang.describeTime：「今晚 21:39 · 20 分钟前」「昨天晚上 22:14」「周日（11/8）下午」），钟点和日子照样写着（F25）。
  * 渲染结果 ≤ itemChars；文字过 intake.sanitizeForPrompt。
  * 可选字段：opt.settingKey（目标场合：来源在同一个场合时说「在这里」，称呼按这个场合里的叫法）；
  * opt.previous（旧版本也过了关口①时传进来，渲染成「之前……，后来……」；没传就只渲染这一版）；
  * opt.placeAllowed【补】（场合键 → 能不能在目标这里写出那个场合的名字：别的场合的名字也是记忆，场合的档案卡过了关口①才写，
- * 否则来源说法里不写在哪儿；context 总是给，不给时照旧写名字）。
+ * 否则来源说法里不写在哪儿；context 总是给，不给时照旧写名字）；
+ * opt.timeStyle【补】（D148：'full' 缺省，几个小时以内带「多久以前」；'day' 不带，常驻区这种会冻结一段时间的文字用）。
  * 候选上的 belief（maybe_same）让措辞带「好像」、把握不超过链接的置信度；计划写明状态和结案的绝对时间；
  * blank（补不回的空白）只写「那几天有些事记不太清」，说个大概也一样，不给锚点的内容。
  * 记忆已经不在了（被删）返回空字符串，调用方跳过这条。
@@ -182,7 +184,7 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  * @param {import('../core-types.js').ScoredCandidate} c
  * @param {{verdict: 'share'|'share_vague', vagueText?: string|null, at: number, itemChars: number, settingKey?: string|null,
  *          previous?: {candidate: import('../core-types.js').ScoredCandidate, verdict: 'share'|'share_vague', vagueText?: string|null}|null,
- *          placeAllowed?: (settingKey: string) => boolean}} opt
+ *          placeAllowed?: (settingKey: string) => boolean, timeStyle?: 'full'|'day'}} opt
  * @returns {{rendered: string, provenance: string, confidence: number}}
  */
 export function render(core, c, opt) { return renderImpl(core, c, opt); }

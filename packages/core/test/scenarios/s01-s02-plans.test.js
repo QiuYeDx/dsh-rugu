@@ -125,7 +125,8 @@ test('S1 拿快递：计划 → 拿到了（这一次结案、意图撤掉）→
     assert.ok(['share', 'share_vague'].includes(p.verdict));
     assert.match(p.rendered, /快递/);
     assert.match(p.rendered, /做完了/, '时态正确：做完了');
-    assert.match(p.rendered, /10\/31 20:00/, '「那天晚上说拿到的」：结案的时间来自状态历史');
+    // 三天后：「周六（10/31）晚上」（D148：一周以内写星期几和时段，不让她自己算是哪天）
+    assert.match(p.rendered, /后来做完了，周六（10\/31）晚上/u, '「那天晚上说拿到的」：结案的时间来自状态历史');
     const o = itemOf(L, `e${outcomeId}`);
     assert.ok(o && /拿到了/.test(o.rendered), `沿着「完成了」这条链接找到「他说拿到了」（${show(L)}）`);
     assert.doesNotMatch(allText(L), /还没听说结果|后来怎么样没听说/, '不会说成还没下文');

@@ -27,7 +27,7 @@ import { needsRefresh, refreshResident, swapStaged, isRestoring, noteSettingId }
 import { activateExtras, cardFor, bestImpression, burstGap, bestName } from './people.js';
 import { buildWorking } from './working.js';
 import { recallDiag } from './diag.js';
-import { sanitize, clip, charLen, fmtTime, fmtDate, fmtShort, humanSpan, dayStart, newTraceId, HOUR_MS, MINUTE_MS } from './text.js';
+import { sanitize, clip, charLen, whenText, nowText, spanText, dayStart, newTraceId, HOUR_MS, MINUTE_MS } from './text.js';
 
 const CONTENT = new Set(['share', 'share_vague']);
 // 「心里有数」「还在想」的提示只跟着话题线索走；暖启动、人物卡这些背景层不给暗示
@@ -359,7 +359,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
 
   // 0b. 工作记忆（§8.10，D100）：同步、零 LLM、不抽样，第一段判完就写进 recallCached 的缓存。预取时替这一轮先判的不做（它只预热第二段）
   const noWm = { entries: [], admitted: new Set(), top: [] };
-  const wm = prefetch ? noWm
+  let wm = prefetch ? noWm
     : guard('working', () => buildWorking(core, { key, focus, triggerEntityId, at, target, cfg, sent, placeOk, selfId, triggers: wmTriggers, fault: diag.fault }) ?? noWm, noWm);
   if (!prefetch && wm.entries.length) {
     guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries: wm.entries, degradeLevel: degrade(core), mode, at, partial: true, triggerEntityId }));
@@ -387,11 +387,19 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   }
   const degradeLevel = Number.isInteger(cset?.degradeLevel) ? cset.degradeLevel : degrade(core);
   diag.setLevel(degradeLevel);
+  // 她自己调记忆工具认真想一件事（D148，实测问题 #51）：查到的排最前；工作记忆、在场者近况只留和要想的这件事有关的
+  const toolRecall = opt.mode === 'deliberate' && typeof opt.query === 'string' && !!opt.query.trim();
+  const asked = toolRecall ? guard('tool-focus', () => askedRelevance(core, opt.query, cset, cfg), null) : null;
+  if (asked && wm.entries.length) {
+    wm = { ...wm, entries: guard('tool-focus', () => relevantWorking(wm.entries, asked), wm.entries) };
+  }
   // 已经放进工作记忆的不再走普通回想（同一条不判两遍、不占两份名额）；预取缓存里的候选集是共用的，不改它，另拿一份。
   // 有意回想只去掉这一轮工作记忆里真的给了的：本周期已经给过她的那几条照常经回想、按「已发过」去重，
   // 什么都没给出来时集成层据此说「前面已经有了」，不说成想不起来（D95）
   const wmGiven = new Set(wm.entries.map((e) => e.ref));
-  const recalledItems = (Array.isArray(cset?.items) ? cset.items : []).filter((c) => !(mode === 'deliberate' ? wmGiven : wm.admitted).has(c?.ref));
+  const recalledItems = (Array.isArray(cset?.items) ? cset.items : []).filter((c) => !(mode === 'deliberate' ? wmGiven : wm.admitted).has(c?.ref))
+    // 有意回想的工具：只靠「在场」那一路来的近况（他刚才在别处说的、和要想的事不相干的）不放
+    .filter((c) => !asked || !isPresentRoute(c) || asked.byRoute(c) || asked.byText(textOfRef(core, c?.ref)));
 
   // 3. 各层的候选（每一层单独兜住：一层出错只少这一层）
   const restart = session?.restart_marker != null;
@@ -509,8 +517,8 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   const budget = guard('budget', () => budgetState(core, session, at), () => ({ dayUsed: 0, dayLimit: Infinity, rollingLeft: Infinity }));
   // 打包出错：退回只打包工作记忆（她眼前这个人的那几句最要紧）
   let packed = {};
-  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }),
-    () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }), []));
+  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall }),
+    () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall }), []));
   // 6a. 指回去（D146）：这一轮是别人直接对她说的话开启的（她自己开启的轮、旁听的轮、记忆工具那条路都不算——工具那条路有 D95 的提示），
   //     回想排在这一轮新给的「想起来的 / 在场者近况」前面的条目这个周期已经给过、被去重掉了：给一行指回去，和别的条目一起再打包一次
   //     （它排在想起来的那一档前面，块满了时挤掉的是排得比它靠后的新条目）。算不出来就照第一次打包的结果给
@@ -630,6 +638,53 @@ function isPresentRoute(c) {
   return Number.isFinite(c?.ranks?.present);
 }
 
+// ── 有意回想的工具：和要想的事有关的（D148） ───────────────────────────────
+
+/**
+ * 她调记忆工具要想的这件事（query）：哪些条目和它有关。
+ *   - 按字面和问题比（lang.queryTerms 的词，重合的占较短一边的比例，短的一边词很少时打折；≥ context.toolRecall.minSim 才算）；
+ *   - 或者 retrieve 稠密那一路把它排在前 context.toolRecall.denseTop 名以内（稠密路对每一条都有个名次，只有最前的几名才说明是在问它）。
+ *   别的几路不算：词法那一路的词里有实体词元（问题里提到主人，主人说过的每一句都对得上），实体、时间、在场那几路也一样不看问题的内容。
+ * @returns {{hits: Set<string>, byRoute: (c: object) => boolean, byText: (text: string) => boolean}}
+ */
+function askedRelevance(core, query, cset, cfg) {
+  const denseTop = Number.isFinite(cfg.context.toolRecall?.denseTop) ? cfg.context.toolRecall.denseTop : 5;
+  const byRoute = (c) => Number.isFinite(c?.ranks?.dense) && c.ranks.dense <= denseTop;
+  const hits = new Set((Array.isArray(cset?.items) ? cset.items : []).filter(byRoute).map((c) => c.ref));
+  const terms = (t) => new Set((core.mods.lang.queryTerms(core, String(t ?? '')) ?? []).map((w) => String(w).normalize('NFKC').toLowerCase()).filter(Boolean));
+  const q = terms(query);
+  const min = Number.isFinite(cfg.context.toolRecall?.minSim) ? cfg.context.toolRecall.minSim : 0.3;
+  const byText = (text) => {
+    if (!q.size || !text) return false;
+    let t;
+    try { t = terms(text); } catch { return false; }
+    if (!t.size) return false;
+    let n = 0;
+    for (const w of t) if (q.has(w)) n += 1;
+    const m = Math.min(q.size, t.size);
+    return n / m * Math.min(1, Math.sqrt(m / 2)) >= min;
+  };
+  return { hits, byRoute, byText };
+}
+
+/**
+ * 工作记忆里和要想的事有关的那几段（D148）：一段里有一行是 retrieve 按问题找到的、或者字面对得上问题，整段留下（段头带着在哪儿、什么时候）；
+ * 别的段这一次不放。比的是那一行的话本身，不比段头（段头里的场合名不算话题）。
+ */
+function relevantWorking(entries, asked) {
+  const bare = (s) => String(s ?? '').replace(/^〔[^〕]*〕/u, '').replace(/^（中间又来回了 \d+ 句）/u, '').replace(/^[^：]{0,24}：/u, '');
+  const keep = new Set();
+  for (const e of entries) if (asked.hits.has(e.ref) || asked.byText(bare(e.rendered))) keep.add(e.group);
+  return entries.filter((e) => keep.has(e.group));
+}
+
+/** 一条感知的原话（在场者近况那一路的条目和问题比字面用）；别的种类给空字符串。 */
+function textOfRef(core, ref) {
+  const m = parseRef(ref);
+  if (m?.kind !== 'percept') return '';
+  try { return String(core.store.get('SELECT text FROM percepts WHERE id = ?', m.id)?.text ?? ''); } catch { return ''; }
+}
+
 // ── 时间间隔（§10.4，评审:SC-21） ─────────────────────────────────────────
 
 function gapsFor(core, { key, focus, session, triggerEntityId, selfId, cfg }) {
@@ -642,7 +697,13 @@ function gapsFor(core, { key, focus, session, triggerEntityId, selfId, cfg }) {
   const rows = core.store.all('SELECT id, at FROM percepts WHERE setting_key = ? AND id <= ? ORDER BY id DESC LIMIT 200', key, focus.id);
   const sg = burstGap(rows, gapMs);
   if (sg && fresh(sg.burstStart)) {
-    out.push({ kind: 'setting', ref: unitBefore(core, key, sg.prev), alt: refOf('percept', sg.prev.id), prevAt: sg.prev.at, burstStartAt: sg.burstStart.at });
+    // 这里隔了很久，可眼前这个人之后在别处一直和她有来往（D148，实测问题 #47）：间隔那一句要把这件事也说清楚
+    let elsewhere = null;
+    try {
+      if (triggerEntityId && triggerEntityId !== selfId) elsewhere = elsewhereSince(core, { key, entityId: triggerEntityId, since: sg.prev, before: focus });
+    } catch { elsewhere = null; }   // 查不出来：照旧只说这里隔了多久
+    out.push({ kind: 'setting', ref: unitBefore(core, key, sg.prev), alt: refOf('percept', sg.prev.id), prevAt: sg.prev.at, burstStartAt: sg.burstStart.at,
+      ...(elsewhere ? { elsewhere } : {}) });
   }
   // 这个人（不在场合间隔里时）：她和他距上次说话很久了
   if (!out.length && triggerEntityId && triggerEntityId !== selfId) {
@@ -653,6 +714,28 @@ function gapsFor(core, { key, focus, session, triggerEntityId, selfId, cfg }) {
     }
   }
   return out;
+}
+
+/**
+ * 这里上次聊过之后，眼前这个人在别处和她的来往（D148）：他在别的场合亲口说的话（不是转来的材料、不是只有她看得到的），
+ * 和她在别处接着回他的话（她那一句前面最近一条别人亲口说的是他，同一场合；和 retrieve.recentPartners 同一个口径）。
+ * 只看这里上一条消息之后、这一句之前的。返回最近一次的时间、场合，和他在别处说了几句；没有返回 null。
+ * @returns {{at: number, settingKey: string, count: number}|null}
+ */
+function elsewhereSince(core, { key, entityId, since, before }) {
+  const lo = Number.isFinite(since?.id) ? since.id : 0;
+  const t0 = Number.isFinite(since?.at) ? since.at : 0;
+  const hi = Number.isSafeInteger(before?.id) ? before.id : Number.MAX_SAFE_INTEGER;
+  const his = core.store.get(`SELECT COUNT(*) AS n, MAX(id) AS id FROM percepts WHERE id > ? AND id < ? AND at > ? AND setting_key <> ? AND actor_entity_id = ?
+      AND actor_self = 0 AND kind IN ('utterance','action') AND standing <> 'material' AND visible_to <> 'her-only'`, lo, hi, t0, key, entityId);
+  const hisRow = Number.isSafeInteger(his?.id) ? core.store.get('SELECT id, at, setting_key FROM percepts WHERE id = ?', his.id) : null;
+  const mine = core.store.get(`SELECT s.id, s.at, s.setting_key FROM percepts s WHERE s.id > ? AND s.id < ? AND s.at > ? AND s.setting_key <> ? AND s.actor_self = 1
+      AND s.kind IN ('self-utterance','self-action')
+      AND (SELECT o.actor_entity_id FROM percepts o WHERE o.setting_key = s.setting_key AND o.id < s.id AND o.actor_self = 0 AND o.kind IN ('utterance','action')
+           ORDER BY o.id DESC LIMIT 1) = ?
+      ORDER BY s.id DESC LIMIT 1`, lo, hi, t0, key, entityId);
+  const last = [hisRow, mine].filter(Boolean).sort((a, b) => b.id - a.id)[0] ?? null;
+  return last ? { at: last.at, settingKey: last.setting_key, count: Number(his?.n ?? 0) } : null;
 }
 
 /** 上次聊到的东西：上一段经历（情节）→ 含那条消息的原文窗口 → 那条消息本身。 */
@@ -849,7 +932,7 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       const pickG = (gm && CONTENT.has(gm.verdict) && { s: slot, g: gm }) || (ga && CONTENT.has(ga.verdict) && { s: alt, g: ga })
         || (gm && { s: slot, g: gm }) || (ga && { s: alt, g: ga }) || null;
       if (!pickG) return;
-      const text = gapText(core, slot.extra, pickG.g, scored.get(pickG.s.ref), { at, tz, cfg, key });
+      const text = gapText(core, slot.extra, pickG.g, scored.get(pickG.s.ref), { at, tz, cfg, key, placeOk });
       // 结论照实记：上次的内容不能说时这一行只有时间，不进污点账本
       push({ ...pickG.s, order: slot.order, group: slot.group }, pickG.g, text, { confidence: 1, provenance: '' });
       return;
@@ -1004,7 +1087,7 @@ function groupOutcomes(entries, scored) {
 function renderContent(core, cand, g, { at, tz, key, chars, previous = null, told = true, placeOk = () => false, mark = '', fault = null }) {
   if (!cand || !(chars > 0)) return null;
   // 「（后来换了新的）」（D110 C7）：它的来源原话被他后来的一句改掉了（第一眼的 replaces）；放得下才带，先于「讲过了」
-  const note = `${mark && chars - charLen(mark) >= TOLD_MIN_BODY ? mark : ''}${told && !cand.fok ? toldNote(g, at, tz) : ''}`;
+  const note = `${mark && chars - charLen(mark) >= TOLD_MIN_BODY ? mark : ''}${told && !cand.fok ? toldNote(core, g, at) : ''}`;
   const room = note && chars - charLen(note) >= TOLD_MIN_BODY ? chars - charLen(note) : chars;
   const tail = room < chars ? note : '';
   try {
@@ -1038,12 +1121,13 @@ function placeGate(core, target, key) {
   };
 }
 
-/** 「讲过了」附注（S14）：讲全了的别当新鲜事再讲；只说过个大概的，别把那个大概当新鲜事。绝对时间（F25）。 */
-function toldNote(g, at, tz) {
+/** 「讲过了」附注（S14）：讲全了的别当新鲜事再讲；只说过个大概的，别把那个大概当新鲜事。时间按人感觉的写，不带「多久以前」（D148：「你今晚 21:18 …」）。 */
+function toldNote(core, g, at) {
   const t = g?.told;
   if (!t || !Number.isFinite(t.at)) return '';
-  const when = fmtShort(t.at, tz, at);
-  return t.level === 'vague' ? `（你 ${when} 对这里的人提过个大概，别把那个大概当新鲜事再讲）` : `（你 ${when} 已经对这里的人讲过，别当新鲜事再讲）`;
+  const w = whenText(core, t.at, at, 'day');
+  const when = `${/^\d/u.test(w) ? ' ' : ''}${w}${/\d$/u.test(w) ? ' ' : ''}`;
+  return t.level === 'vague' ? `（你${when}对这里的人提过个大概，别把那个大概当新鲜事再讲）` : `（你${when}已经对这里的人讲过，别当新鲜事再讲）`;
 }
 
 /**
@@ -1099,19 +1183,49 @@ function subjectOf(core, ref, selfId) {
   return Number.isInteger(id) && id !== selfId ? id : null;
 }
 
-/** 「现在是 X；距你们上次在这里聊已经 N 天（上次是 …），上次聊到：……」（评审:SC-21）。上次聊的内容不能说时只给时间。 */
-function gapText(core, g0, g, cand, { at, tz, cfg, key }) {
-  const ago = humanSpan(at - g0.prevAt);
-  const head = g0.kind === 'setting'
-    ? `现在是 ${fmtTime(at, tz)}；距你们上次在这里聊已经过去 ${ago}（上次是 ${fmtDate(g0.prevAt, tz)}）`
-    : `现在是 ${fmtTime(at, tz)}；距你上次和正在跟你说话的这个人聊已经过去 ${ago}（上次是 ${fmtDate(g0.prevAt, tz)}）`;
-  const tail = '。隔了这么久，先接住眼前这句，别直接接着那时的话题';
-  let text = sanitize(core, `${head}${tail}`);
-  if (CONTENT.has(g.verdict)) {
-    const r = renderContent(core, cand, g, { at, tz, key, chars: cfg.recall.involuntary.itemChars, told: false });
-    if (r) text = `${sanitize(core, `${head}，上次聊到：`)}${r.rendered}${tail}`;
+/**
+ * 「现在是 X；上次在这里聊是周六（11/7）晚上，已经 4 天了，上次聊到：……」（评审:SC-21；D148 起时间都按人感觉的写）。上次聊的内容不能说时只给时间。
+ * 间隔要看人（D148，实测问题 #47）：这里隔了很久，可眼前这个人之后在别处和她有来往（g0.elsewhere）时两件事都说——
+ * 「；不过今天你们在别处一直有来往，最近一次是在「X」，今晚 21:55 · 5 分钟前」，不再说「隔了这么久」。那个场合的名字按工作记忆段头同样的放行规则
+ * （placeOk：那个场合的档案卡在这一轮的目标上过了关口①），说不出名字就只说「在别处」。
+ * 整行 ≤ itemChars + 40 字：上次聊到的内容放得下才放（至少 GAP_MIN_BODY 字）。
+ */
+function gapText(core, g0, g, cand, { at, tz, cfg, key, placeOk = () => false }) {
+  const sp = (s) => (/^\d/u.test(s) ? ` ${s}` : s);
+  const last = whenText(core, g0.prevAt, at, 'day');
+  const span = spanText(core, at - g0.prevAt);
+  let head = g0.kind === 'setting'
+    ? `现在是 ${nowText(core, at)}；上次在这里聊是${sp(last)}，已经 ${span}了`
+    : `现在是 ${nowText(core, at)}；你上次和正在跟你说话的这个人聊是${sp(last)}，已经 ${span}了`;
+  const ew = g0.kind === 'setting' ? g0.elsewhere : null;
+  if (ew && Number.isFinite(ew.at)) {
+    const today = dayStart(ew.at, tz) === dayStart(at, tz);
+    const lead = today ? (ew.count >= 3 ? '不过今天你们在别处一直有来往' : '不过今天你们在别处聊过') : '不过之后你们在别处还聊过';
+    let where = '';
+    try { where = placeOk(ew.settingKey) ? placeLabel(core, ew.settingKey) : ''; } catch { where = ''; }
+    head += `；${lead}，最近一次是${where ? `在${where}，` : ''}${sp(whenText(core, ew.at, at, 'full'))}`;
   }
-  return clip(text, cfg.recall.involuntary.itemChars + 120);
+  const tail = ew ? '。先接住眼前这句，别直接接着这里上次的话题' : '。隔了这么久，先接住眼前这句，别直接接着那时的话题';
+  const max = cfg.recall.involuntary.itemChars + 40;
+  let text = sanitize(core, `${head}${tail}`);
+  const lead = ew ? '。这里上次聊到：' : '，上次聊到：';
+  const room = max - charLen(text) - charLen(lead);
+  if (CONTENT.has(g.verdict) && room >= GAP_MIN_BODY) {
+    const r = renderContent(core, cand, g, { at, tz, key, chars: Math.min(room, cfg.recall.involuntary.itemChars), told: false });
+    if (r) text = `${sanitize(core, `${head}${lead}`)}${r.rendered}${tail}`;
+  }
+  return clip(text, max);
+}
+// 间隔那一行里「上次聊到」的内容至少要有这么多字，放不下就只说时间
+const GAP_MIN_BODY = 24;
+
+/** 场合的称呼（「X」，D148 间隔那一句用；和工作记忆段头同一个写法）。说不出（没有名字、只是一句描述）返回空字符串。 */
+function placeLabel(core, sk) {
+  const s = core.mods.intake.settingByKey(core, sk);
+  if (!s?.label || s.labelKind === 'description') return '';
+  let t = '';
+  try { t = core.mods.intake.labelForPrompt(core, s.label, 20); } catch { t = clip(sanitize(core, s.label), 20).replace(/[「」『』“”"]/g, ' ').trim(); }
+  return t ? `「${t}」` : '';
 }
 
 // ── 小工具 ────────────────────────────────────────────────────────────────

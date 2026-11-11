@@ -157,7 +157,8 @@ function assertSource(w, item, friend) {
   if (item.verdict === 'share') {
     assert.ok(item.provenance.includes(friend), `说得出是谁说的：${item.provenance}`);
     assert.ok(item.provenance.includes(groupLabel), `说得出在哪儿听到的：${item.provenance}`);
-    assert.match(item.rendered, /\d+\/\d+ \d\d:\d\d/, '带绝对时间');
+    // 说得出什么时候：按人感觉的写（D148：「昨天晚上 18:00」「周六（10/31）下午」「10/31」）
+    assert.match(item.rendered, /^（(?:今天|今晚|昨天|前天|周.（\d+\/\d+）|\d+\/\d+|\d+ (?:分钟|小时)前)/u, '带时间');
   } else {
     assert.equal(item.verdict, 'share_vague', item.verdict);
     assert.equal(item.provenance, '听人说的');

@@ -33,6 +33,9 @@ export const POINT_BACK_LAYER = 'pointBack';
 // 指回去（D146）排在她的经验后面、人物卡和想起来的那一档前面：它在这一轮回想里排得比这一轮新给的都靠前，又只有一两行，先拿到位置
 const PRIORITY_DELIBERATE = ['intentions', 'working', 'gap', 'lessons', POINT_BACK_LAYER, RECALL_TIER, 'people', 'awarePrivate', 'todaySoFar', 'warmStart'];
 const PRIORITY_INVOLUNTARY = ['intentions', 'working', 'gap', 'lessons', POINT_BACK_LAYER, 'people', RECALL_TIER, 'awarePrivate', 'todaySoFar', 'warmStart'];
+// 她自己调记忆工具认真想一件事（D148，opt.recallFirst）：按问题找到的先拿到位置、排在最前；工作记忆（context 已经只留了和问题有关的那几段）排在后面
+const PRIORITY_RECALL_FIRST = [POINT_BACK_LAYER, RECALL_TIER, 'lessons', 'intentions', 'working', 'people', 'awarePrivate', 'todaySoFar', 'gap', 'warmStart'];
+const DISPLAY_RECALL_FIRST = ['pointBack', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'intentions', 'gap', 'warmStart'];
 
 /**
  * @typedef {object} Entry   渲染好、还没去重和打包的一条
@@ -157,8 +160,9 @@ export function pointBackOf(entries, items, sent, { max, chars, perCycle, counts
  *   over：null = 没超；'day' = 今天的额度用完了；'rolling' = 滚动窗口的额度用完了（两样都超时记 'day'）；
  *   budgetDropped：没发过的受限条目里，因为预算没放进去的条数（超了时是整层丢掉的那些；没超时是额度剩得不够放的那些）。
  * @param {Entry[]} entries
+ * opt.recallFirst（D148）：她自己调记忆工具的那一次——按问题找到的（想起来的、在场者近况、指回去）先分位置、排在最前，工作记忆排在后面。
  * @param {{cfg: object, mode: 'involuntary'|'deliberate', sent: Set<string>, budgetChars: number,
- *          budget: {dayUsed: number, dayLimit: number, rollingLeft: number}, report?: object}} opt
+ *          budget: {dayUsed: number, dayLimit: number, rollingLeft: number}, report?: object, recallFirst?: boolean}} opt
  * @returns {import('../contract/types.js').RecallItem[]}
  */
 export function pack(entries, opt) {
@@ -212,7 +216,8 @@ export function pack(entries, opt) {
   let total = 0;      // 整块（≤ blockCap）
   let budgeted = 0;   // 受每天和滚动窗口限制的那部分（≤ budgetCap）
   const chosen = [];
-  const prio = mode === 'deliberate' ? PRIORITY_DELIBERATE : PRIORITY_INVOLUNTARY;
+  const recallFirst = !!opt.recallFirst;
+  const prio = recallFirst ? PRIORITY_RECALL_FIRST : mode === 'deliberate' ? PRIORITY_DELIBERATE : PRIORITY_INVOLUNTARY;
   const seenRefs = new Set();
   for (const tier of prio) {
     const layers = Array.isArray(tier) ? tier : [tier];
@@ -265,8 +270,9 @@ export function pack(entries, opt) {
     report.budgetDropped = budgetDropped;
   }
 
-  // 3. 按展示顺序输出
-  const pos = (l) => DISPLAY_ORDER.indexOf(l);
+  // 3. 按展示顺序输出（记忆工具：查到的在最前，D148）
+  const display = recallFirst ? DISPLAY_RECALL_FIRST : DISPLAY_ORDER;
+  const pos = (l) => display.indexOf(l);
   return chosen
     .sort((x, y) => pos(x.layer) - pos(y.layer) || x.order - y.order)
     .map((e) => ({

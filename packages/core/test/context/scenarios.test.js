@@ -16,7 +16,7 @@ function deliver(core, sessionId, out, nonce = `n-${Math.random().toString(36).s
   core.mods.context.confirmInjection(core, sessionId, nonce);
 }
 
-test('S20b：同一个会话隔了三周，主人说「在吗」→ 先意识到很久没聊了（时间间隔排在最前，写绝对时间），不接着三周前的话题问', () => withWorld(async ({ core, w, clock }) => {
+test('S20b：同一个会话隔了三周，主人说「在吗」→ 先意识到很久没聊了（时间间隔排在最前，「现在」写全年月日，D148），不接着三周前的话题问', () => withWorld(async ({ core, w, clock }) => {
   const ctx = core.mods.context;
   ctx.bindSession(core, { sessionId: 's1', settingId: DM, adapterId: ADAPTER, confidence: 'specific' });
   // 三周前：在这个私聊里约了周末去爬山
@@ -43,9 +43,9 @@ test('S20b：同一个会话隔了三周，主人说「在吗」→ 先意识到
   assert.equal(gap.length, 1);
   assert.equal(out.items[0].layer, 'gap', '先意识到很久没聊了');
   const text = gap[0].rendered;
-  assert.ok(text.includes('3 周'), text);
-  assert.ok(text.includes('现在是 2026-11-21'), '注入里写绝对时间（F25）');
-  assert.ok(text.includes('上次是 2026-10-31'));
+  assert.ok(text.includes('已经 3 周了'), text);
+  assert.match(text, /现在是 2026-11-21（周.）\S\S \d{1,2}:\d\d；/u, '「现在」那一句写全年月日、星期几和时段（F25：留在会话里也认得出是哪天）');
+  assert.ok(text.includes('上次在这里聊是 10/31，'), text);
   assert.ok(text.includes('上次聊到：10/31 和主人约了周末去爬山'), text);
   assert.ok(text.includes('别直接接着那时的话题'));
   assert.ok(gap[0].appraisalRef.startsWith('ap'));

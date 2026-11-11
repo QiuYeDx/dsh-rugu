@@ -144,7 +144,7 @@ test('计划和它的结果（outcomeOf）是一组：挨着出现；计划本�
   assert.deepEqual(ids(out, 'recalled'), ['a6', 'e7'], '按它自己被想起的顺序');
 }));
 
-test('S14 告诉过谁：对这里的人讲过的带一句「讲过了」（绝对时间），不当新鲜事再讲；整条仍在字数上限内', () => withWorld(async ({ core, w }) => {
+test('S14 告诉过谁：对这里的人讲过的带一句「讲过了」（什么时候讲的按人感觉的写，D148），不当新鲜事再讲；整条仍在字数上限内', () => withWorld(async ({ core, w }) => {
   percept(core, w, { sid: GROUP, actor: w.ids.ming, addressed: 'to-her' });
   const itemChars = core.config.get().recall.involuntary.itemChars;
   w.candidates = ['a1', 'a2', 'a3'];
@@ -155,14 +155,15 @@ test('S14 告诉过谁：对这里的人讲过的带一句「讲过了」（绝�
   const out = await core.mods.context.recall(core, sit(GROUP), INVOL);
   assertGated(core, out);
   const a1 = out.items.find((i) => i.id === 'a1').rendered;
-  assert.match(a1, /^阿明下周去成都（你 \d\d-\d\d \d\d:\d\d 已经对这里的人讲过，别当新鲜事再讲）$/);
+  assert.match(a1, /^阿明下周去成都（你(今天|今晚|昨天)\S* \d{1,2}:\d\d 已经对这里的人讲过，别当新鲜事再讲）$/u);
   assert.match(out.items.find((i) => i.id === 'a2').rendered, /提过个大概/);
   const a3 = out.items.find((i) => i.id === 'a3').rendered;
   assert.ok(len(a3) <= itemChars, '附注挤占正文，不超过上限');
   assert.ok(a3.endsWith('别当新鲜事再讲）'));
-  // 绝对时间：两小时前（测试时区 +8）
+  // 两小时前的钟点（测试时区 +8）；附注会留在会话里一阵，不带「多久以前」（D148）
   const local = new Date(core.now() - 2 * H + 8 * H).toISOString();
-  assert.ok(a1.includes(`${local.slice(5, 10)} ${local.slice(11, 16)}`));
+  assert.ok(a1.includes(` ${Number(local.slice(11, 13))}:${local.slice(14, 16)} `), a1);
+  assert.ok(!a1.includes('前'), a1);
 }));
 
 test('§9.3.4 暗示：默认不点名；discretion 说可以具体一点（hintSpecific）时写出关于谁（这里的叫法），仍然不含内容', () => withWorld(async ({ core, w }) => {

@@ -116,7 +116,11 @@ export function needsRefresh(core, key) {
   if (!f || f.partial || st.dirty.has(key)) return true;
   // 主人在管理页换了用法说明的写法（D125）：下一条真实消息时按新的写法重新渲染
   if ((f.style ?? 'guided') !== styleOf(core)) return true;
-  return core.now() - f.at > core.config.get().context.residentStaleMin * MINUTE_MS;
+  // 过了午夜：冻结的文字里「今晚」「昨天」都差了一天（D148），下一条真实消息时重新渲染
+  const now = core.now();
+  const tz = core.config.get().time?.tzOffsetMin ?? null;
+  if (dayStart(now, tz) !== dayStart(f.at, tz)) return true;
+  return now - f.at > core.config.get().context.residentStaleMin * MINUTE_MS;
 }
 
 /** 安排一次后台的重新渲染（渲染完立刻换上：只用在「还没有完整版本」和压缩结束这两个时机）。 */
@@ -310,7 +314,9 @@ async function render(core, key, opt) {
 function renderOne(core, cand, g, at, itemChars, key) {
   if (!cand || !(itemChars > 0)) return null;
   try {
-    const r = core.mods.retrieve.render(core, cand, { verdict: g.verdict, vagueText: g.vagueText ?? null, at, itemChars, settingKey: key, ...(g.label ? { label: g.label } : {}) });
+    // 常驻区的文字会冻结一段时间（residentStaleMin）：时间不带「多久以前」，只写到天和钟点（D148）
+    const r = core.mods.retrieve.render(core, cand, { verdict: g.verdict, vagueText: g.vagueText ?? null, at, itemChars, settingKey: key, timeStyle: 'day',
+      ...(g.label ? { label: g.label } : {}) });
     const text = clip(String(r?.rendered ?? '').trim(), itemChars);
     return text || null;
   } catch (e) {
