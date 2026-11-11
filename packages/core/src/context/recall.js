@@ -59,6 +59,21 @@ function degrade(core) {
 }
 
 export async function recall(core, s, opt) {
+  return recallImpl(core, s, opt, null);
+}
+
+/**
+ * 【D152】回放评测用的入口：按场合键和感知 id 进入（回放给不出适配器的原始消息 id，库里只有它的哈希）。
+ * 和 recall 走同一条 compute，只是场合按键找（intake.settingByKey）、焦点按感知 id 找（要在这个场合里）；
+ * 找不到焦点时和 focusObsId 找不到一样退回。不带 settingId，所以不登记 SettingId。只在库副本上用：它和 recall 一样会写会话账本、判定和计数。
+ */
+export async function recallAt(core, s, opt) {
+  const pin = { settingKey: s?.settingKey, focusPerceptId: Number.isSafeInteger(s?.focusPerceptId) ? s.focusPerceptId : null };
+  const { settingKey: _k, focusPerceptId: _f, settingId: _s, focusObsId: _o, focusObsIds: _os, homeSettingId: _h, ...rest } = s ?? {};
+  return recallImpl(core, rest, opt, pin);
+}
+
+async function recallImpl(core, s, opt, pin) {
   const traceId = newTraceId();
   // 宿主取消了这一轮（signal）之后各步的出错不算出错（记 context.recall.aborted，不算回想次数，D117 评审）
   const diag = recallDiag(core, { trigger: s?.trigger, signal: opt?.signal ?? null });
@@ -68,7 +83,7 @@ export async function recall(core, s, opt) {
     // 这一轮的触发消息往往刚经 observe 入队（intake 在 setImmediate 里才落库）：先把队列写进去，线索、「这一轮由哪条消息触发」
     // （focusObsId）才对得上，不然回想用的是上一条（D96）。drain 自己有时间上限（drainBudgetMs），落不了库就按库里现有的算
     try { core.mods.intake.drain(core); } catch (e) { diag.fault('drain', e); }
-    const out = await compute(core, s, opt, { traceId, background: false, diag });
+    const out = await compute(core, s, opt, { traceId, background: false, diag, ...(pin ? { pin } : {}) });
     // 这个场合不注入（档位 off）、找不到这个场合：不算一次回想（context.recall.skipped）
     if (!out) { diag.skip(); return emptyLayers(core, traceId, isRestoring(core) ? RESTORING_LEVEL : undefined); }
     // 目标拿不到：只认这一刻（之后没有新消息）已经判过的那一份，不用「工作记忆那一层还能用」的旧一份（判它时的目标更早）
@@ -241,7 +256,7 @@ export function prepareAfterPrefetch(core, key) {
 
 // ── 主流程 ────────────────────────────────────────────────────────────────
 
-async function compute(core, s, opt, { traceId, background, prefetch = false, diag = recallDiag(core, { trigger: s?.trigger, background: true }) }) {
+async function compute(core, s, opt, { traceId, background, prefetch = false, pin = null, diag = recallDiag(core, { trigger: s?.trigger, background: true }) }) {
   const t0 = performance.now();
   const cfg = core.config.get();
   const at = core.now();
@@ -255,8 +270,10 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
     try { return await fn(); } catch (e) { diag.fault(stage, e); return fallback; }
   };
   // 只带场合键（预取时替这一轮先判、这次运行里还没见过 SettingId，D102）：按场合键找；平常按 SettingId
-  const set = s.settingId ? core.mods.intake.resolveSetting(core, s.settingId)
-    : (prefetch && typeof s.settingKey === 'string' ? core.mods.intake.settingByKey(core, s.settingKey) : null);
+  // 回放入口（recallAt，D152）按场合键找
+  const set = pin ? (typeof pin.settingKey === 'string' ? core.mods.intake.settingByKey(core, pin.settingKey) : null)
+    : s.settingId ? core.mods.intake.resolveSetting(core, s.settingId)
+      : (prefetch && typeof s.settingKey === 'string' ? core.mods.intake.settingByKey(core, s.settingKey) : null);
   if (!set) return null;
   const key = set.key;
   if (modeOf(core, key, diag) === 'off') return null;
@@ -280,11 +297,14 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   // 不退回这里最后一个对她说话的人——那常常是几个小时前的一句，拿它当「眼前这个人」，工作记忆、外发守护的「被回答的人」就都错了。
   // 定时提醒到点（reminder，D144）是同一类：也没有人在问她，是她自己要开口。一批里只要有一条真实的新消息，宿主就按 message 开启这一轮
   const selfTurn = s.trigger === 'idle' || s.trigger === 'reminder';
-  let focus = s.focusObsId ? guard('focus', () => findObs(s.focusObsId), null) : null;
+  // 回放入口（D152）：焦点按感知 id 给（要在这个场合里），和交进来的消息 id 同样对待
+  const wanted = pin ? pin.focusPerceptId != null : !!s.focusObsId;
+  let focus = pin ? (pin.focusPerceptId != null ? guard('focus', () => perceptById(core, key, pin.focusPerceptId), null) : null)
+    : s.focusObsId ? guard('focus', () => findObs(s.focusObsId), null) : null;
   if (!focus) {
-    if (s.focusObsId) { try { bumpMetric(core.store, 'context.focus.fallback'); } catch { /* 只是计数 */ } }
+    if (wanted) { try { bumpMetric(core.store, 'context.focus.fallback'); } catch { /* 只是计数 */ } }
     focus = selfTurn ? (latest ?? null)
-      : s.focusObsId || latest?.actor_self ? (guard('focus', () => lastToHer(core, key), null) ?? (latest?.actor_self ? null : latest)) : latest;
+      : wanted || latest?.actor_self ? (guard('focus', () => lastToHer(core, key), null) ?? (latest?.actor_self ? null : latest)) : latest;
   }
   const triggerEntityId = !selfTurn && focus && !focus.actor_self ? (focus.actor_entity_id ?? null) : null;
   // 一批里有几个人都在对她说话（D108）：主触发者在前，其余按交进来的顺序，各算一份工作记忆
@@ -1321,6 +1341,9 @@ function noteTurn(core, sessionId, key, triggers, focus, at, { self = false } = 
 function perceptByObs(core, adapter, obs) {
   if (!adapter) return null;
   return core.store.get(`SELECT ${PERCEPT_COLS} FROM percepts WHERE adapter = ? AND ext_key = ?`, adapter, core.keys.obsKey(adapter, obs)) ?? null;
+}
+function perceptById(core, key, id) {
+  return core.store.get(`SELECT ${PERCEPT_COLS} FROM percepts WHERE id = ? AND setting_key = ?`, id, key) ?? null;
 }
 function isPrincipal(core, id) {
   try { return core.store.get('SELECT authority FROM entities WHERE id = ?', id)?.authority === 'principal'; } catch { return false; }
