@@ -198,7 +198,8 @@ test('端到端：主人私聊注入 → memory_recall → 群里开着、照常
   assert.ok(block, '插了回想块');
   const blockText = block.content[0].text;
   assert.match(blockText, /^【记忆·内部参考】/);
-  assert.match(blockText, /你上次和正在跟你说话的这个人聊是昨天晚上 \d{1,2}:\d\d，已经 1 天了/u, '认得出 QQ 上的主人就是网页上的主人（同一个她）');
+  // 时钟从跑测试的那一刻起算：一天前落在哪个时段跟几点跑有关（凌晨跑就是「昨天凌晨」），时段不是这里要测的
+  assert.match(blockText, /你上次和正在跟你说话的这个人聊是昨天(凌晨|早上|上午|中午|下午|晚上) \d{1,2}:\d\d，已经 1 天了/u, '认得出 QQ 上的主人就是网页上的主人（同一个她）');
   assert.ok(host.status().context.confirmed >= 1, '会话事件里看到 nonce 才确认');
   const resident = ctx.resolveContexts(dm)[0];
   assert.equal(resident.name, 'persona-memory:core');
