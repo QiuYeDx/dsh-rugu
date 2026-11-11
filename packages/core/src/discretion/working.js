@@ -17,6 +17,9 @@
 // 每条放进来的都对得上一行 appraisals（stage = 1，rule A4 / A5 / A1… / 第一段的规则，verdict share；reason 'working:<rule>:<origin>[:l]'），
 // 满足 §9.3.6「每条都对得上一次判定」；同样的情形沿用上一行，不每一轮都写一行新的。
 import { refOf, parseRef } from '../store/index.js';
+import { logRetentionDays } from '../config/defaults.js';
+
+const DAY = 86_400_000;
 import { metric, soft, parseJson } from './util.js';
 import { selfId, memoryFacts, rightsEquivalents, isIndividual, previousOther } from './facts.js';
 import { managerOnly, audiencePeople } from './knowledge.js';
@@ -298,11 +301,15 @@ function tellerOfRow(core, ev, m, memo) {
  * 来源和有没有叮嘱写在 reason 里（working:<rule>:<origin>[:l]，D113），按 reason 对（speak 列只为兼容旧行，新行都是 NULL）。找不到返回 null。
  */
 function reuseAppraisal(core, row) {
+  // 只沿用比判定的保留期新至少一天的行（D139）：夜里的到期清理删不到这一轮刚沿用、还没记进注入日志的那一行
+  const days = logRetentionDays(core.config.get()).appraisals;
+  const since = days == null ? 0 : core.now() - (days - 1) * DAY;
   const r = core.store.get(`SELECT id FROM appraisals WHERE memory_kind = ? AND memory_id = ? AND stage = 1 AND setting_key IS ? AND norm_version IS ?
                               AND snapshot_id IS ? AND taint = ? AND trigger_class IS ? AND rule IS ? AND speak IS ? AND verdict = ? AND reason IS ?
+                              AND at >= ?
                             ORDER BY at DESC, id DESC LIMIT 1`,
   row.memoryKind, row.memoryId, row.settingKey ?? null, row.normVersion ?? null, row.snapshotId ?? null, row.taint ? 1 : 0, row.triggerClass ?? null,
-  row.rule ?? null, row.speak ?? null, row.verdict, row.reason ?? null);
+  row.rule ?? null, row.speak ?? null, row.verdict, row.reason ?? null, since);
   return r ? Number(r.id) : null;
 }
 

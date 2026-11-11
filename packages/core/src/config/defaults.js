@@ -645,6 +645,8 @@ export const DEFAULTS = deepFreeze({
     raw: '2y',                           // 1y / 2y / 5y / forever
     coolingOffDays: 7,
     evidenceChars: 60,                   // 过期的原文只留情节叙述和 ≤ 60 字证据
+    // 日志表到期清理（D139，夜间整理第 10 步）：实际天数和读它们的步骤要看的天数取大的（logRetentionDays）；0 或负数 = 不清理。
+    // 还在用的行多旧都不删（当前周期的注入、挂起的发言、还被引用的判定、切口还没定下来的提炼……见 admin/retention.js）
     logs: { injectionsDays: 14, jobsDays: 30, appraisalsDays: 7, utterancesDays: 365 },
     forgetRestoreDays: 30,
     batch: 500,                          // 到期删除每批多少行（§12.8）
@@ -802,6 +804,28 @@ export function defaultAt(p) {
 export function budgetLimits(config) {
   const b = config.budget;
   return Object.freeze({ ...(b.presets[b.preset] ?? b.presets.loose), ...b.overrides, egressReservePerDay: b.egressReservePerDay, glanceReservePerDay: b.glanceReservePerDay });
+}
+
+/**
+ * 日志表实际的保留天数（D139）：retention.logs 的值，和读这些表的步骤要往回看的天数取大的——删掉它们还要看的行会改变它们的结果：
+ *   - injections ≥ sleep.correct.usageDays、lessons.promote.windowDays（夜里按注入日志算「用到的程度」）；
+ *   - jobs ≥ sleep.extract.retryFailedDays（夜里补跑这几天里失败的提炼）；
+ *   - appraisals ≥ 2 天（工作记忆只沿用比保留期新至少一天的判定，见 discretion/working.js）；
+ *   - utterances ≥ discretion.egress.holdExpiryDays、rejectWindowH（挂起审核的期限、「同一句被拒两次」的时间窗）。
+ * 配置成 0、负数或不是数 = 这张表不清理（null）。
+ * @param {typeof DEFAULTS} cfg
+ * @returns {{injections: number|null, jobs: number|null, appraisals: number|null, utterances: number|null}}
+ */
+export function logRetentionDays(cfg) {
+  const L = cfg?.retention?.logs ?? {};
+  const n = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  const keep = (days, ...floors) => (typeof days === 'number' && Number.isFinite(days) && days > 0 ? Math.max(days, ...floors.map((f) => n(f))) : null);
+  return {
+    injections: keep(L.injectionsDays, cfg?.sleep?.correct?.usageDays, cfg?.lessons?.promote?.windowDays),
+    jobs: keep(L.jobsDays, cfg?.sleep?.extract?.retryFailedDays),
+    appraisals: keep(L.appraisalsDays, 2),
+    utterances: keep(L.utterancesDays, cfg?.discretion?.egress?.holdExpiryDays, n(cfg?.discretion?.egress?.rejectWindowH) / 24),
+  };
 }
 
 /**

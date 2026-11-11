@@ -13,7 +13,7 @@ import { createPersonaMemory } from 'rugu-core';
 import { validateBinding } from '../binding/index.js';
 import { buildPorts } from '../ports/index.js';
 import { createConfigStore } from './config.js';
-import { resolveDshHome, resolvePaths, ensureKeyFile } from './paths.js';
+import { resolveDshHome, resolvePaths, ensureKeyFile, MAIN_DB_FILE } from './paths.js';
 import { createLogger } from './log.js';
 import { createHookGuard } from './guard.js';
 import { createClaims, makeSessionInfoOf } from './claim.js';
@@ -502,9 +502,10 @@ export function createHost(ctx, config = {}, deps = {}) {
    */
   async function createAdapters() {
     const factories = deps.adapterFactories !== undefined ? (deps.adapterFactories ?? {}) : await loadAdapterFactories();
-    // 适配器的盐从身份哈希密钥派生（适配器自己做，见 paths.ensureKeyFile）：没有就按核心同样的格式先建好（核心打开时也会建，不覆盖）
-    const keyOk = ensureKeyFile(paths.keyFile);
-    if (!keyOk) log.warn('adapters.keyFile', {});
+    // 适配器的盐从身份哈希密钥派生（适配器自己做，见 paths.ensureKeyFile）：没有就按核心同样的格式先建好（核心打开时也会建，不覆盖）。
+    // 库已经在了就不建（D140）：密钥丢了时新建一把只会让核心认成「换了密钥」，原因就看不清了；核心会以 IDENTITY_KEY_MISSING 拒绝打开
+    if (fs.existsSync(path.join(paths.dataDir, MAIN_DB_FILE)) && !fs.existsSync(paths.keyFile)) log.warn('adapters.keyFile.missing', {});
+    else if (!ensureKeyFile(paths.keyFile)) log.warn('adapters.keyFile', {});
     for (const spec of BUILTIN_ADAPTERS) {
       const key = spec.key;
       const factory = factories[key];

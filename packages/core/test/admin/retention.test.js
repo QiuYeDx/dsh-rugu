@@ -109,7 +109,7 @@ test('延长（含永久）立即生效，冷静期中的缩短作废；不认�
   const ask = core.mods.admin.requestRetentionChange(core, { to: '1y', by: 'owner', at: core.now() });
   core.mods.admin.requestRetentionChange(core, { to: '1y', confirmPhrase: ask.confirmPhrase, by: 'owner', at: core.now() });
   assert.deepEqual(core.mods.admin.requestRetentionChange(core, { to: '5y', by: 'owner', at: core.now() }), { status: 'applied' });
-  assert.deepEqual(core.mods.admin.retentionState(core), { current: '5y', pending: null });
+  assert.deepEqual(core.mods.admin.retentionState(core), { current: '5y', pending: null, logs: null });
   assert.equal(core.mods.admin.requestRetentionChange(core, { to: 'forever', by: 'owner', at: core.now() }).status, 'applied');
   assert.deepEqual(await core.mods.admin.applyRetention(core, core.now() + 3000 * DAY), { expired: 0, done: true });
   assert.equal(rawCount(core), 4);

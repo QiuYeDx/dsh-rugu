@@ -13,6 +13,7 @@ export * from './fts.js';
 export * from './refs.js';
 export * from './kv.js';
 export * from './jobs.js';
+export * from './expire.js';
 export * from './keys.js';
 export * from './invariants.js';
 export { openVectorStore, sweepVectorCache, mainDbIdOf, VECTORS_SCHEMA_VERSION } from './vectors.js';
@@ -24,8 +25,9 @@ export const VECTORS_DB_FILE = 'persona-vectors.db';
  * 打开主库并迁到最新（§10.1 第 1 步）。
  *   - 迁移前自动备份：backup 钩子（通常是 backup.preOperationSnapshot）；钩子失败就不迁移，抛错。
  *   - 库比代码新：以只读方式重新打开，store.readOnly = true，readOnlyReason = 'newer-schema'（§12.5）。
+ *   - verify（可选）：打开之后、迁移之前调；抛错就关库、原样抛出，什么都不迁移（api 用它核对身份哈希密钥，D140）。
  * @param {{file: string, clock?: object, logger?: object, slowMs?: number, busyTimeoutMs?: number, readOnly?: boolean,
- *          migrations?: readonly import('./migrate.js').Migration[],
+ *          migrations?: readonly import('./migrate.js').Migration[], verify?: (store: import('./db.js').Store) => void,
  *          backup?: (info: {reason: 'migrate', from: number, to: number, file: string, store: import('./db.js').Store}) => Promise<string|null>|string|null}} opt
  * @returns {Promise<import('./db.js').Store>}
  */
@@ -34,12 +36,14 @@ export async function openStore(opt) {
   const base = { file: opt.file, clock: opt.clock, logger: opt.logger, slowMs: opt.slowMs, busyTimeoutMs: opt.busyTimeoutMs };
   if (opt.readOnly) {
     const ro = openDatabase({ ...base, readOnly: true });
+    try { opt.verify?.(ro); } catch (e) { ro.close(); throw e; }
     ro.migration = { from: schemaVersionOf(ro), to: schemaVersionOf(ro), applied: [], readOnly: true, backup: null };
     return ro;
   }
   const store = openDatabase(base);
   let result;
   try {
+    opt.verify?.(store);   // 迁移之前：核对不过就原样关上，库不动（D140 的身份密钥核对）
     result = await migrate(store, migrations, { backup: opt.backup ? (info) => opt.backup({ ...info, file: opt.file, store }) : undefined });
   } catch (e) {
     store.close();

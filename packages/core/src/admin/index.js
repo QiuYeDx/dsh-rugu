@@ -312,8 +312,10 @@ export function undoWithdrawHide(core, reviewId, at) { return purgeMod.undoWithd
 
 /**
  * 当前保留期和待生效的改动（冷静期倒计时）。状态存在 meta 'retention.policy' / 'retention.pending'。
+ * logs：最近一次日志表到期清理的结果（D139，meta 'retention.logs.last'；还没清过是 null），只有数字。
  * @param {import('../core-types.js').CoreContext} core
- * @returns {{current: '1y'|'2y'|'5y'|'forever', pending: {to: string, effectiveAt: number, impact: object}|null}}
+ * @returns {{current: '1y'|'2y'|'5y'|'forever', pending: {to: string, effectiveAt: number, impact: object}|null,
+ *            logs: {at: number, deleted: Record<string, number>, total: number, done: boolean, off: string[]}|null}}
  */
 export function retentionState(core) { return /** @type {any} */ (retention.retentionState(core)); }
 
@@ -337,6 +339,17 @@ export function cancelRetentionChange(core, ctx) { retention.cancelRetentionChan
  * @returns {Promise<{expired: number, done: boolean}>}
  */
 export async function applyRetention(core, at) { return retention.applyRetention(core, at); }
+
+/**
+ * 日志表到期清理（D139，夜间整理第 10 步调）：任务、注入日志、她说过的话的审视记录、判定记录，按 retention.logs 的天数
+ * （和读它们的步骤要看的天数取大的；0 或负数 = 不清理）分批删，还在用的不删（各表的拥有者定）。能中断，下次接着删。
+ * 结果记 meta 'retention.logs.last'，retentionState 的 logs 带出来给管理页。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} [at]
+ * @param {{signal?: AbortSignal}} [opt]
+ * @returns {Promise<{deleted: Record<string, number>, done: boolean, skipped?: string}>}
+ */
+export async function expireLogs(core, at, opt) { return retention.expireLogs(core, at, opt ?? {}); }
 
 // ── 「有记忆 / 没记忆」评测（D126） ────────────────────────────────────────────
 

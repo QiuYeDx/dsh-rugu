@@ -3,6 +3,8 @@
 //   - 用 dedupe_key 去重，同一件事只排一次。
 //   - 启动时把上次没跑完的 running 放回 queued（requeueStale）。
 //   - last_error 只记错误类型和 id，不记内容（§12.3）。
+//   - 结束了的任务夜里按 retention.logs.jobsDays 分批清掉（expireJobs，D139）。
+import { expireInBatches } from './expire.js';
 
 export const BACKOFF_MS = Object.freeze([60_000, 240_000, 960_000]);   // 1 / 4 / 16 分钟（§10.6）
 export const MAX_ATTEMPTS = BACKOFF_MS.length + 1;
@@ -109,6 +111,32 @@ export function cancelJob(store, jobId) {
 /** 启动时：上次崩溃时还在跑的任务放回队列（结果没提交过，重跑幂等）。 */
 export function requeueStale(store) {
   return Number(store.run("UPDATE jobs SET status = 'queued', updated_at = ? WHERE status = 'running'", store.now()).changes);
+}
+
+/**
+ * 到期清理已经结束的任务（D139，admin.expireLogs 在夜里调）。只删同时满足这些的：
+ *   - 结束了：done、cancelled，或 failed（failJob 只在不再重试时标 failed；还要重试的是 queued）；排队中、在跑的不动；
+ *   - 最后一次变动早于 before；种类在 kinds 里（有处理函数的种类，读它们的地方查清了；别的种类不知道谁还读，不删）；
+ *   - 带感知范围的（提炼）：范围里的感知都已经归进情节。还有感知在切分缓冲里的留着——done 的那行是「拿不准的切口模型没确认」的记号
+ *     （encode/segment.js 不再在同一处切），failed / cancelled 的那行的去重键挡着同一段不被重复排（补跑走另起的键）。
+ *     删掉的范围以后只会因为彻底删除把感知放回缓冲才再出现，那时本来就该重新提炼。
+ * @param {import('./db.js').Store} store
+ * @param {{before: number, kinds: string[], batch?: number, maxBatches?: number, signal?: AbortSignal}} opt
+ * @returns {Promise<{deleted: number, done: boolean}>}
+ */
+export async function expireJobs(store, { before, kinds, ...opt }) {
+  if (!kinds?.length) return { deleted: 0, done: true };
+  const ph = kinds.map(() => '?').join(',');
+  return expireInBatches(store, 'jobs', (after, limit) => {
+    const rows = store.all(`SELECT j.id, CASE
+        WHEN j.ep_from IS NULL AND j.ep_to IS NULL THEN 0
+        WHEN j.scope_key IS NULL OR j.ep_from IS NULL OR j.ep_to IS NULL THEN 1
+        WHEN EXISTS (SELECT 1 FROM percepts p WHERE p.setting_key = j.scope_key AND p.id BETWEEN j.ep_from AND j.ep_to AND p.episode_id IS NULL) THEN 1
+        ELSE 0 END AS keep
+      FROM jobs j WHERE j.id > ? AND j.status IN ('done','cancelled','failed') AND j.updated_at < ? AND j.kind IN (${ph})
+      ORDER BY j.id LIMIT ?`, after, before, ...kinds, limit);
+    return { seen: rows.map((r) => r.id), del: rows.filter((r) => !r.keep).map((r) => r.id) };
+  }, opt);
 }
 
 export function getJob(store, jobId) {

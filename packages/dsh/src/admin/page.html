@@ -511,6 +511,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
   const MODE = { off: ['关', 'dim'], live: ['开', 'ok'] };
   const MODE_DESC = { off: '不感知、不注入', live: '记得、会想起来，说不说按分寸逐条判断' };
   const RET = { '1y': '1 年', '2y': '2 年', '5y': '5 年', forever: '永久' };
+  const LOG_TABLE = { jobs: '后台任务', injections: '注入记录', appraisals: '判定记录', utterances: '她说过的话的审视记录' };
   const PACK_KIND = { daily: '日包', weekly: '周包', monthly: '月包', 'pre-op': '操作前快照', manual: '手动' };
   const PREOP_REASON = { purge: '彻底删除前', withdraw: '按来源撤回前', restore: '整体恢复前', 'restore-partial': '部分恢复前', retention: '原文到期删除前', migrate: '升级数据前', space: '换向量空间前' };
   const VERIFY = { ok: ['已验证', 'ok'], pending: ['待验证', 'warn'], failed: ['验证失败', 'bad'] };
@@ -1007,6 +1008,9 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             r?.error ? h('div', { class: 'pm-err' }, errText(r)) : [
               h('div', { class: 'pm-big' }, label(RET, r.current)),
               r.pending ? h('div', { class: 'pm-desc' }, `将缩短为 ${label(RET, r.pending.to)}，冷静期还剩 ${r.pending.daysLeft} 天。`, h('button', { type: 'button', class: 'pm-link', onclick: () => go('config') }, '去取消')) : h('div', { class: 'pm-faint' }, '情节和事实永久保留；过期的只是原话'),
+              // D139：夜里清掉的到期日志（后台任务、注入记录、判定记录、她说过的话的审视记录），只有数字
+              r.logs?.at ? h('div', { class: 'pm-faint', title: Object.entries(r.logs.deleted ?? {}).map(([k, v]) => `${LOG_TABLE[k] ?? k} ${fmtNum(v)}`).join('，') || '' },
+                `日志清理：${when(r.logs.at)} 清掉 ${fmtNum(r.logs.total ?? 0)} 行${r.logs.done === false ? '，没清完，下一晚接着清' : ''}`) : null,
             ]),
           card({ title: '启动自检', aside: o.selfCheck?.at ? `检查于 ${when(o.selfCheck.at)}` : '' },
             o.selfCheck?.error ? h('div', { class: o.selfCheck.error === 'UNAVAILABLE' ? 'pm-faint' : 'pm-err' }, o.selfCheck.error === 'UNAVAILABLE' ? '宿主没提供自检' : `自检没跑成（${o.selfCheck.error}）`) : [
