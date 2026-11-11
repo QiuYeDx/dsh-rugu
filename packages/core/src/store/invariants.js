@@ -4,6 +4,7 @@
 //      → intake 写感知时用 withCursor()（或者在自己的 tx 里调 setCursor）。
 //   2. 切分缓冲不在内存里单独保存，它就是「episode_id 还是空的感知」，启动时从库里重建。
 //      → 读缓冲一律用 SEGMENT_BUFFER_SQL / openBufferSettings()，不在内存里另存一份「待切分列表」。
+//        切段时在它的基础上去掉搁置的段（提炼一直不成的，encode/segment.js 的 SCAN_SQL，D136），搁置的记录也在库里。
 //   3. 一批提炼的全部输出（情节、事实、来源、规范、意图、实体变化）在**一个事务**里写入，用 job_id 去重；
 //      LLM 结果还没提交就崩了，重跑时幂等。
 //      → 用 jobs.completeJob(store, jobId, write)。

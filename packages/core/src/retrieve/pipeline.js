@@ -22,6 +22,18 @@ export function emptySet(cues, level, extra = {}) {
 const traceId = () => `r${crypto.randomBytes(6).toString('hex')}`;
 
 /**
+ * 这一次回想的截止时间（D137）。调用方给的算数：context 在查询模型冷加载时、切到有意回想时会放宽（recall.js 的 compute），
+ * 管理页模拟、记忆工具用 recall.deliberate.toolDeadlineMs——以前这里再按模式取上限、和给的取小，不自主回想一律截回 1500 毫秒，
+ * 放宽的等待等于没放。现在只用一个总的硬上限兜底：配置里回想的几种截止时间（不自主、有意、工具）里最大的那个
+ * （默认是工具的 8 秒），防一个写错的调用把一轮回想拖住。没给（或者不是正数）才按模式的默认值。
+ */
+export function deadlineOf(p, mode, given) {
+  const dflt = mode === 'deliberate' ? p.recall.deliberate.deadlineMs : p.recall.involuntary.deadlineMs;
+  const ceiling = Math.max(0, ...[p.recall.involuntary.deadlineMs, p.recall.deliberate.deadlineMs, p.recall.deliberate.toolDeadlineMs].filter((x) => Number.isFinite(x)));
+  return Number.isFinite(given) && given > 0 ? (ceiling > 0 ? Math.min(given, ceiling) : given) : dflt;
+}
+
+/**
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: string}} s
  * @param {{mode: 'involuntary'|'deliberate', query?: string, about?: string, time?: string, includeHistory?: boolean,
@@ -41,8 +53,7 @@ export async function runRecall(core, s, opt, internal = {}) {
   if (internal.rewrites?.length) cues.rewrites = internal.rewrites.slice(0, p.x.rewrite.maxCues);
   if (cuesEmpty(cues) || opt.signal?.aborted) return { set: emptySet(cues, level0), queryVectors: null };
 
-  const cap = mode === 'deliberate' ? p.recall.deliberate.deadlineMs : p.recall.involuntary.deadlineMs;
-  const budget = Math.min(Number.isFinite(opt.deadlineMs) && opt.deadlineMs > 0 ? opt.deadlineMs : cap, cap);
+  const budget = deadlineOf(p, mode, opt.deadlineMs);
   /** @type {import('./routes.js').RouteCtx} */
   const ctx = {
     core, p, cues, mode, at: core.now(), deadlineAt: t0 + budget - p.x.routeReserveMs, signal: opt.signal, level: level0,

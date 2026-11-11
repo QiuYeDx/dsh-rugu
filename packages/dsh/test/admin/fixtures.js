@@ -280,7 +280,8 @@ export function makeFakePm(o = {}) {
       rec('status');
       return { readOnly, readOnlyReason: readOnly ? 'newer-schema' : null, schemaVersion: readOnly ? 13 : 12, codeSchemaVersion: 12, schema: { ok: true }, migration: null,
         vectors: { wiped: null }, adapters: full ? ['qq', 'dsh-web', 'bili'] : [], startup: full ? { jobs: { requeued: 0 }, self: {}, tombstones: { deleted: 0 }, worker: { ok: true }, space: { spaceId: 'sp-4b', status: 'active' } }
-          : { jobs: { requeued: 0 }, self: {}, tombstones: { deleted: 0 }, worker: { ok: true }, space: { error: 'EMBED_UNAVAILABLE' } }, files: { main: 'persona-memory.db', vectors: 'persona-vectors.db' } };
+          : { jobs: { requeued: 0 }, self: {}, tombstones: { deleted: 0 }, worker: { ok: true }, space: { error: 'EMBED_UNAVAILABLE' } }, files: { main: 'persona-memory.db', vectors: 'persona-vectors.db' },
+        extract: full ? { segments: 2, transient: 1, rejected: 1, maxRounds: 3, oldestAt: now - 3 * DAY, nextAt: now + 5 * HOUR } : { segments: 0, transient: 0, rejected: 0, maxRounds: 0, oldestAt: null, nextAt: null } };
     },
     admin: {
       list(q) {

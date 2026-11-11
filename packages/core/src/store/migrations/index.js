@@ -16,9 +16,10 @@ import m014 from './014-discretion.js';
 import m015 from './015-intake.js';
 import m016 from './016-intake.js';
 import m017 from './017-consolidate.js';
+import m018 from './018-encode.js';
 
 /** @type {readonly import('../migrate.js').Migration[]} */
-export const MIGRATIONS = Object.freeze([m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012, m013, m014, m015, m016, m017]);
+export const MIGRATIONS = Object.freeze([m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012, m013, m014, m015, m016, m017, m018]);
 
 /** 代码支持的 schema 版本。库的版本比它新 → 只读（§12.5）。 */
 export const SCHEMA_VERSION = MIGRATIONS.at(-1).version;

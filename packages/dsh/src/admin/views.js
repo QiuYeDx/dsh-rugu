@@ -479,7 +479,9 @@ export function createViews(deps) {
         recall: recall == null ? null : recall.error ? recall : recallHealthRow(recall),
         store: st.error ? st : { readOnly: !!st.readOnly, readOnlyReason: st.readOnlyReason ?? null, schemaVersion: st.schemaVersion ?? null,
           codeSchemaVersion: st.codeSchemaVersion ?? null, schema: numbersOnly(st.schema), migration: numbersOnly(st.migration),
-          adapters: Array.isArray(st.adapters) ? st.adapters.map(adapterTitle) : [], startup: startupSummary(st.startup), files: numbersOnly(st.files ?? null), vectors: numbersOnly(st.vectors ?? null) },
+          adapters: Array.isArray(st.adapters) ? st.adapters.map(adapterTitle) : [], startup: startupSummary(st.startup), files: numbersOnly(st.files ?? null), vectors: numbersOnly(st.vectors ?? null),
+          // 【D136】提炼一直不成、搁置着的段：几段、各类原因、最多失败了几轮、最早从什么时候起、下次什么时候试
+          extract: numbersOnly(st.extract ?? null) },
         embedding: health?.error ? health : healthRow(health),
         spaces: Array.isArray(spaces) ? spaces.map(spaceRow) : spaces,
         gpu, budget, selfCheck: checks,

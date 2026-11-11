@@ -1,6 +1,7 @@
 // 提炼任务（§7.3–§7.5，§3「写」的主流程）：背景 → 提示词 → LLM（use='extract'）→ parseJsonl → verify → taintCheck →
 // 对账（异步部分：向量相似度）→ 在 store.completeJob 的一个事务里写完全部输出（§12.8 第 3 条：任务已完成就跳过，重跑幂等）。
-// 预算不允许、没有 LLM：任务推迟（不花钱、不写东西，感知照常在缓冲里、原文照常可检索）。LLM 失败：按 1 / 4 / 16 分钟退避重排。
+// 预算不允许、没有 LLM：任务推迟（不花钱、不写东西，感知照常在缓冲里、原文照常可检索）。LLM 失败：按 1 / 4 / 16 分钟退避重排；
+// 重试用完了，这一段搁置（D136，stalled.js）：不挡后面的段，按更长的退避再试，什么都不替它编。
 import { enqueueJob, cancelJob, completeJob, failJob } from '../store/jobs.js';
 import { bumpMetric, registerPromptVersion } from '../store/kv.js';
 import { parseRef } from '../store/refs.js';
@@ -19,6 +20,7 @@ import { verify } from './verify.js';
 import { taintCheck } from './taint.js';
 import { reconcile, reconcileSync } from './reconcile.js';
 import { segment } from './segment.js';
+import { markStalled, clearStalled } from './stalled.js';
 
 const FACTISH = new Set(['fact', 'plan', 'self', 'rel']);
 
@@ -52,8 +54,18 @@ function defer(core, job, payload, reason) {
   return { status: 'deferred', reason };
 }
 
+/**
+ * 失败：任务自己按 1 / 4 / 16 分钟退避重排；重试用完了，这一段搁置起来（D136，stalled.js：不挡后面的段，按退避再试）。
+ * 搁置段的重试任务（payload.stalledRound）一轮只试一次，失败了直接记下一轮——轮与轮之间的退避由 stalled.js 管。
+ */
 function fail(core, job, code, usage, retry = true) {
-  const st = failJob(core.store, job.id, { errorCode: code, retry, usage });
+  const payload = jsonParse(job.payload_json, {});
+  const stalledRound = Number.isInteger(payload.stalledRound);
+  const st = core.store.tx(() => {
+    const s = failJob(core.store, job.id, { errorCode: code, retry: retry && !stalledRound, usage });
+    if (s === 'failed') markStalled(core, { settingKey: payload.settingKey ?? job.scope_key, from: job.ep_from, to: job.ep_to, code });
+    return s;
+  });
   bumpMetric(core.store, 'encode.extract.failed');
   core.log.warn('encode.extract.failed', { jobId: job.id, error: code, next: st });
   return { status: 'failed', reason: code };
@@ -474,7 +486,8 @@ function applyBatch(core, b) {
     if (strong) {
       if ((TRUST[row.certainty] ?? 0) < TRUST.confirmed) core.store.run('UPDATE assertions SET certainty = ?, updated_at = ? WHERE id = ?', 'confirmed', now, id);
       if (row.t50_h) core.store.run('UPDATE assertions SET valid_from = ?, updated_at = ? WHERE id = ?', l.at, now, id);   // 本人重新确认 = 重置
-      addSource(core, { kind: 'assertion', id }, src, { w: base * cfg.activation.events.confirm, reason: 'confirm' });
+      // 给的是编码强度本身：× events.confirm 由 dynamics.addTrace 按 reason='confirm' 乘（D137：原来这里也乘，实际成了 1.44）
+      addSource(core, { kind: 'assertion', id }, src, { w: base, reason: 'confirm' });
     } else addSource(core, { kind: 'assertion', id }, src, { w: base, reason: 'mention' });
   }
 
@@ -641,7 +654,7 @@ export async function runExtract(core, job, opt = {}) {
       ? core.store.all(`SELECT * FROM percepts WHERE id IN (${want.map(() => '?').join(',')}) AND episode_id IS NULL ORDER BY id`, ...want)
       : core.store.all('SELECT * FROM percepts WHERE setting_key = ? AND id BETWEEN ? AND ? AND episode_id IS NULL ORDER BY id', settingKey, job.ep_from, job.ep_to);
     if (!rows.length) {
-      completeJob(core.store, job.id, () => null);
+      completeJob(core.store, job.id, () => { clearStalled(core, settingKey, job.ep_from, job.ep_to); return null; });
       return { status: 'skipped', reason: 'nothing-left' };
     }
     const seg = { settingKey, perceptIds: rows.map((p) => p.id), boundaryCertain: payload.boundaryCertain !== false, historical: !!payload.historical };
@@ -691,6 +704,8 @@ export async function runExtract(core, job, opt = {}) {
     }
     const ids = seg.perceptIds;
     const out = completeJob(core.store, job.id, () => {
+      // 搁置的段（D136）这次有了结果：不再搁置（和写入在同一个事务里）
+      clearStalled(core, settingKey, job.ep_from, job.ep_to);
       // 等 LLM 的这段时间里，别的任务（复核提前的那一个）已经把其中的感知归进了情节：这批结果作废，不写两份
       const taken = core.store.get(`SELECT COUNT(*) AS n FROM percepts WHERE id IN (${ids.map(() => '?').join(',')}) AND episode_id IS NOT NULL`, ...ids).n;
       if (taken) return null;

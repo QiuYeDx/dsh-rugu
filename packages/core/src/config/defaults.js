@@ -167,6 +167,9 @@ export const DEFAULTS = deepFreeze({
     quota: { base: 10, closenessFactor: 4, hearsayShare: 0.5 },   // 每人每天 10 × (1 + 4 × closeness)，听说占一半
     reservedOneOnOne: true,              // 对她说的一对一内容的提炼有预留，不因每日预算用完而停（§7.2）
     deferMs: 10 * MIN,                   // 预算不让跑时推迟多久（每次翻倍，最多 6 小时）
+    // D136：重试次数用完的段搁置起来（不挡后面的段），按退避再试：第 n 轮隔 base × 2^(n−1)，最长 max。
+    // 一时的（超时、连不上）隔得短；稳定被拒的（输出不合格、供应商拒绝这段内容）隔得长——再试多半还是一样，只是不永久放弃
+    stalled: { transientMs: 30 * MIN, transientMaxMs: 12 * HOUR, rejectedMs: 6 * HOUR, rejectedMaxMs: 7 * DAY },
     maxBackground: 12,                   // 提示词里每组背景最多几条（§7.3）
     maxCandidates: 15,                   // §5.2 第 4 步的候选档案（照 Graphiti 最多 15 个）
     maxTokens: 4000,                     // 提炼输出的 token 上限

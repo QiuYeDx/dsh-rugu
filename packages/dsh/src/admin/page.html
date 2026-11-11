@@ -2443,6 +2443,11 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             ['表结构核对', s.schema == null ? '—' : s.schema.ok === false ? badge('对不上', 'bad') : badge('一致', 'ok')],
             ['在用的入口', s.adapters?.length ? s.adapters.join('、') : '还没有'],
             ['启动步骤', startupLine(s.startup)],
+            // 【D136】提炼一直不成的段：搁置着、按退避再试，不挡后面的；这些对话的原话照常搜得到，只是还没整理成情节和事实
+            s.extract ? ['提炼一直不成', s.extract.segments ? h('span', { title: '这几段对话的原话照常搜得到，只是还没整理成情节和事实；会隔一段时间再试，不挡后面的对话' },
+              badge(`${fmtNum(s.extract.segments)} 段`, 'warn'),
+              ` 一时出错 ${fmtNum(s.extract.transient ?? 0)} · 一直被拒 ${fmtNum(s.extract.rejected ?? 0)}${s.extract.maxRounds ? `，最多试了 ${fmtNum(s.extract.maxRounds)} 轮` : ''}${s.extract.nextAt ? `，下次 ${when(s.extract.nextAt)}` : ''}`)
+              : '没有'] : null,
           ])),
           card({ title: '检索与嵌入' }, e.error ? h('div', { class: 'pm-err' }, errText(e)) : kv([
             ['后台线程', e.mode === 'thread' ? badge('正常', 'ok') : e.mode === 'fallback' ? badge('退回主线程', 'warn') : (e.mode ?? '—')],

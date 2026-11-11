@@ -206,6 +206,8 @@ function buildApi(core, { startup, files }) {
         adapters: [...core.adapters.keys()],
         startup: { ...startup },
         files: { main: path.basename(files.main), vectors: path.basename(files.vectors) },
+        // 【D136】提炼一直不成、搁置着的段（只有数字）；库打不开、表还没建时是 null
+        extract: store && !store.closed ? (() => { try { return core.mods.encode.stalledSummary(core); } catch { return null; } })() : null,
       };
     },
 

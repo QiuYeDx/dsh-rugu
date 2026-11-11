@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWorld, insertRow, ADAPTER } from './harness.js';
+import * as dynamics from '../../src/dynamics/index.js';
 
 async function setup() {
   const w = await makeWorld();
@@ -14,6 +15,26 @@ async function setup() {
   return { w, owner, ming, dm, g, enc, say };
 }
 const actor = { claims: [{ kind: 'display-name', name: 'x' }] };
+
+test('确认的系数只乘一次（D137）：本人确认写进库的痕迹 = 编码强度 × events.confirm（1.2），不是 1.44', async () => {
+  // 用真的 dynamics.addTrace（编码强度照旧用替身的公式，方便算）
+  const w = await makeWorld({ mods: { dynamics: { addTrace: dynamics.addTrace } } });
+  try {
+    const owner = w.entity('阿杰', { closeness: 1, authority: 'principal' });
+    const ming = w.entity('阿明', { closeness: 0.3 });
+    const g = w.setting('游戏群', { exposure: 2 });
+    const enc = w.core.mods.encode;
+    const fact = enc.writeAssertion(w.core, { subjects: [ming], predicate: '爱好', text: '阿明喜欢钓鱼', kindHint: 'preference', certainty: 'hearsay', confidence: 0.5, imp: 5,
+      sources: [{ perceptId: null, speaker: owner, asserter: owner, mode: 'overheard', hop: 1, confidence: 0.5, at: 1 }], norm: {}, w: 1 });
+    w.percept(g, ming, '对，就是这样', { addressed: 'to-her', obsId: 'c1' });
+    const r = await enc.fix(w.core, { triggerObsId: 'c1', speaker: actor, op: 'confirm', target: `a${fact}`, evidenceQuote: '就是这样' });
+    assert.equal(r.status, 'done');
+    const tr = w.core.store.get("SELECT w FROM traces WHERE owner_kind = 'assertion' AND owner_id = ? AND reason = 'confirm'", fact);
+    const base = 1.0 * 1 * 1 * (0.8 + 0.7 * 0.3);   // toHer × w_self × w_sal(imp 5) × w_rel
+    assert.equal(w.core.config.get().activation.events.confirm, 1.2);
+    assert.ok(Math.abs(tr.w - base * 1.2) < 1e-9, `痕迹 w = ${tr.w}，应该是 ${base * 1.2}`);
+  } finally { await w.cleanup(); }
+});
 
 test('note：主人 remember → 钉住的事实；todo → 主人要求的意图（when 换成时间窗）；一条消息只执行一个操作', async () => {
   const { w, owner, dm, enc, say } = await setup();
@@ -130,7 +151,8 @@ test('fix correct：主人 → 新事实取代旧的（两条都留着）；别�
     const tr = w.callsOf('addTrace').slice(before).find((c) => c.ref === `a${fact}`);
     assert.equal(tr.reason, 'confirm');
     const base = 1.0 * 1 * 1 * (0.8 + 0.7 * 0.3);   // toHer × w_self × w_sal(imp 5) × w_rel
-    assert.ok(Math.abs(tr.w - base * 1.2) < 1e-9);
+    // 交给 addTrace 的是编码强度本身：× events.confirm 只由 dynamics 乘一次（D137；实际系数见下面那条用真 addTrace 的测试）
+    assert.ok(Math.abs(tr.w - base) < 1e-9);
     // 别人确认：审核
     const m4 = say(g, w.entity('路人'), '对就是这样', 'c4');
     assert.equal((await enc.fix(w.core, { triggerObsId: m4, speaker: actor, op: 'confirm', target: `a${fact}`, evidenceQuote: '就是这样' })).status, 'review');

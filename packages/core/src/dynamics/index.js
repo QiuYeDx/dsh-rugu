@@ -124,7 +124,8 @@ export function herSpokeRecently(core, settingKey, at) {
  * 在调用方的事务里调用（同步）。
  *
  * 实现上的几点（docs 里没写死的，取确定、和到达顺序无关的做法）：
- *   - w 是 §6.2 的编码强度；§6.4 的事件系数在这里乘：confirm × events.confirm、asked × events.askedAndRecalled；
+ *   - w 是 §6.2 的编码强度；§6.4 的事件系数在这里乘（只在这里，调用方给编码强度本身、不要先乘，D137）：
+ *     confirm × events.confirm、asked × events.askedAndRecalled；
  *     retell、replay 的权重是固定的 events.retellNewAudience / events.replay（调用方给的 w 不用）；
  *   - 「6 小时内一条」按本地时间对齐的 6 小时格算，「同一天」按本地日（config.time.tzOffsetMin）；
  *     同一格（或同一来源同一天）里**最早**的那次算数：迟到的、更早的证据会顶替已记下的较晚那条，所以结果不依赖处理顺序；

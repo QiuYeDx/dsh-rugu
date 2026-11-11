@@ -5,11 +5,11 @@
 //   - 一批提炼的全部输出在一个事务里写入（store.completeJob，§12.8 第 3 条）。
 //   - 计划和事件每一次是独立的一次（occurrence_key），永远不走「重复」快速路径（评审:SC-01）。
 // 拥有的表：episodes、episodes_fts、assertions、assertions_fts、assertion_entities、same_type、sources、
-//   plan_status_history、predicates、intentions、speaker_quota。
+//   plan_status_history、predicates、intentions、speaker_quota、extract_stalled（D136）。
 // 用到的端口：llm（extract、sleep）、budget、clock、logger；嵌入经 worker，语言经 lang。
 // 契约细节：docs/实现/模块与接口.md §4.4。实现分在同目录的几个文件里：segment（切分）、prompt / parse / verify / taint /
 // reconcile / extract（提炼的各步）、write（情节、事实、来源的写入）、plans（计划和意图）、review（夜间复核）、tools（note、fix、导入）、
-// lessons（她自己的经验，D124）。
+// lessons（她自己的经验，D124）、stalled（提炼一直不成的段，D136）。
 import * as seg from './segment.js';
 import * as ext from './extract.js';
 import * as pr from './prompt.js';
@@ -22,6 +22,7 @@ import * as wr from './write.js';
 import * as pl from './plans.js';
 import * as tl from './tools.js';
 import * as ls from './lessons.js';
+import * as st from './stalled.js';
 
 /**
  * 一个待提炼的段（切分的产物）。
@@ -134,11 +135,20 @@ export function dispose(core) { /* 无资源 */ }
  * 扫各场合的切分缓冲（store.SEGMENT_BUFFER_SQL，§12.8 第 2 条），按便宜信号找可能的边界（间隔 ≥ 20 分钟、
  * 原文窗口向量的话题漂移、参与者大换、满 25 条或 4000 字），给每个段排一个 kind='extract' 的任务
  * （dedupe_key 含场合和感知 id 范围；优先级只按 w_att × w_rel × 新鲜度，§7.2）。force=true 时把全部缓冲封口（夜间整理第 1 步）。
+ * 【D136】提炼一直不成的段（extract_stalled）切段时跳过、当作确定的边界；到点的按原来的范围各排一个重试任务（一轮一次）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey?: string, force?: boolean, at?: number}} [opt]
  * @returns {{jobs: number}}
  */
 export function segment(core, opt) { return seg.segment(core, opt); }
+
+/**
+ * 【D136】提炼一直不成、搁置着的段（管理页诊断，只有数字）：几段、一时的 / 稳定被拒的各几段、最多失败了几轮、
+ * 最早的从什么时候起、下一次什么时候再试。
+ * @param {import('../core-types.js').CoreContext} core
+ * @returns {{segments: number, transient: number, rejected: number, maxRounds: number, oldestAt: number|null, nextAt: number|null}}
+ */
+export function stalledSummary(core) { return st.stalledSummary(core); }
 
 /**
  * 跑一个提炼任务（maintenance.runJobs 调用，kind='extract'）：取背景（retrieve.backgroundForExtraction，分两组）→
