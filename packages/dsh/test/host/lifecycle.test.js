@@ -288,11 +288,11 @@ test('插件启动时已经活着的 agent：符合绑定的会话特征就补�
   host.service.dsh.registerBinding(fakeBinding());
   release();
   await host.ready;
-  assert.deepEqual(live.ctx.tools.registered.map((t) => t.name).sort(), ['memory_fix', 'memory_note', 'memory_recall']);
+  assert.deepEqual(live.ctx.tools.registered.map((t) => t.name).sort(), ['memory_fix', 'memory_look', 'memory_note', 'memory_recall']);
   assert.equal(other.ctx.tools.registered.length, 0, '不是她的会话不给工具');
   const created = fakeAgent({ id: 'new-1', preset: 'zz-chat' });
   await ctx.agentCreated(created);
-  assert.equal(created.ctx.tools.registered.length, 3);
+  assert.equal(created.ctx.tools.registered.length, 4);
   const sub = fakeAgent({ id: 'sub-1', preset: 'zz-chat', origin: 'subagent', delegationDepth: 1 });
   await ctx.agentCreated(sub);
   assert.equal(sub.ctx.tools.registered.length, 0, '子代理一律排除（F20）');

@@ -24,7 +24,10 @@ export const BRIDGE_FILES = Object.freeze({
 const AREAS = Object.freeze({ host: '宿主', runtime: '运行时', store: '存储', models: '模型', self: '核心自我', adapters: '适配器', bridge: 'QQ 桥接' });
 const STATUS_OF = { ok: 'ok', info: 'ok', warn: 'warn', fail: 'fail', skip: 'skip' };
 
-/** SAFE_EXACT 里有没有我们的三个工具（只认带标记的那几行，§11.1 白名单补丁）。 */
+/** 比最早那版补丁晚加进来的记忆工具（D156）：旧补丁只缺它们时算「补丁是旧的」，别的工具照常用。 */
+const LATER_TOOLS = Object.freeze(['memory_look']);
+
+/** SAFE_EXACT 里有没有我们的记忆工具（只认带标记的那几行，§11.1 白名单补丁）。 */
 export function whitelistState(src) {
   const text = String(src ?? '');
   const at = text.indexOf('const SAFE_EXACT = new Set([');
@@ -255,9 +258,14 @@ export async function runSelfCheck(d) {
     try {
       const src = fsx.readFileSync(path.join(qq.bridgeDir, BRIDGE_FILES.restrict), 'utf8');
       const ws = whitelistState(src);
+      // 补丁是旧的（D156）：原来的三个工具都放行了，只缺后来加的（memory_look）——别的工具照常用，只是缺的那几个先不给她
+      const stale = ws.found && ws.missing.length > 0 && ws.missing.every((t) => LATER_TOOLS.includes(t));
       add('bridge.whitelist', 'bridge', !ws.found ? 'fail' : ws.missing.length ? 'warn' : 'ok',
-        !ws.found ? '桥接白名单里找不到 SAFE_EXACT（桥接版本变了？）' : ws.missing.length ? `QQ 会话还用不了：${ws.missing.join('、')}（白名单补丁没打）` : 'QQ 白名单已放行记忆工具',
-        ws.missing.length || !ws.found ? { hint: '到管理页「设置 → QQ 桥接」预览并打补丁，然后彻底重启 DSH', disables: ['tools:qq'] } : {});
+        !ws.found ? '桥接白名单里找不到 SAFE_EXACT（桥接版本变了？）'
+          : stale ? `QQ 白名单的补丁是旧的：还没放行 ${ws.missing.join('、')}（别的记忆工具照常能用）`
+            : ws.missing.length ? `QQ 会话还用不了：${ws.missing.join('、')}（白名单补丁没打）` : 'QQ 白名单已放行记忆工具',
+        stale ? { hint: '到管理页「设置 → QQ 桥接」再打一次补丁（只会补上缺的那几行，已经有的不动），然后彻底重启 DSH', disables: ws.missing.map((t) => `tools:qq/${t}`) }
+          : ws.missing.length || !ws.found ? { hint: '到管理页「设置 → QQ 桥接」预览并打补丁，然后彻底重启 DSH', disables: ['tools:qq'] } : {});
     } catch { add('bridge.whitelist', 'bridge', 'warn', '读不到桥接的白名单文件'); }
     try {
       const dir = path.join(qq.bridgeDir, BRIDGE_FILES.presetsDir);

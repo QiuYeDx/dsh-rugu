@@ -12,6 +12,7 @@ import * as ledger from './ledger.js';
 import * as res from './resident.js';
 import * as rc from './recall.js';
 import * as diag from './diag.js';
+import * as lk from './look.js';
 
 /** @param {import('../core-types.js').CoreContext} core */
 export function init(core) {
@@ -114,6 +115,33 @@ export async function recall(core, s, opt) {
  */
 export async function recallAt(core, s, opt) {
   return rc.recallAt(core, s, opt);
+}
+
+/**
+ * 【D156】翻看（memory_look）：open 一个记号（回忆结果每一行前面〔〕里的，就是记忆引用）→ 展开这一条（情节：完整叙述 + 这段经历里的原话，
+ * 太长时给开头、结尾和中间最对题的几句；事实：它本身 + 来源的原话 + 旧的说法；原文窗口：它本身和前后各一个窗口）；when（可选 where、about）
+ * → 那段时间的经过（一段经历一行，整块字数都给它）。都过关口①（目标和回想同一套）；展开的那一条这一轮不能说就什么都不给。
+ * 结果的 look：{kind, ref?, note?, reason?}（reason：bad-ref / not-found / withheld / bad-time / nothing / unavailable / error）。条目的层是 look / outline。
+ * 不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {import('../contract/types.js').SituationRef} s
+ * @param {import('../contract/types.js').LookOptions} opt
+ * @returns {Promise<import('../contract/types.js').RecallLayers>}
+ */
+export async function look(core, s, opt) {
+  return lk.look(core, s, opt);
+}
+
+/**
+ * 【D156】回放评测的翻看入口：和 look 同一条路，场合按场合键、焦点按感知 id 给（同 recallAt）。只在库副本上用。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: 'message'|'idle'|'reminder'}} s
+ * @param {import('../contract/types.js').LookOptions} opt
+ * @returns {Promise<import('../contract/types.js').RecallLayers>}
+ */
+export async function lookAt(core, s, opt) {
+  const { settingKey, focusPerceptId, ...rest } = s ?? {};
+  return lk.look(core, rest, opt, { pin: { settingKey, focusPerceptId: Number.isSafeInteger(focusPerceptId) ? focusPerceptId : null } });
 }
 
 /**

@@ -18,6 +18,12 @@ export const WORKING_TITLES = Object.freeze({
 export const POINT_BACK_TITLE = '跟这句话最有关的，前面已经想起过（往上看）：';
 /** 回忆那一节的小标题（D155）：被问到以前的事时想起来的，按时间排好；开头一行是「找了哪儿」。 */
 export const RECOLLECT_TITLE = '想起来的（被问到的那些事，有时间的按时间排）：';
+/** 「那段时间的经过」那一节的小标题（D156）：一段经历一行，〔〕里是记号，想看全用 memory_look。 */
+export const OUTLINE_TITLE = '那段时间的经过（一段一行；〔〕里是记号，想看哪段的全部用 memory_look 翻看）：';
+/** 经过每一行的上限（核心已经截到 recall.recollect.outline.lineChars，加上记号和「另外 N 处也提到」）。 */
+export const OUTLINE_ITEM_MAX = 120;
+/** 记忆工具的结果里两部分的小标题（D156）。 */
+export const TOOL_SUBTITLES = Object.freeze({ outline: '那段时间的经过：', recollect: '细节：' });
 /** 回忆那一节每条的上限（核心已经按这一档截到 itemChars，这里只兜底）。 */
 export const RECOLLECT_ITEM_MAX = 320;
 /** 写法 → 块头 / 工具结果的头（不认识的按 guided）。 */
@@ -42,6 +48,8 @@ const BASE_SECTIONS = [
   { layers: ['recentFromPresent'], title: '在场的人最近：', max: 200 },
   { layers: ['todaySoFar'], title: '你今天：', max: 150 },
   // 回忆（D155）：放在原来「想起来的」的位置；开头一行是「找了哪儿」（RecallLayers.recollect.note，不是一条记忆）
+  // 那段时间的经过（D156）在细节前面；「找了哪儿」那一行放在这两节里先出现的那一节开头
+  { layers: ['outline'], title: OUTLINE_TITLE, max: OUTLINE_ITEM_MAX },
   { layers: ['recollect'], title: RECOLLECT_TITLE, max: RECOLLECT_ITEM_MAX },
   { layers: ['recalled', 'awarePrivate'], title: '想起来的：', max: 120 },
   // 她的经验（D124）：「（验证过）/（还没验证）」写在每条开头
@@ -88,6 +96,8 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
     return x.i - y.i;
   });
   const noteLine = note ? clip(sanitizeForPrompt(note), 200) : '';
+  const RC = new Set(['outline', 'recollect']);
+  let noteCounted = false;
   let total = charLen(head);
   const titled = new Set();
   const take = new Set();
@@ -100,22 +110,25 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
     if (!t) continue;
     const line = sec.title ? `- ${t}` : t;
     const first = !titled.has(x.s) && sec.title;
-    const add = charLen(line) + 1 + (first ? charLen(sec.title) + 1 : 0) + (first && noteLine && x.it.layer === 'recollect' ? charLen(noteLine) + 1 : 0);
+    const withNote = !!noteLine && !noteCounted && RC.has(x.it.layer);
+    const add = charLen(line) + 1 + (first ? charLen(sec.title) + 1 : 0) + (withNote ? charLen(noteLine) + 1 : 0);
     if (total + add > maxChars) {
       if (wm && leadOf.get(gidOf(x)) === x.i) dropped.add(gidOf(x));
       continue;
     }
     total += add;
+    if (withNote) noteCounted = true;
     titled.add(x.s);
     take.add(x.i);
   }
   const lines = [head];
   const used = [];
+  let notePut = false;
   SECTIONS.forEach((sec, si) => {
     const its = list.filter((x) => x.s === si && take.has(x.i));
     if (!its.length) return;
     if (sec.title) lines.push(sec.title);
-    if (noteLine && sec.layers.includes('recollect')) lines.push(noteLine);
+    if (noteLine && !notePut && sec.layers.some((l) => RC.has(l))) { lines.push(noteLine); notePut = true; }
     for (const x of its) {
       lines.push(sec.title ? `- ${itemText(x.it, sec.max)}` : itemText(x.it, sec.max));
       used.push(x.it);
@@ -133,7 +146,7 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
  */
 export function renderInjectBlock(layers, { inject = {}, style = 'guided' } = {}) {
   const items = Array.isArray(layers?.items) ? layers.items : [];
-  const rcTurn = items.some((it) => it?.layer === 'recollect');
+  const rcTurn = items.some((it) => it?.layer === 'recollect' || it?.layer === 'outline');
   const maxChars = (inject.blockMaxChars ?? 1400) + (rcTurn ? Math.max(0, inject.recollectChars ?? 2400) : 0);
   const r = renderBlock(items, { maxChars, style, note: rcTurn ? String(layers?.recollect?.note ?? '') : '' });
   return { ...r, recollect: recollectLog(layers, rcTurn) };
@@ -148,12 +161,39 @@ export function renderInjectBlock(layers, { inject = {}, style = 'guided' } = {}
  */
 export function renderRecallResult(layers, { tools = {}, style = 'guided' } = {}) {
   const items = Array.isArray(layers?.items) ? layers.items : [];
-  const rcTurn = items.some((it) => it?.layer === 'recollect');
+  const rcTurn = items.some((it) => it?.layer === 'recollect' || it?.layer === 'outline');
   const r = renderToolResult(items, { style, ...(rcTurn ? { maxChars: Math.max(1600, tools.recollectChars ?? 4600), note: String(layers?.recollect?.note ?? '') } : {}) });
   return { ...r, recollect: recollectLog(layers, rcTurn) };
 }
 const recollectLog = (layers, rcTurn) => (rcTurn && layers?.recollect?.log && typeof layers.recollect.log === 'object' && !Array.isArray(layers.recollect.log)
   ? layers.recollect.log : null);
+
+/** 翻看（memory_look，D156）每一条的上限：展开的正文、原话、前后的窗口（核心已经截过）。 */
+export const LOOK_ITEM_MAX = 1300;
+/**
+ * 翻看的结果（D156，memory_look；线上和回放评测同一条）：工具结果的头 → 说明那一行（展开了哪条、一共几句省了几句 / 看的是哪段时间）→ 一条一行。
+ * 上限是 tools.recollectChars。
+ * @param {import('rugu-core/contract').RecallLayers} layers
+ * @param {{tools?: {recollectChars?: number}, style?: 'guided'|'purpose'}} [opt]
+ * @returns {{text: string, used: object[]}}
+ */
+export function renderLookResult(layers, { tools = {}, style = 'guided' } = {}) {
+  const maxChars = Math.max(1600, tools.recollectChars ?? 4600);
+  const note = layers?.look?.note ? clip(sanitizeForPrompt(layers.look.note), 200) : '';
+  const out = [];
+  const used = [];
+  let total = charLen(note) + 1;
+  for (const it of layers?.items ?? []) {
+    const t = itemText(it, it?.layer === 'outline' ? OUTLINE_ITEM_MAX : LOOK_ITEM_MAX);
+    if (!t) continue;
+    const line = `- ${t}`;
+    if (total + charLen(line) > maxChars) break;
+    out.push(line);
+    used.push(it);
+    total += charLen(line) + 1;
+  }
+  return { text: out.length ? [headsFor(style).tool, ...(note ? [note] : []), ...out].join('\n') : '', used };
+}
 
 /**
  * memory_recall 工具的返回：一条一行，带来源说法和把握（§8.5）。核心的 rendered 已经带着来源说法（RecallItem.rendered：
@@ -166,16 +206,23 @@ export function renderToolResult(items, { maxChars = 1600, style = 'guided', not
   // 回忆（D155）：「找了哪儿」那一行在最前（不是一条记忆）；回忆的条目每条上限放宽
   const noteLine = note ? clip(sanitizeForPrompt(note), 200) : '';
   if (noteLine) total += charLen(noteLine) + 1;
+  // 经过和细节（D156）：两部分各带一行小标题（只有一部分时也带，她知道这是哪一种）
+  const hasOutline = (items ?? []).some((it) => it?.layer === 'outline');
+  let sub = null;
   for (const it of items ?? []) {
-    const t = itemText(it, it?.layer === 'recollect' ? RECOLLECT_ITEM_MAX : 160);
+    const layer = it?.layer;
+    const t = itemText(it, layer === 'recollect' ? RECOLLECT_ITEM_MAX : layer === 'outline' ? OUTLINE_ITEM_MAX : 160);
     if (!t) continue;
-    const p = it?.provenance ? clip(sanitizeForPrompt(it.provenance), 30) : '';
+    const p = it?.provenance && layer !== 'outline' ? clip(sanitizeForPrompt(it.provenance), 30) : '';
     const prov = p && !t.includes(p) ? `（${p}）` : '';
     const line = `- ${t}${prov}`;
-    if (total + charLen(line) > maxChars) break;
+    const subLine = hasOutline && (layer === 'outline' || layer === 'recollect') && sub !== layer ? TOOL_SUBTITLES[layer] : null;
+    const add = charLen(line) + (subLine ? charLen(subLine) + 1 : 0);
+    if (total + add > maxChars) break;
+    if (subLine) { out.push(subLine); sub = layer; }
     out.push(line);
     used.push(it);
-    total += charLen(line) + 1;
+    total += add + 1;
   }
   return { text: out.length ? [headsFor(style).tool, ...(noteLine ? [noteLine] : []), ...out].join('\n') : '', used };
 }

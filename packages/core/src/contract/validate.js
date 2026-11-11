@@ -469,6 +469,28 @@ export function validateRecallOptions(v) {
   return result(c, out);
 }
 
+/**
+ * 【D156】翻看（memory_look）的选项：open（一个记号）和 when（一段时间）给其一，都给时先 open；where、about 只跟 when 用。
+ */
+export function validateLookOptions(v) {
+  const c = new Ctx();
+  if (!obj(c, v, 'look', { required: true })) return result(c, null);
+  const o = /** @type {any} */ (v);
+  const out = clean({
+    open: str(c, o.open, 'open', { max: 64 }),
+    when: str(c, o.when, 'when', { max: LIMITS.labelMax }),
+    where: str(c, o.where, 'where', { max: LIMITS.labelMax }),
+    about: str(c, o.about, 'about', { max: LIMITS.labelMax }),
+    deadlineMs: num(c, o.deadlineMs, 'deadlineMs', { required: true, min: 0, max: LIMITS.deadlineMaxMs }),
+    budgetChars: num(c, o.budgetChars, 'budgetChars', { int: true, min: 0, max: 100_000 }),
+    signal: undefined,
+  });
+  if (!(typeof out.open === 'string' && out.open.trim()) && !(typeof out.when === 'string' && out.when.trim())) c.err('open', 'open 和 when 至少给一个');
+  if (o.signal !== undefined && !(o.signal && typeof o.signal.aborted === 'boolean')) c.err('signal', '应为 AbortSignal');
+  else if (o.signal) out.signal = o.signal;
+  return result(c, out);
+}
+
 function recallItem(c, v, path) {
   if (!obj(c, v, path, { required: true })) return undefined;
   return {
@@ -487,6 +509,8 @@ function recallItem(c, v, path) {
     // 可选（D110）：工作记忆的条目带所在的段（只给注入日志和管理页用）
     ...(v.unit !== undefined ? { unit: oneOf(c, v.unit, WORKING_UNITS, `${path}.unit`, { required: true }) } : {}),
     ...(v.unitKey !== undefined ? { unitKey: str(c, v.unitKey, `${path}.unitKey`, { required: true, allowEmpty: false, max: 40 }) } : {}),
+    // 可选（D156）：回忆里同一件事合并以后，代表这一条还代表了哪几条（记忆引用）
+    ...(v.merged !== undefined ? { merged: arr(c, v.merged, `${path}.merged`, (cc, x, p) => str(cc, x, p, { required: true, allowEmpty: false, max: 200 }), { required: true, max: 10 }) } : {}),
   };
 }
 export function validateRecallLayers(v) {
@@ -501,6 +525,18 @@ export function validateRecallLayers(v) {
   // 可选（D95）：有意回想时，有关但本周期已经给过她的条数
   const already = num(c, l.alreadySent, 'alreadySent', { int: true, min: 0 });
   if (already !== undefined) out.alreadySent = already;
+  // 可选（D156）：翻看（memory_look）的结果说明——哪一种、展开的是哪条、说明那一行（不含记忆内容）、没给出东西的原因
+  if (l.look !== undefined) {
+    if (obj(c, l.look, 'look', { required: true })) {
+      const lk = l.look;
+      out.look = clean({
+        kind: oneOf(c, lk.kind, ['open', 'when'], 'look.kind', { required: true }),
+        ref: str(c, lk.ref, 'look.ref', { max: 64 }),
+        note: str(c, lk.note, 'look.note', { max: 400 }),
+        reason: oneOf(c, lk.reason, ['bad-ref', 'not-found', 'withheld', 'bad-time', 'nothing', 'unavailable', 'error'], 'look.reason'),
+      });
+    }
+  }
   // 可选（D155）：回忆的「找了哪儿」那一行和意图、范围的摘要
   if (l.recollect !== undefined) {
     if (obj(c, l.recollect, 'recollect', { required: true })) {
@@ -607,6 +643,7 @@ export const assertSettingDescriptor = asserter('SettingDescriptor', validateSet
 export const assertUtterance = asserter('Utterance', validateUtterance);
 export const assertSituationRef = asserter('SituationRef', validateSituationRef);
 export const assertRecallOptions = asserter('RecallOptions', validateRecallOptions);
+export const assertLookOptions = asserter('LookOptions', validateLookOptions);
 export const assertRecallLayers = asserter('RecallLayers', validateRecallLayers);
 export const assertNoteRequest = asserter('NoteRequest', validateNoteRequest);
 export const assertFixRequest = asserter('FixRequest', validateFixRequest);

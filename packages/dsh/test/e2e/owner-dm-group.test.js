@@ -185,7 +185,7 @@ test('端到端：主人私聊注入 → memory_recall → 群里开着、照常
   now += 24 * 3_600_000;
   const dm = fakeAgent({ id: 'sess-dm', preset: 'qq-chat-v2' });
   await ctx.agentCreated(dm);
-  assert.deepEqual(dm.ctx.tools.registered.map((d) => d.name).sort(), ['memory_fix', 'memory_note', 'memory_recall']);
+  assert.deepEqual(dm.ctx.tools.registered.map((d) => d.name).sort(), ['memory_fix', 'memory_look', 'memory_note', 'memory_recall']);
   const m1 = inMsg({ seq: 1, userId: br.ids.owner, sender: '老周', text: '在吗，问你个事', time: now, isOwner: true });
   atomicWrite(br.social, socialFile({ [br.K.owner]: { recent: [m1] }, [br.K.g]: { recent: [] } }));
   const d1 = await step(ctx, dm, [wake(br.K.owner, compactOf(m1), '主人发来私聊')]);

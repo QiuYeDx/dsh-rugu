@@ -124,11 +124,11 @@ test('没分类的工具在自检里提示补分类；桥接白名单状态只�
   assert.equal(m['tools.unclassified'].status, 'warn');
   assert.match(m['tools.unclassified'].detail, /extraTools/);
   const src = (lines) => `const SAFE_EXACT = new Set([\n  'todo_write',\n${lines.join('\n')}\n])\n`;
-  assert.deepEqual(whitelistState('nothing'), { found: false, missing: ['memory_recall', 'memory_note', 'memory_fix'], patched: [] });
+  assert.deepEqual(whitelistState('nothing'), { found: false, missing: ['memory_recall', 'memory_note', 'memory_fix', 'memory_look'], patched: [] });
   const half = whitelistState(src([`  'memory_recall', ${PATCH_MARK}`]));
-  assert.deepEqual(half.missing, ['memory_note', 'memory_fix']);
+  assert.deepEqual(half.missing, ['memory_note', 'memory_fix', 'memory_look']);
   assert.deepEqual(half.patched, ['memory_recall']);
-  const all = whitelistState(src(['memory_recall', 'memory_note', 'memory_fix'].map((t) => `  '${t}', ${PATCH_MARK}`)));
+  const all = whitelistState(src(['memory_recall', 'memory_note', 'memory_fix', 'memory_look'].map((t) => `  '${t}', ${PATCH_MARK}`)));
   assert.deepEqual(all.missing, []);
   rmDir(dir);
 });

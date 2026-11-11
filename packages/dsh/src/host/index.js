@@ -203,9 +203,10 @@ export function createHost(ctx, config = {}, deps = {}) {
     coreConfig: () => { try { return configStore.core.get(); } catch { return {}; } },
     onClaimed: (agent) => { memoryTools?.registerOn(agent, { claimed: true }); },   // 第一次认领成功时补注册记忆工具
   });
-  /** 自检关掉了哪些适配器的记忆工具（disables 里的 'tools:<适配器 id>'）。 */
+  /** 自检关掉了哪些适配器的记忆工具（disables 里的 'tools:<适配器 id>'；只关一个工具的是 'tools:<适配器 id>/<工具名>'，D156）。 */
   const toolsBlocked = new Set();
   memoryTools = createMemoryTools({ getPm, claims, states, assembler, hostConfig, log, getDefineTool: () => defineTool, recallNonces, blockedFor: (id) => toolsBlocked.has(id), infoOf,
+    blockedToolFor: (id, name) => toolsBlocked.has(`${id}/${name}`),   // D156：白名单补丁是旧的时，只关掉还没放行的那几个
     coreConfig: () => { try { return configStore.core.get(); } catch { return {}; } } });   // D125：工具说明的写法跟核心的 context.usageStyle
   const egress = createEgress({
     getPm, claims, tooltable, guard, assembler, hostConfig, log, recallNonces, now, infoOf, media,

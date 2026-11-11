@@ -2,7 +2,7 @@
 // 形状照 rugu-core 的 api.js；sessions.injected 和真核心一样，条目缺 appraisalRef 就抛 ContractError（D47）。
 export function createFakePm({
   modes = {}, defaultMode = 'live',
-  recall = null, appraise = null, note = null, fix = null, mediaViewed = null, cached = null, lessonNote = null, toolOutcome = null,
+  recall = null, appraise = null, note = null, fix = null, mediaViewed = null, cached = null, lessonNote = null, toolOutcome = null, look = null,
 } = {}) {
   const calls = [];
   const rec = (name, ...args) => { calls.push({ name, args }); };
@@ -35,6 +35,8 @@ export function createFakePm({
       return { items: [{ id: 'a1', layer: 'recalled', rendered: '前天这里聊到团建去哪，还没定', verdict: 'share', confidence: 0.8, provenance: '在这里聊的', appraisalRef: 'ap1' }], degradeLevel: 2, traceId: 't1' };
     },
     recallCached(s) { rec('recallCached', s); return cached ? cached(s) : { items: [], degradeLevel: 2, traceId: 'cached' }; },
+    // 翻看（D156）
+    async look(s, opt) { rec('look', s, opt); return look ? look(s, opt) : { items: [], degradeLevel: 2, traceId: 'l1', look: { kind: opt?.open ? 'open' : 'when', reason: 'nothing' } }; },
     self: { coreBlock: () => ({ text: '', hash: 'x' }) },
     expression: {
       async appraise(u, signal) { rec('appraise', u); if (appraise) return appraise(u, signal); return { verdict: 'speak', token: 'tok-1' }; },

@@ -14,21 +14,23 @@ const LEAD_DECIDES = new Set(['people', 'intentions']);
  * 不受每天额度和滚动窗口限制、也不记进「已注入」的层（D100、D133）：「你想着的」和工作记忆。pack 的 exempt 和
  * ledger.budgetState 的记账都用这一份：它们放进去的字数要是也算「已注入」，会挤掉别的层的额度。
  */
-export const UNMETERED_LAYERS = Object.freeze(['intentions', 'working']);
+// 回忆（D155、D156：回忆的细节、那段时间的经过、翻看）也不记账：被问到时她要的就是这些，不该挤占之后几轮浮现的额度（设计「回忆」§5.3）；
+// 它们自己有这一档的上限（recall.recollect），只在被直接问到、她调记忆工具时才有
+export const UNMETERED_LAYERS = Object.freeze(['intentions', 'working', 'recollect', 'outline', 'look']);
 
 /** 输出（展示）顺序：先交代背景，再是想起来的，最后是她想着要做的。 */
 // 工作记忆（眼前这个人刚在别处跟她说的、她回他的）紧跟在时间间隔后面：这是这一轮最要紧的上下文
 // 她的经验（D124）放在「你想着的」前面：做事的时候用得上
 // 指回去（D146）紧跟在工作记忆后面：这一轮最相关的那条在她上下文更前面，这一行把她指回去，要显眼
 // 回忆（D155）的结果放在原来「想起来的」的位置（在它前面）
-export const DISPLAY_ORDER = ['gap', 'working', 'pointBack', 'warmStart', 'people', 'recentFromPresent', 'todaySoFar', 'recollect', 'recalled', 'awarePrivate', 'lessons', 'intentions'];
+export const DISPLAY_ORDER = ['gap', 'working', 'pointBack', 'warmStart', 'people', 'recentFromPresent', 'todaySoFar', 'outline', 'recollect', 'recalled', 'awarePrivate', 'lessons', 'intentions'];
 // 预算紧时谁先拿到：你想着的 > 工作记忆 > 时间间隔 > 她的经验（D124）> 指回去（D146）> （被直接问到时）想起来的和在场者近况 > 人物卡 > 想起来的和在场者近况 > 心里有数
 // > 今天到目前为止 > 暖启动。工作记忆有自己的预算（recall.working.budgetChars），不受每天额度和滚动窗口限制（D100）。
 // 「想起来的」和「在场者近况」是同一次回想按同一个激活排出来的（retrieve 给两组各自的名额，再按 A 合并），放在同一档里
 // 按回想的先后（order）一起分：谁更活跃谁先拿到，各自的条数和字数上限照旧。原来在场者近况排在最后，人物卡 + 五条想起来的
 // 就把 900 字用完，主人两分钟前在别处说的话永远轮不到（实测问题 #5）。
 // 回忆（D155）的结果和它们同一档：同一次回想的结果，被直接问到时一样不受每天和滚动窗口的额度限制
-const RECALL_TIER = Object.freeze(['recollect', 'recalled', 'recentFromPresent']);
+const RECALL_TIER = Object.freeze(['outline', 'recollect', 'recalled', 'recentFromPresent']);
 /** 「指回去」那一层的名字（D146）。注入日志里它是单独的一层，读者据此和新给的区分开。 */
 export const POINT_BACK_LAYER = 'pointBack';
 // 她的经验（D124）：按范围对上才有、最多两三行，排在时间间隔后面（做事时用得上，又不多占）
@@ -37,7 +39,7 @@ const PRIORITY_DELIBERATE = ['intentions', 'working', 'gap', 'lessons', POINT_BA
 const PRIORITY_INVOLUNTARY = ['intentions', 'working', 'gap', 'lessons', POINT_BACK_LAYER, 'people', RECALL_TIER, 'awarePrivate', 'todaySoFar', 'warmStart'];
 // 她自己调记忆工具认真想一件事（D148，opt.recallFirst）：按问题找到的先拿到位置、排在最前；工作记忆（context 已经只留了和问题有关的那几段）排在后面
 const PRIORITY_RECALL_FIRST = [POINT_BACK_LAYER, RECALL_TIER, 'lessons', 'intentions', 'working', 'people', 'awarePrivate', 'todaySoFar', 'gap', 'warmStart'];
-const DISPLAY_RECALL_FIRST = ['pointBack', 'recollect', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'intentions', 'gap', 'warmStart'];
+const DISPLAY_RECALL_FIRST = ['pointBack', 'outline', 'recollect', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'intentions', 'gap', 'warmStart'];
 
 /**
  * @typedef {object} Entry   渲染好、还没去重和打包的一条
@@ -58,6 +60,9 @@ const DISPLAY_RECALL_FIRST = ['pointBack', 'recollect', 'recalled', 'recentFromP
  * @property {string} [unitKey]      工作记忆的条目：所在的段（'thread:<根的 id>' 这样的，不含场合键）
  * @property {number} [alloc]        同一层里各组分预算的先后（小的先分；没有就按 order）。工作记忆最新的一组先分（D108；展示顺序不变）
  */
+
+// 同一条记忆只占一个位置；那段时间的经过（D156）是另一种说法（一句话），它的完整叙述照样可以在细节里
+const seenKey = (e) => `${e.ref}|${e.verdict}${e.layer === 'outline' ? '|outline' : ''}`;
 
 function capsOf(cfg, mode, rcTier = null) {
   const L = cfg.context.layers;
@@ -82,8 +87,10 @@ function capsOf(cfg, mode, rcTier = null) {
     pointBack: { groups: Math.max(0, Math.floor(cfg.context.pointBack?.max ?? 2)), chars: Infinity },
     // 回忆（D155）：这一档（工具 / 自动触发，随花费档位）的条数和总字数；有自己的预算，不占整块的 blockMaxChars（被判成回忆的那一轮
     // 集成层整块的上限相应加大）。没给这一档（缓存里的旧条目）按自动触发那一档的原数
-    recollect: { groups: rcTier?.maxItems ?? cfg.recall.recollect?.auto?.maxItems ?? 18, chars: rcTier?.totalChars ?? cfg.recall.recollect?.auto?.totalChars ?? 2000,
-      ownBudget: true },
+    recollect: { groups: rcTier?.maxItems ?? cfg.recall.recollect?.auto?.maxItems ?? 18,
+      chars: rcTier?.detailChars ?? rcTier?.totalChars ?? cfg.recall.recollect?.auto?.totalChars ?? 2000, ownBudget: true },
+    // 那段时间的经过（D156）：一段一行，字数是这一档里分给经过的那一份（context 按实际的经过行算好）
+    outline: { groups: Infinity, chars: rcTier?.outlineChars ?? 0, ownBudget: true },
   };
 }
 
@@ -98,7 +105,8 @@ function sentTest(sent) {
     // 指回去的那一行本来就是给已经给过的条目的（D146），不按「已发过」去掉
     if (e.layer === 'gap' || e.layer === POINT_BACK_LAYER || e.verdict === 'pending') return false;
     const aware = e.verdict === 'aware_private';
-    return [e.ref, ...(e.duplicates ?? [])].some((r) => sentRef(r, aware));
+    // 同一件事合并进这一条的（D156 merged）也一样：给过其中哪条，这条也算给过
+    return [e.ref, ...(e.duplicates ?? []), ...(e.merged ?? [])].some((r) => sentRef(r, aware));
   };
 }
 
@@ -250,7 +258,7 @@ export function pack(entries, opt) {
       for (const [i, e] of tries) {
         // 组长、绑在组长上的放不下 → 整组不放；别的组员放不下只丢它自己
         const vital = i === 0 || !!e.bound;
-        if (seenRefs.has(`${e.ref}|${e.verdict}`) && e.layer !== 'gap') { if (vital) { take.length = 0; break; } continue; }
+        if (seenRefs.has(seenKey(e)) && e.layer !== 'gap') { if (vital) { take.length = 0; break; } continue; }
         const n = charLen(e.rendered);
         const fits = !((!own && total + chars + n > blockCap) || used[layer].chars + chars + n > cap.chars || chars + n > (cap.groupChars ?? Infinity));
         const budgetOk = free || budgeted + chars + n <= budgetCap;
@@ -268,7 +276,7 @@ export function pack(entries, opt) {
       used[layer].chars += chars;
       if (!own) total += chars;
       if (!free) budgeted += chars;
-      for (const e of take) { chosen.push(e); seenRefs.add(`${e.ref}|${e.verdict}`); }
+      for (const e of take) { chosen.push(e); seenRefs.add(seenKey(e)); }
     }
   }
 
@@ -289,5 +297,6 @@ export function pack(entries, opt) {
       ...(e.layer === 'working' && typeof e.group === 'string' ? { group: e.group } : {}),
       ...(e.layer === 'working' && typeof e.unit === 'string' ? { unit: e.unit } : {}),
       ...(e.layer === 'working' && typeof e.unitKey === 'string' ? { unitKey: e.unitKey } : {}),
+      ...(Array.isArray(e.merged) && e.merged.length ? { merged: e.merged.slice(0, 10) } : {}),
     }));
 }

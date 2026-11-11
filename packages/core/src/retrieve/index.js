@@ -12,6 +12,7 @@
 //   params.js（参数和还没并进 defaults.js 的默认值）、names.js（称呼）、working.js（工作记忆的候选，§8.10）、util.js、
 //   scope.js（范围，D153）、intent.js（读懂问题，D154）、recollect.js（回忆，D155）。
 import { buildCues as buildCuesImpl } from './cues.js';
+import { hydrate as hydrateRefs } from './hydrate.js';
 import { runRecall, emptySet } from './pipeline.js';
 import { fuse as fuseImpl, mmr as mmrImpl } from './fuse.js';
 import { render as renderImpl } from './render.js';
@@ -24,6 +25,8 @@ import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, top
 import { staticLevel, storeOk } from './level.js';
 import { scopeOf as scopeOfImpl } from './scope.js';
 import { recollect as recollectImpl, recollectEnabled, recollectTier as recollectTierImpl } from './recollect.js';
+import { outlineRows } from './outline.js';
+import { groupSame } from './merge.js';
 import { errKind, latestPerceptAnywhere, latestPerceptOf, log, metric, safe } from './util.js';
 
 /**
@@ -224,7 +227,8 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  * opt.placeAllowed【补】（场合键 → 能不能在目标这里写出那个场合的名字：别的场合的名字也是记忆，场合的档案卡过了关口①才写，
  * 否则来源说法里不写在哪儿；context 总是给，不给时照旧写名字）；
  * opt.timeStyle【补】（D148：'full' 缺省，几个小时以内带「多久以前」；'day' 不带，常驻区这种会冻结一段时间的文字用）；
- * opt.excerpt【补】（D155，只在回忆这条路上给：几句线索；正文放不下时截和它们的词最对得上的那一段，两头带「…」，不是从头截）。
+ * opt.excerpt【补】（D155，只在回忆这条路上给：几句线索；正文放不下时截和它们的词最对得上的那一段，两头带「…」，不是从头截）；
+ * opt.outline【补】（D156：渲染成「那段时间的经过」的一行——时间 · 在哪儿 · 这段经历的一句话）。
  * 候选上的 belief（maybe_same）让措辞带「好像」、把握不超过链接的置信度；计划写明状态和结案的绝对时间；
  * blank（补不回的空白）只写「那几天有些事记不太清」，说个大概也一样，不给锚点的内容。
  * 记忆已经不在了（被删）返回空字符串，调用方跳过这条。
@@ -232,7 +236,7 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  * @param {import('../core-types.js').ScoredCandidate} c
  * @param {{verdict: 'share'|'share_vague', vagueText?: string|null, at: number, itemChars: number, settingKey?: string|null,
  *          previous?: {candidate: import('../core-types.js').ScoredCandidate, verdict: 'share'|'share_vague', vagueText?: string|null}|null,
- *          placeAllowed?: (settingKey: string) => boolean, timeStyle?: 'full'|'day', excerpt?: string[]}} opt
+ *          placeAllowed?: (settingKey: string) => boolean, timeStyle?: 'full'|'day', excerpt?: string[], outline?: boolean}} opt
  * @returns {{rendered: string, provenance: string, confidence: number}}
  */
 export function render(core, c, opt) { return renderImpl(core, c, opt); }
@@ -352,3 +356,29 @@ export function scopeOf(core, spec, opt) { return scopeOfImpl(core, spec, opt ??
  * @returns {{kind: 'tool'|'auto', maxItems: number, itemChars: number, totalChars: number}}
  */
 export function recollectTier(core, kind) { return recollectTierImpl(core.config.get(), kind); }
+
+/**
+ * 【D156】「那段时间的经过」（memory_look 的 when 用）：范围里的经历一段一行的候选，按段轮流、段内按时间均匀取（没有线索，不排对题），
+ * 最多 max 条；同一件事合并（recall.recollect.merge），每组 {ref, t, merged}，按时间从早到晚。范围跨了 recall.recollect.outline.dayLayerDays
+ * 天以上时先给日记、小结。只给候选（还没过关口①），出错返回空的。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{rows: {ref: string, tStart: number, tEnd: number, settingKey: string|null}[]}} scope   scopeOf 的结果
+ * @param {{max: number, signal?: AbortSignal}} opt
+ * @returns {Promise<{ref: string, t: number, merged: string[]}[]>}
+ */
+export async function outlineOf(core, scope, opt) {
+  try {
+    const R = core.config.get().recall.recollect ?? {};
+    const rows = outlineRows(core, scope, { max: opt?.max ?? 40, dayLayerDays: R.outline?.dayLayerDays });
+    if (!rows.length) return [];
+    const metas = hydrateRefs(core, rows.map((r) => r.ref));
+    const cands = rows.filter((r) => metas.has(r.ref)).map((r) => ({ ref: r.ref, t: r.t, meta: metas.get(r.ref) }));
+    const M = R.merge ?? {};
+    const groups = await groupSame(core, cands, { gapMin: M.gapMin, minSim: M.minSim, minOverlap: M.minOverlap, deadlineMs: 120, signal: opt?.signal });
+    return groups.map((g) => ({ ref: g.rep.ref, t: g.rep.t, merged: g.others })).sort((a, b) => a.t - b.t || (a.ref < b.ref ? -1 : 1));
+  } catch (e) {
+    metric(core, 'retrieve.outline.error');
+    log(core, 'warn', 'retrieve.outline.failed', { error: errKind(e) });
+    return [];
+  }
+}

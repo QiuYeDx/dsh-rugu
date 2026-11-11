@@ -28,19 +28,25 @@ function bridge(dir, text = RESTRICT) {
   return b;
 }
 
-test('白名单补丁（纯函数）：锚点后面加三行带标记的完整工具名；已经有的不重复；找不到 SAFE_EXACT 或锚点就不硬改', () => {
+test('白名单补丁（纯函数）：锚点后面加四行带标记的完整工具名（D156 起有 memory_look）；已经有的不重复；找不到 SAFE_EXACT 或锚点就不硬改', () => {
   const p = planPatch(RESTRICT);
   assert.equal(p.ok, true);
-  assert.deepEqual(p.changes.map((c) => c.op), ['add', 'add', 'add']);
+  assert.deepEqual(p.changes.map((c) => c.op), ['add', 'add', 'add', 'add']);
   const lines = p.next.split('\n');
   const at = lines.indexOf("  'todo_write',");
-  assert.deepEqual(lines.slice(at + 1, at + 4).map((l) => l.trim().split(',')[0]), TOOLS.map((t) => `'${t}'`));
-  assert.ok(lines.slice(at + 1, at + 4).every((l) => l.includes(MARK)));
+  assert.deepEqual(lines.slice(at + 1, at + 5).map((l) => l.trim().split(',')[0]), TOOLS.map((t) => `'${t}'`));
+  assert.ok(lines.slice(at + 1, at + 5).every((l) => l.includes(MARK)));
   assert.ok(p.next.includes("'bili_fav', // bili-eyes patch"), '别的补丁的行不动');
   assert.equal(planPatch(p.next).changes.length, 0, '重复应用幂等');
   const half = RESTRICT.replace("  'todo_write',", "  'todo_write',\n  'memory_recall',");
   assert.deepEqual(planPatch(half).already, ['memory_recall']);
-  assert.equal(planPatch(half).changes.length, 2);
+  assert.equal(planPatch(half).changes.length, 3);
+  // 打过旧补丁（D156 以前的三行）的桥接再打一次：只补上 memory_look 那一行，已经有的不动；再打一次什么都不改
+  const oldLines = ['memory_recall', 'memory_note', 'memory_fix'].map((t) => `  '${t}', ${MARK}`).join('\n');
+  const old = RESTRICT.replace("  'todo_write',", `  'todo_write',\n${oldLines}`);
+  const up = planPatch(old);
+  assert.deepEqual(up.changes.map((c) => c.line.trim().split(',')[0]), ["'memory_look'"]);
+  assert.equal(planPatch(up.next).changes.length, 0);
   assert.equal(planPatch('const x = 1').ok, false);
   assert.equal(planPatch(RESTRICT.replace("  'todo_write',\n", '')).ok, false, '锚点行没了（桥接版本变了）：要人看');
   // 换行风格保持原样
@@ -55,7 +61,7 @@ test('白名单补丁（文件）：默认只预演不写；--apply 先备份（
   const file = path.join(b, RESTRICT_REL);
   const dry = runPatch({ bridgeDir: b });
   assert.equal(dry.ok, true);
-  assert.equal(dry.changes.length, 3);
+  assert.equal(dry.changes.length, 4);
   assert.equal(dry.applied, false);
   assert.equal(fs.readFileSync(file, 'utf8'), RESTRICT, '预演什么都没改');
   assert.equal(fs.existsSync(`${file}.bak-persona-memory`), false);
@@ -66,7 +72,7 @@ test('白名单补丁（文件）：默认只预演不写；--apply 先备份（
   assert.equal(runPatch({ bridgeDir: b, apply: true }).changes.length, 0, '再跑一次：不用改');
   assert.equal(fs.readFileSync(file, 'utf8'), patched);
   const back = runPatch({ bridgeDir: b, apply: true, revert: true });
-  assert.equal(back.changes.length, 3);
+  assert.equal(back.changes.length, 4);
   assert.equal(fs.readFileSync(file, 'utf8'), RESTRICT, '还原成原样');
   assert.equal(runPatch({ bridgeDir: b, apply: true, revert: true }).changes.length, 0, '还原也幂等');
   // 再打一次：已有备份不覆盖

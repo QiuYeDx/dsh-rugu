@@ -219,7 +219,7 @@ test('宿主：在空白会话上从下拉里换成插件预设（会话头还�
   await ctx.agentCreated(agent);
   assert.equal(agent.ctx.tools.registered.length, 0, '标准模式：没有记忆工具');
   await reg.select(agent, PERSONA_PRESET_ID);
-  assert.deepEqual(agent.ctx.tools.registered.map((d) => d.name).sort(), ['memory_fix', 'memory_note', 'memory_recall']);
+  assert.deepEqual(agent.ctx.tools.registered.map((d) => d.name).sort(), ['memory_fix', 'memory_look', 'memory_note', 'memory_recall']);
   assert.equal(agent.session.header.agentPreset, 'standard', '会话头没变（DSH 也不改）');
   await ctx.preStep(agent, [userMessage('在吗', { id: 'u1' })]);
   assert.equal(env.host.claims.get('blank')?.adapterId, 'dsh-web');
@@ -231,13 +231,13 @@ test('宿主：在空白会话上从下拉里换成插件预设（会话头还�
   const a2 = fakeAgent({ id: 'comp', preset: 'standard' });
   reg2.bind(a2, PERSONA_PRESET_ID);
   await ctx2.agentCreated(a2);
-  assert.equal(a2.ctx.tools.registered.length, 3);
+  assert.equal(a2.ctx.tools.registered.length, 4);
   await env2.cleanup();
   // 另一个空白会话：先换进来、再换回标准模式 → 工具拿掉
   const b = fakeAgent({ id: 'blank2', preset: 'standard' });
   await ctx.agentCreated(b);
   await reg.select(b, PERSONA_PRESET_ID);
-  assert.equal(b.ctx.tools.registered.length, 3);
+  assert.equal(b.ctx.tools.registered.length, 4);
   await reg.select(b, 'standard');
   assert.equal(b.ctx.tools.registered.length, 0);
   await env.cleanup();

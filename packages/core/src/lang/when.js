@@ -121,6 +121,25 @@ export function zhRange(start, end, now, opt = {}) {
   return `${zhDate(ps, n)}–${zhDate(pe, n)}`;
 }
 
+/**
+ * zh：去掉一句话开头的完整日期（D156，梗概行用：时间已经写在前面了）。「2026-11-11 17:30，主人在群里……」→「主人在群里……」；
+ * 带「到 / 至 / – 」的时段、「起 / 左右」一起去掉。开头不是完整日期的原样返回，别的不改写；整句只有日期时返回空字符串（调用方另找一句话）。
+ * @param {string} text
+ * @returns {string}
+ */
+export function zhStripDate(text) {
+  const s = String(text ?? '');
+  const m = /^\s*\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:(?:\s*|T)(?:凌晨|早上|上午|中午|下午|傍晚|晚上|深夜)?\s*\d{1,2}[:：点]\d{0,2}(?:\s*(?:到|至|–|—|-|~)\s*\d{1,2}[:：点]\d{0,2})?\s*(?:起|左右|前后)?)?\s*[，,、:：]?\s*/u.exec(s);
+  if (!m || !m[0].trim()) return s;
+  return s.slice(m[0].length);
+}
+/** 兜底：只去掉开头的 ISO 日期（和时间）。 */
+export function undStripDate(text) {
+  const s = String(text ?? '');
+  const m = /^\s*\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\s*[,:]?\s*/u.exec(s);
+  return m ? s.slice(m[0].length) : s;
+}
+
 // ── 和语言无关的兜底：绝对时间（没有给自己说法的语言用） ─────────────────
 function isoParts(t, tz) {
   const p = localClock(tz).parts(t);
@@ -158,8 +177,8 @@ export function undSpan(ms) {
 
 /** 语言 → 说法（主标签）。不认识的用兜底。 */
 export const PHRASINGS = Object.freeze({
-  zh: Object.freeze({ when: zhWhen, now: zhNow, span: zhSpan, range: zhRange }),
-  und: Object.freeze({ when: undWhen, now: undNow, span: undSpan, range: undRange }),
+  zh: Object.freeze({ when: zhWhen, now: zhNow, span: zhSpan, range: zhRange, stripDate: zhStripDate }),
+  und: Object.freeze({ when: undWhen, now: undNow, span: undSpan, range: undRange, stripDate: undStripDate }),
 });
 export function phrasingFor(locale) {
   const l = String(locale ?? 'zh').toLowerCase().split(/[-_]/)[0];

@@ -8,7 +8,7 @@
 import { opaqueFrom } from 'rugu-core/contract';
 import { SPEAKING_CLASSES, TOOL_CLASSES } from '../binding/index.js';
 
-export const MEMORY_TOOLS = Object.freeze(['memory_recall', 'memory_note', 'memory_fix']);
+export const MEMORY_TOOLS = Object.freeze(['memory_recall', 'memory_note', 'memory_fix', 'memory_look']);
 
 /**
  * DSH 自带的工具（@deepseek-ai/dsh-tool-*）：本机执行、读写文件、任务列表、她自己的会话记录……都不往别的受众说话。

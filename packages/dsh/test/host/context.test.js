@@ -59,7 +59,7 @@ test('记忆开着（live）+ 真实新消息：当场入库 → 召回 → 记�
   // 这一轮由没有主人证据的人开启：不清按轮污点（§9.6「从最近一条有权限的说话人的消息开始」）
   assert.equal(pm.named('markTurnTaint').length, 0);
   // 第一次认领成功时补注册记忆工具
-  assert.equal(agent.ctx.tools.registered.length, 3);
+  assert.equal(agent.ctx.tools.registered.length, 4);   // D156 起四个：recall、note、look、fix
   // 会话事件里看到这个 nonce 才算发过
   ctx.sessionEvent(agent.session, { type: 'user/message', seq: 5, data: block });
   assert.deepEqual(pm.named('confirm')[0].args, ['s-live', inj.nonce]);

@@ -240,7 +240,7 @@ export {};
  * @property {number} budgetChars
  * @property {AbortSignal} [signal]
  */
-/** @typedef {'people'|'recentFromPresent'|'todaySoFar'|'gap'|'warmStart'|'recalled'|'awarePrivate'|'intentions'|'working'|'lessons'|'pointBack'|'recollect'} Layer */
+/** @typedef {'people'|'recentFromPresent'|'todaySoFar'|'gap'|'warmStart'|'recalled'|'awarePrivate'|'intentions'|'working'|'lessons'|'pointBack'|'recollect'|'outline'|'look'} Layer */
 /**
  * 一条已过关口①的记忆（§9.3.6：每条都能对上一次判定）。omit 的不出现。
  * @typedef {object} RecallItem
@@ -256,6 +256,7 @@ export {};
  *                             集成层截字数时组长放不下整组不要，不能只留组员（D108 评审）；别的层没有
  * @property {'thread'|'talk'|'open'} [unit]  工作记忆的条目：所在的段是哪一种（D110：约定的一串 / 闲聊 / 开着的事）。只给注入日志和管理页用
  * @property {string} [unitKey]  工作记忆的条目：所在的段（'thread:<根的 id>'、'open:i<意图 id>' 这样的，不含场合键）。集成层原样交回 recordInjection
+ * @property {string[]} [merged]  【D156】回忆里同一件事合并以后，这一条还代表了哪几条（记忆引用，≤ 10）；本周期给过其中哪条，这一条也算给过
  */
 /**
  * @typedef {object} RecallLayers
@@ -263,8 +264,23 @@ export {};
  * @property {0|1|2|3|4} degradeLevel
  * @property {string} traceId
  * @property {number} [alreadySent]   有意回想：有关、过了关口①、但本周期已经给过她的条数（她上下文里已经有了，D95）；没有就不带
+ * @property {{kind: 'open'|'when', ref?: string, note?: string, reason?: 'bad-ref'|'not-found'|'withheld'|'bad-time'|'nothing'|'unavailable'|'error'}} [look]
+ *                                    【D156】翻看（memory_look）的结果说明：note 是说明那一行（展开了哪条、一共几句省了几句 / 看的是哪段时间、有几段经历；
+ *                                    不含记忆内容）；reason 是什么都没给出来的原因（集成层说成人话）
  * @property {{note: string, log: object}} [recollect]   【D155】这一轮是回忆（有意回想走了新路）：note 是「找了哪儿」那一行（集成层放在回忆那一节的开头，
  *                                    不含记忆内容）；log 是意图和范围的摘要（只有条数、来源、时间窗，集成层原样交回注入记录的 recollect）
+ */
+/**
+ * 【D156】翻看（memory_look）的选项：open（回忆结果里的记号，比如 e840）和 when（一段时间，交给语言层解析）给其一，都给时先 open；
+ * where、about 只跟 when 一起用。
+ * @typedef {object} LookOptions
+ * @property {string} [open]
+ * @property {string} [when]
+ * @property {string} [where]
+ * @property {string} [about]
+ * @property {number} deadlineMs
+ * @property {number} [budgetChars]
+ * @property {AbortSignal} [signal]
  */
 /**
  * @typedef {object} ResidentBlock

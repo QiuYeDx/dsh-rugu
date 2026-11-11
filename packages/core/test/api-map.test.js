@@ -25,6 +25,7 @@ export const API_MAP = [
   ['resident', ['S1'], 'context.resident'],
   ['recall', [S, R], 'context.recall'],
   ['recallCached', [S], 'context.recallCached'],
+  ['look', [S, { open: 'e1', deadlineMs: 100 }], 'context.look'],
   ['self.coreBlock', ['S1'], 'context.coreBlock'],
   ['expression.appraise', [U], 'discretion.appraise'],
   ['expression.outcome', ['t1', 'sent'], 'discretion.outcome'],

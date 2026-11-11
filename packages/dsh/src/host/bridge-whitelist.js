@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const MARK = '// persona-memory patch';
-export const TOOLS = Object.freeze(['memory_recall', 'memory_note', 'memory_fix']);
+// D156 加了 memory_look：打过旧补丁的桥接重打一次只补上缺的那一行（幂等：已经有的不动）
+export const TOOLS = Object.freeze(['memory_recall', 'memory_note', 'memory_fix', 'memory_look']);
 export const RESTRICT_REL = path.join('plugins', 'qq-agent-presets', 'qq-tool-restrict.mjs');
 const SET_START = 'const SAFE_EXACT = new Set([';
 const ANCHOR = "'todo_write',";

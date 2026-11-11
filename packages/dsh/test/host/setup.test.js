@@ -274,16 +274,16 @@ test('QQ 桥接：从 DSH 会话的工作目录找出桥接（只读会话头）
   const before = fs.readFileSync(path.join(b, RESTRICT_REL), 'utf8');
   const pv = s.preview({ dir: b });
   assert.equal(pv.ok, true);
-  assert.equal(pv.changes.length, 3);
+  assert.equal(pv.changes.length, 4);
   assert.equal(pv.restart, true);
   assert.equal(fs.readFileSync(path.join(b, RESTRICT_REL), 'utf8'), before, '预览不写');
   const a = s.apply({ dir: b });
   assert.equal(a.applied, true);
-  assert.equal(a.changed, 3);
+  assert.equal(a.changed, 4);
   assert.equal(a.restart, true);
   assert.equal(s.status({ dir: b }).manual.whitelist.patched, true);
   assert.equal(fs.existsSync(path.join(b, `${RESTRICT_REL}.bak-persona-memory`)), true);
-  assert.equal(s.apply({ dir: b, revert: true }).changed, 3);
+  assert.equal(s.apply({ dir: b, revert: true }).changed, 4);
   assert.equal(fs.readFileSync(path.join(b, RESTRICT_REL), 'utf8'), before, '还原成原样');
   // 手填的不是桥接：拒绝，不写配置
   assert.throws(() => s.setDir(path.join(dir, 'nope')), (e) => e.code === 'REJECTED');

@@ -74,7 +74,7 @@ const endTurn = (ctx, agent) => ctx.sessionEvent(agent.session, { type: 'turn/en
 const web = (text, tz = true) => userMessage(text, { id: rid('w'), extra: tz ? { clientTimeZone: 'Asia/Shanghai' } : {} });
 const blockOf = (d) => (d.messages ?? []).filter((m) => m.source?.kind === 'persona-memory').map((m) => m.content[0].text).join('\n');
 const toolNames = (a) => a.ctx.tools.registered.map((d) => d.name).sort();
-const MEMORY_TOOLS = ['memory_fix', 'memory_note', 'memory_recall'];
+const MEMORY_TOOLS = ['memory_fix', 'memory_look', 'memory_note', 'memory_recall'];
 
 test('选了插件预设就是在跟她聊：下拉换预设、先选再建、时区证据、子代理外发、标准模式不碰、重载后同一个场合', async (t) => {
   const dir = tmpDir('e2e-preset');

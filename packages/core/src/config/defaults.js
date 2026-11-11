@@ -369,6 +369,15 @@ export const DEFAULTS = deepFreeze({
       tool: { maxItems: 36, itemChars: 300, totalChars: 4000 },
       auto: { maxItems: 18, itemChars: 240, totalChars: 2000 },
       poolFactor: 2, scopeTopK: 120, segments: 6, reserveMs: 300,
+      // 「那段时间的经过」（D156）：范围里的经历一段一行（上下文头，空的用「标题 + 叙述的第一句」），≤ lineChars 字（不含记号）；
+      // 一档的总字数里经过占多少看形状（share：timeline / point / none = 形状判断不出来），point 时经过最多 pointLines 行；
+      // 范围跨了 dayLayerDays 天以上时先给日记、小结这一层；交给关口①的经过行 = 预计放得下的行数 × poolFactor
+      outline: { lineChars: 80, share: { timeline: 0.7, point: 0.2, none: 0.5 }, pointLines: 5, dayLayerDays: 3, poolFactor: 1.5 },
+      // 同一件事合并（D156）：时间重叠或相隔 ≤ gapMin 分钟，而且（存的向量余弦 ≥ minSim，或者来源的原话重合 ≥ minOverlap）才归成一组。
+      // 宁可少合并：把两件事合成一件比重复更糟
+      merge: { gapMin: 15, minSim: 0.9, minOverlap: 0.5 },
+      // 翻看（D156，memory_look）：open 一段经历时最多带几句原话；整块字数用工具那一档的 totalChars
+      look: { openPercepts: 40 },
     },
     // 在场者近况：相关度之外，这条记忆现在有多活跃（基础激活 B，对数尺度）占的分量（评审:SC-07、实测问题 #5）；
     // maxItems 也是召回结果里这一路自己的名额（不和别的几路抢不自主回想的那 15 条）

@@ -10,6 +10,7 @@ import { charLen, clip, parseJson, safe } from './util.js';
 import { parseRef } from '../store/refs.js';
 import { nameOf, principalLabelOf } from './names.js';
 import { params } from './params.js';
+import { outlineText } from './outline.js';
 
 /** 措辞模板（按 selfProfile.locale 选，没有的语言用 zh）。只是输出的说法，不参与任何判断。 */
 const PHRASES = {
@@ -102,6 +103,7 @@ function whenOf(core, ms, at, style, tzOffsetMin) {
  *        label（D113）：关口①在非公开目标上原文放进来的条目带的来源标签——说不出名字的别处来源按结构写，核对过原话的叮嘱写在后面
  *        timeStyle【补】（D148）：时间的写法，'full'（缺省：几个小时以内带「多久以前」）/ 'day'（不带「多久以前」：常驻区这种会冻结一段时间的文字用）
  *        excerpt【补】（D155）：几句线索（回忆这条路才给）；正文放不下时截和它们最对得上的那一段（focusOn），不是从头截
+ *        outline【补】（D156）：渲染成「那段时间的经过」的一行：时间 · 在哪儿 · 这段经历的一句话（情节的上下文头，空的用标题和叙述的第一句）
  * @returns {{rendered: string, provenance: string, confidence: number}}
  */
 export function render(core, c, opt) {
@@ -178,6 +180,16 @@ export function render(core, c, opt) {
       else if (speaker != null && !isSelf(core, speaker)) src = L.fokFrom(who(speaker), prov.whereText);
       else src = L.vagueHeard(prov.whereText);
       return { rendered: clip(`（${src}${L.fok}）`, max), provenance: src, confidence: round2(sure) };
+    }
+
+    // ── 那段时间的经过（D156）：时间（不带「多久以前」）· 在哪儿 · 这段经历的一句话（上下文头去掉开头的日期，空的用「标题：第一句」）──
+    if (opt?.outline) {
+      const line = san(m.kind === 'episode' ? outlineText(core, m.row) : contentOf(core, m, { L, who }));
+      if (!line) return { ...none, provenance: prov.text };
+      const when = m.time != null ? whenOf(core, m.time, at, 'day', tzOffsetMin) : '';
+      const head = [when, prov.whereText].filter(Boolean).join(' · ');
+      const hedgeO = sure < x.render.hedgeAbove ? L.maybe : '';
+      return { rendered: fit(head ? `${head} · ${hedgeO}` : hedgeO, line, '', max), provenance: prov.text, confidence: round2(sure) };
     }
 
     // ── 内容 ──

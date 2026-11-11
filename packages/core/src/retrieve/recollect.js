@@ -21,6 +21,10 @@ import { deadlineOf, inWindow, runRecall, scoreScoped } from './pipeline.js';
 import { cachedRewrite } from './prefetch.js';
 import { blendRanks, pickLexicalTerms } from './routes.js';
 import { scopeOf } from './scope.js';
+import { outlineRows } from './outline.js';
+import { groupSame } from './merge.js';
+import { cutSpan, segOf } from './recollect-util.js';
+export { segOf };
 import { errKind, log, metric, mrefOf, rowsByIds, safe, wall, withDeadline } from './util.js';
 
 /** 回忆这条路开着没有（recall.recollect.enabled；关掉 = 有意回想完全走原来的路）。 */
@@ -171,7 +175,7 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
   if (inScope.length) {
     try {
       const span = spanOf(scope.rows, windows, core.now());
-      segments = span && windows.length ? cut(span, Math.max(1, Math.floor(Number(R.segments) || 6)), scope.rows) : [];
+      segments = span && windows.length ? cutSpan(span, Math.max(1, Math.floor(Number(R.segments) || 6)), scope.rows) : [];
       const ordered = arrange(inScope, { shape: intent?.shape ?? null, segments, n: tier.maxItems });
       const inSet = new Set(ordered.map((c) => c.ref));
       const rest = global.filter((c) => !inSet.has(c.ref));
@@ -188,13 +192,77 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
   const heard = safe(core, 'heardAt', () => heardTimes(core, items), new Map()) ?? new Map();
   items.forEach((c, i) => {
     const t = heard.get(c.ref) ?? c.meta?.tStart ?? null;
-    c.recollect = { pick: i, t: Number.isFinite(t) ? t : null, scoped: !!c.scopeRank, seg: Number.isFinite(c.seg) ? c.seg : null };
+    c.recollect = { pick: i, t: Number.isFinite(t) ? t : null, scoped: !!c.scopeRank, seg: Number.isFinite(c.seg) ? c.seg : null, detail: true };
   });
+
+  // 8. 那段时间的经过（D156）：范围里的经历一段一行，按段轮流取、段内按对题程度；字数占这一档的多少看形状
+  const O = R.outline ?? {};
+  let outline = [];
+  let outlineChars = 0;
+  if (scoped && !fallback) {
+    try {
+      const share = shareOf(O.share, intent?.shape);
+      outlineChars = Math.round(tier.totalChars * share);
+      const per = Math.max(30, Math.round((Number(O.lineChars) || 80) * 0.8));
+      let lines = Math.max(1, Math.ceil(outlineChars / per));
+      if (intent?.shape === 'point') lines = Math.min(lines, Math.max(1, Math.floor(Number(O.pointLines) || 5)));
+      const pool = Math.ceil(lines * Math.max(1, Number(O.poolFactor) || 1.5));
+      const ranks = new Map(inScope.map((c) => [c.ref, c.scopeRank]));
+      const span = spanOf(scope.rows, windows, core.now());
+      outline = outlineRows(core, scope, { ranks, segments, span, max: pool, dayLayerDays: O.dayLayerDays });
+    } catch (e) {
+      outline = [];
+      fail('outline', e);
+    }
+  }
+  // 经过行的候选：已经在细节里的沿用那一条（激活、元数据照旧），没有的补上元数据、照算激活
+  const byRef = new Map(items.map((c) => [c.ref, c]));
+  const need = outline.map((o) => o.ref).filter((r) => !byRef.has(r));
+  const metas = need.length ? safe(core, 'outlineMeta', () => hydrate(core, need), new Map()) ?? new Map() : new Map();
+  const added = [];
+  for (const r of need) {
+    const m = metas.get(r);
+    if (!m) continue;
+    const c = { ref: r, mref: mrefOf(r), ranks: {}, rrf: 0, signals: {}, meta: m };
+    byRef.set(r, c);
+    added.push(c);
+  }
+  if (added.length) safe(core, 'outlineScore', () => scoreScoped(core, added, { cues, mode: 'deliberate' }), null);
+  let outlineCands = outline.map((o) => byRef.get(o.ref)).filter(Boolean);
+  for (const c of added) c.recollect = { pick: 100_000, t: c.meta?.tStart ?? null, scoped: true, seg: null, detail: false };
+
+  // 9. 同一件事合并（D156）：细节、经过各自合并；展示信息最多的那一条，后面标「另外 N 处也提到」
+  const M = R.merge ?? {};
+  const mergeOpt = { gapMin: M.gapMin, minSim: M.minSim, minOverlap: M.minOverlap, deadlineMs: Math.max(1, Math.min(120, left())), signal: opt.signal };
+  try {
+    const dg = await groupSame(core, items, mergeOpt);
+    items = dg.map((g) => {
+      if (g.others.length) {
+        g.rep.merged = g.others;
+        const firstPick = Math.min(...[g.rep, ...g.others.map((r) => byRef.get(r))].filter(Boolean).map((c) => c.recollect?.pick ?? Infinity));
+        g.rep.recollect = { ...g.rep.recollect, pick: firstPick };
+      }
+      return g.rep;
+    });
+    const og = await groupSame(core, outlineCands, mergeOpt);
+    outlineCands = og.map((g) => ({ c: g.rep, others: g.others }));
+  } catch (e) {
+    outlineCands = outlineCands.map((c) => ({ c, others: [] }));
+    fail('merge-same', e);
+  }
+  outlineCands.forEach(({ c, others }, i) => {
+    c.outline = { pick: i, t: c.meta?.tStart ?? null, ...(others.length ? { merged: others } : {}) };
+  });
+  if (!outlineCands.length) outlineChars = 0;
+  const detailSet = new Set(items.map((c) => c.ref));
+  items = [...items, ...outlineCands.map((x) => x.c).filter((c) => !detailSet.has(c.ref))];
+  const tierOut = { ...tier, outlineChars, detailChars: Math.max(0, tier.totalChars - outlineChars) };
 
   ms.total = Math.round(wall() - t0);
   const summary = {
-    tier,
+    tier: tierOut,
     fallback,
+    outline: outlineCands.length,
     intent: intent ? {
       aboutEntityIds: intent.aboutEntityIds.slice(0, 8), timeWindows: windows.slice(0, 4), settingKeys: intent.settingKeys.slice(0, 8),
       shape: intent.shape, cues: intentCues.slice(0, 3), from: intent.from,
@@ -224,6 +292,14 @@ function heardTimes(core, items) {
   for (const r of rows) if (!out.has(`a${r.id}`) && Number.isFinite(r.at)) out.set(`a${r.id}`, r.at);
   for (const c of items) if (c.meta?.kind === 'assertion' && !out.has(c.ref) && Number.isFinite(c.meta.row?.recorded_at)) out.set(c.ref, c.meta.row.recorded_at);
   return out;
+}
+
+/** 经过占这一档字数的比例（D156）：timeline 以经过为主，point 以细节为主，判断不出来各一半。 */
+export function shareOf(share, shape) {
+  const s = share ?? {};
+  const v = shape === 'timeline' ? s.timeline : shape === 'point' ? s.point : s.none;
+  const d = shape === 'timeline' ? 0.7 : shape === 'point' ? 0.2 : 0.5;
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : d;
 }
 
 const dedupe = (xs) => [...new Set(xs.filter((x) => typeof x === 'string' && x))];
@@ -346,26 +422,6 @@ function spanOf(rows, windows, now) {
   }
   if (Number.isFinite(now)) end = Math.min(end, now);
   return end >= start ? { start, end } : null;
-}
-
-/**
- * 把跨度等分成 k 段（D155，通用的、不按话题）：每段 {start, end, total}，total 是范围里落在这一段（按开始时间，早于跨度的算第一段）的记忆条数。
- */
-function cut(span, k, rows) {
-  const len = Math.max(1, span.end - span.start);
-  const n = len < 60_000 ? 1 : k;
-  const segs = Array.from({ length: n }, (_, i) => ({ start: span.start + Math.floor((len * i) / n), end: span.start + Math.floor((len * (i + 1)) / n), total: 0 }));
-  for (const r of rows ?? []) {
-    const i = segOf(segs, r.tStart);
-    if (i != null) segs[i].total += 1;
-  }
-  return segs;
-}
-/** 一个时刻落在第几段（早于第一段算第一段，晚于最后一段算最后一段）；不是数返回 null。 */
-export function segOf(segs, t) {
-  if (!segs.length || !Number.isFinite(t)) return null;
-  for (let i = 0; i < segs.length; i++) if (t < segs[i].end) return i;
-  return segs.length - 1;
 }
 
 /**

@@ -64,7 +64,8 @@ export function judge(db, c, block, core) {
     for (const ref of any) {
       if (!exists(db, ref)) { missingRefs.push(ref); continue; }
       const eq = expand(db, ref);
-      const pos = blockIds.findIndex((x) => eq.has(x));
+      // 合并的一组（D156：同一件事只展示一条，其余记在 merged 上）里任何一条被点到都算命中
+      const pos = block.findIndex((it) => eq.has(it.id) || (Array.isArray(it.merged) && it.merged.some((m) => eq.has(m))));
       if (pos >= 0) {
         n += 1;
         if (!first || pos < first.pos) first = { pos, via: blockIds[pos], layer: block[pos].layer };
@@ -80,7 +81,7 @@ export function judge(db, c, block, core) {
   for (const ref of avoidRefs) {
     if (!exists(db, ref)) { avoidMissing.push(ref); continue; }
     const eq = expand(db, ref);
-    for (const x of blockIds) if (eq.has(x)) hits.add(x);
+    for (const it of block) if (eq.has(it.id) || (Array.isArray(it.merged) && it.merged.some((m) => eq.has(m)))) hits.add(it.id);
   }
   return { groups, avoid: { refs: avoidRefs, hits: [...hits], missing: avoidMissing }, ok: groups.every((g) => g.hit), missingRefs };
 }

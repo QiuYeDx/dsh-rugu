@@ -8,7 +8,7 @@
 import path from 'node:path';
 import {
   ContractError, ReadOnlyError, PROTOCOL, OUTCOMES,
-  validatePerceptionAdapter, assertSituationRef, assertRecallOptions, assertUtterance, assertNoteRequest, assertFixRequest,
+  validatePerceptionAdapter, assertSituationRef, assertRecallOptions, assertLookOptions, assertUtterance, assertNoteRequest, assertFixRequest,
   validateImportRecords, isOpaqueId, LIMITS,
 } from './contract/index.js';
 import {
@@ -39,7 +39,7 @@ export const MODULES = Object.freeze({ lang, admin, intake, entities, dynamics, 
 
 export const CAPABILITIES = Object.freeze([
   'observe', 'describe', 'sealBuffers', 'expectRelay', 'cursor', 'modeOf',
-  'resident', 'recall', 'recallCached', 'coreBlock',
+  'resident', 'recall', 'recallCached', 'coreBlock', 'look',
   'appraise', 'outcome', 'ingest', 'note', 'fix', 'admin', 'maintenance', 'sessions', 'media', 'lessons',
 ]);
 
@@ -323,6 +323,17 @@ function buildApi(core, { startup, files }) {
       if (core.readOnly) return READ_ONLY_LAYERS;
       if (restoring(core)) return RESTORING_LAYERS;
       return core.mods.context.recall(core, sv, ov);
+    },
+    /**
+     * 【D156】翻看（memory_look）：展开回忆结果里的一条（open），或看某一段时间的经过（when）。都过关口①。
+     * @returns {Promise<import('./contract/types.js').RecallLayers>}
+     */
+    async look(s, opt) {
+      const sv = assertSituationRef(s);
+      const ov = assertLookOptions(opt);
+      if (core.readOnly) return READ_ONLY_LAYERS;
+      if (restoring(core)) return RESTORING_LAYERS;
+      return core.mods.context.look(core, sv, ov);
     },
     /** @returns {import('./contract/types.js').RecallLayers} */
     recallCached(s) {

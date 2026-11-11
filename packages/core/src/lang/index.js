@@ -154,6 +154,16 @@ export function describeRange(core, start, end, opt = {}) {
     return P.range(start, end, now, { tzOffsetMin: core.config?.get?.().time?.tzOffsetMin ?? null, day: !!opt.day });
   } catch { return ''; }
 }
+/**
+ * 【补，D156】去掉一句话开头的完整日期（梗概行：时间已经写在前面了，上下文头开头常带「2026-11-11 17:30，」）。别的不改写；
+ * 开头不是完整日期时原样返回，整句只有日期时返回空字符串。不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripLeadingDate(core, text) {
+  try { return phrasingFor(core.ports?.selfProfile?.locale).stripDate(text); } catch { return String(text ?? ''); }
+}
 const phraseCfg = (core) => core.config?.get?.().lang?.timePhrase ?? LANG_FALLBACK.timePhrase ?? {};
 
 /**

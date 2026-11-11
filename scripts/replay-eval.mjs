@@ -18,9 +18,10 @@
 //   2. 开核心：时钟定在那一刻；嵌入端口用本机 Ollama 的真实查询向量（按「空间 + 文本哈希」缓存在 <out>/embed-cache.jsonl）；
 //      模型端口一律拒绝；不配重排；不起 worker 线程；不跑后台任务。冷热分层在那一刻重算一次。Ollama 连不上就退到无嵌入档，报告第一行写明。
 //   3. 回想：trigger 是 message / idle 的走自动的那一块（context.recallAt：按场合键 + 感知 id 进入，和 recall 同一条路）；
-//      tool 的带 query / about / time / where / include_history 走有意回想（和集成层记忆工具交给核心的参数一样）。会话「本周期已经给过」默认清空（看排序本身）；--sent at-time 按当时的注入记录重建（看她实际会拿到什么）。
+//      tool 的带 query / about / time / where / include_history 走有意回想（和集成层记忆工具交给核心的参数一样）；look 的走翻看（D156，
+//      context.lookAt，open 一个记号或 when 一段时间）。会话「本周期已经给过」默认清空（看排序本身）；--sent at-time 按当时的注入记录重建（看她实际会拿到什么）。
 //   4. 渲染：和线上同一条路——自动的用集成层的 renderInjectBlock，工具的用 renderRecallResult（D155：被判成回忆的那一轮上限放开、
-//      带「找了哪儿」），上限照集成层的默认配置（inject / tools）。
+//      带「找了哪儿」），翻看的用 renderLookResult；上限照集成层的默认配置（inject / tools）。判定时同一件事合并的一组（merged）里任何一条都算。
 //   5. 判定（scripts/replay-eval/judge.mjs）。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,7 +36,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(ROOT, p)).href);
 export const SUMMARY_VERSION = 'replay-eval-1';
 export const TYPES = Object.freeze(['point', 'timeline', 'person-time', 'roster', 'recent', 'greeting']);
-const TRIGGERS = new Set(['message', 'idle', 'tool']);
+// look（D156）：翻看工具 memory_look，用例写 look: {open} 或 {when, where?, about?}
+const TRIGGERS = new Set(['message', 'idle', 'tool', 'look']);
 const FILES = ['persona-memory.db', 'persona-vectors.db'];
 
 function parseArgs(argv) {
@@ -74,7 +76,8 @@ export function loadCases(file) {
     if (!TYPES.includes(c.type)) bad(`type 应为 ${TYPES.join(' / ')}`);
     if (!Number.isSafeInteger(c.at)) bad('at 应为毫秒整数');
     if (typeof c.setting !== 'string' || !c.setting) bad('缺 setting（场合键）');
-    if (!TRIGGERS.has(c.trigger)) bad('trigger 应为 message / idle / tool');
+    if (!TRIGGERS.has(c.trigger)) bad('trigger 应为 message / idle / tool / look');
+    if (c.trigger === 'look' && !(typeof c.look?.open === 'string' && c.look.open.trim()) && !(typeof c.look?.when === 'string' && c.look.when.trim())) bad('look 要有 look.open 或 look.when');
     if (c.trigger === 'message' && !Number.isSafeInteger(c.focus)) bad('message 要有 focus（感知 id）');
     if (c.trigger === 'tool' && (typeof c.tool?.query !== 'string' || !c.tool.query.trim())) bad('tool 要有 tool.query');
     if (!Array.isArray(c.need) || !c.need.length || c.need.some((g) => !Array.isArray(g?.any) || !g.any.length)) bad('need 应为非空的组，每组有 any');
@@ -172,7 +175,16 @@ async function runCase(c, env) {
     let out;
     let rendered;
     const t1 = performance.now();
-    if (c.trigger === 'tool') {
+    if (c.trigger === 'look') {
+      // 翻看（D156）：和线上 memory_look 同一条（context.lookAt 是 look 的回放入口，渲染用集成层的 renderLookResult）
+      const k = c.look;
+      const s = { settingKey: c.setting, sessionId: c.session ?? null, trigger: Number.isSafeInteger(c.focus) ? 'message' : 'idle',
+        ...(Number.isSafeInteger(c.focus) ? { focusPerceptId: c.focus } : {}) };
+      const opt = { deadlineMs, ...(k.open ? { open: clip(String(k.open), 64) } : { when: clip(String(k.when), 40), ...(k.where ? { where: clip(String(k.where), 40) } : {}),
+        ...(k.about ? { about: clip(String(k.about), 80) } : {}) }) };
+      out = await core.mods.context.lookAt(core, s, opt);
+      rendered = render.renderLookResult(out, { tools: caps.tools, style });
+    } else if (c.trigger === 'tool') {
       const t = c.tool;
       const s = { settingKey: c.setting, sessionId: c.session ?? null, trigger: Number.isSafeInteger(c.focus) ? 'message' : 'idle',
         ...(Number.isSafeInteger(c.focus) ? { focusPerceptId: c.focus } : {}) };

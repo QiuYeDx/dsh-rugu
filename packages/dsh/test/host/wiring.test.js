@@ -175,7 +175,7 @@ test('白名单补丁没打：QQ 会话不给记忆工具（桥接的守卫会�
   assert.equal(qqAgent.ctx.tools.registered.length, 0, '认领成功时也不补');
   const web = fakeAgent({ id: 'sess-web', preset: 'web-chat' });
   await w.ctx.agentCreated(web);
-  assert.equal(web.ctx.tools.registered.length, 3);
+  assert.equal(web.ctx.tools.registered.length, 4);
   runPatch({ bridgeDir: w.bridgeDir, apply: true });
   await w.host.dispose();
   // 「重启」：同一个家目录重开（补丁要彻底重启 DSH 才生效，附录 G.4）
@@ -184,7 +184,36 @@ test('白名单补丁没打：QQ 会话不给记忆工具（桥接的守卫会�
   ctx2.agents.map.set(again.id, again);
   const host2 = createHost(ctx2, {}, hostDeps(w.dir));
   await host2.ready;
-  assert.equal(again.ctx.tools.registered.length, 3, '插件启动时给已经活着的 agent 补注册');
+  assert.equal(again.ctx.tools.registered.length, 4, '插件启动时给已经活着的 agent 补注册');
+  await host2.dispose();
+  rmDir(w.dir);
+});
+
+test('白名单补丁是旧的（D156 以前打的三行，没有 memory_look）：自检说补丁是旧的、怎么做；QQ 会话只少 memory_look；重打一次补上缺的那一行、重启后有', async () => {
+  const w = await wired('wire-stale');
+  const file = path.join(w.bridgeDir, 'plugins', 'qq-agent-presets', 'qq-tool-restrict.mjs');
+  const MARK = '// persona-memory patch';
+  const oldLines = ['memory_recall', 'memory_note', 'memory_fix'].map((t) => `  '${t}', ${MARK}`).join('\n');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace("  'todo_write',", `  'todo_write',\n${oldLines}`));
+  const sc = await w.host.selfCheck();
+  const item = sc.items.find((x) => x.id === 'bridge.whitelist');
+  assert.equal(item.status, 'warn');
+  const said = JSON.stringify(item);
+  assert.match(said, /补丁是旧的[^"]*memory_look/u);
+  assert.match(said, /再打一次补丁/u);
+  const qq = fakeAgent({ id: 'sess-qq', preset: 'qq-chat-v2' });
+  await w.ctx.agentCreated(qq);
+  assert.deepEqual(qq.ctx.tools.registered.map((t) => t.name).sort(), ['memory_fix', 'memory_note', 'memory_recall'], '只少 memory_look');
+  const r = runPatch({ bridgeDir: w.bridgeDir, apply: true });
+  assert.deepEqual(r.changes.map((c) => /'([^']+)'/.exec(c.line)?.[1]), ['memory_look'], '只补缺的那一行');
+  assert.equal(runPatch({ bridgeDir: w.bridgeDir, apply: true }).changes.length, 0, '再打一次什么都不改');
+  await w.host.dispose();
+  const ctx2 = new FakeDshCtx();
+  const again = fakeAgent({ id: 'sess-qq', preset: 'qq-chat-v2' });
+  ctx2.agents.map.set(again.id, again);
+  const host2 = createHost(ctx2, {}, hostDeps(w.dir));
+  await host2.ready;
+  assert.equal(again.ctx.tools.registered.length, 4);
   await host2.dispose();
   rmDir(w.dir);
 });

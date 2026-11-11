@@ -163,8 +163,8 @@ test('D133：pack 的 report——超没超（每天 / 滚动窗口）、多少�
   assert.deepEqual(run(entries).map((i) => i.id).length, 5);
 });
 
-test('D133：pack 的 exempt 和预算记账用同一份不受限的层（「你想着的」、工作记忆）', () => {
-  assert.deepEqual([...UNMETERED_LAYERS].sort(), ['intentions', 'working']);
+test('D133：pack 的 exempt 和预算记账用同一份不受限的层（「你想着的」、工作记忆；D156 起还有回忆的细节、经过、翻看）', () => {
+  assert.deepEqual([...UNMETERED_LAYERS].sort(), ['intentions', 'look', 'outline', 'recollect', 'working']);
   // 额度为 0 时这两层照给
   const items = run([E('t1', 'intentions', { chars: 50 }), E('w1', 'working', { chars: 50 }), E('a1', 'recalled', { chars: 10 })],
     { budget: { dayUsed: 0, dayLimit: 0, rollingLeft: Infinity } });

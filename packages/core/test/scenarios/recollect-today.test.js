@@ -19,8 +19,19 @@ const SELF_FOOD = ['今天中午吃什么好呢', '好饿啊想吃点东西', '�
  * 编一天：08:00 他在小群说早饭，12:10 在小群发一张午饭的图（她看过，只有「我看到的」那一句），18:40 大群说晚饭；
  * 中间夹着她自己关于吃的话、旁人的闲聊，每隔一阵安静下来切一段。21:00 他在私聊里问。
  */
+/** 提炼：上下文头写日期、时间和这一段开头的两句（像真的上下文头那样带着这段的主要的事），叙述是前几句连起来。 */
+function extractDay(req, p) {
+  const msgs = p.msgs.filter((m) => m.text);
+  if (!msgs.length) return [];
+  const head = msgs.slice(0, 2).map((m) => m.text.slice(0, 30)).join('；');
+  return [
+    { type: 'header', title: msgs[0].text.slice(0, 12), text: `${p.date} ${String(msgs[0].stamp).split(' ').pop()}，${head}` },
+    { type: 'narrative', text: msgs.slice(0, 6).map((m) => m.text).join('；') },
+  ];
+}
+
 async function foodDay(t, name, config, seed) {
-  const w = await makeWorld(name, { config, ...(seed != null ? { seed } : {}) });
+  const w = await makeWorld(name, { config, extract: extractDay, ...(seed != null ? { seed } : {}) });
   t.diagnostic(`fake-platform seed=${w.fp.seed}`);
   const day = localMidnight(w.clock.now()) + DAY;
   const at = (h, m = 0) => day + h * HOUR + m * MINUTE;
@@ -107,4 +118,46 @@ test('回忆（D155）：「我今天吃了哪些东西」——三顿都在、�
     t.diagnostic(`老路「想起来的」：${got.join('、') || '一顿都没有'}；${show(recalled)}`);
     assert.ok(got.length < 3, `老路至少缺一顿（证明测的是这个机制）：${show(layers.items)}`);
   } finally { await off.w.cleanup(); }
+});
+
+test('那段时间的经过（D156）：回忆先给经过（一段经历一行、按时间、带记号），再给细节；三顿都在经过或细节里；记号可以拿去翻看', async (t) => {
+  const { w } = await foodDay(t, 'recollect-outline', {});
+  try {
+    const { layers } = await w.ask('oneOnOne', 'principal', '我今天吃了哪些东西');
+    const outline = layers.items.filter((i) => i.layer === 'outline');
+    const detail = layers.items.filter((i) => i.layer === 'recollect');
+    t.diagnostic(`经过 ${outline.length} 行：${show(outline)}`);
+    // 范围是「今天 · 和他有关的」：他在场的就是那三段
+    assert.ok(outline.length >= 3, `经过有好几行：${outline.length}`);
+    for (const it of [...outline, ...detail]) assert.ok(it.rendered.startsWith(`〔${it.id}〕`), `每行前面带记号：${it.rendered}`);
+    assert.ok(outline.every((i) => /^e\d+$/u.test(i.id)), '经过的每一行是一段情节');
+    assert.ok(outline.every((i) => [...i.rendered].length <= 120), '经过的行短');
+    assert.ok(/小笼包/u.test(outline.map((i) => i.rendered).join('\n')), '早饭那段经历在经过里');
+    for (const [n, re] of MEALS) assert.ok([...outline, ...detail].some((i) => re.test(i.rendered)), `${n}在经过或细节里`);
+    // 经过按时间从早到晚
+    const times = outline.map((i) => w.core.store.get('SELECT t_start AS t FROM episodes WHERE id = ?', Number(i.id.slice(1))).t);
+    assert.deepEqual(times, [...times].sort((a, b) => a - b));
+    // 翻看：open 经过里早饭那一行的记号 → 那段经历的完整叙述和里面的原话
+    const sid = w.fp.settings.oneOnOne.id;
+    const bf = outline.find((i) => /小笼包/u.test(i.rendered));
+    const opened = await w.pm.look({ settingId: sid, trigger: 'message' }, { open: `〔${bf.id}〕`, deadlineMs: 3000 });
+    assert.equal(opened.look.kind, 'open');
+    assert.equal(opened.items[0].id, bf.id);
+    assert.ok(opened.items.some((i) => /^p\d+$/u.test(i.id) && /小笼包/u.test(i.rendered)), `带着那段经历里的原话：${show(opened.items)}`);
+    assert.match(opened.look.note, /^展开〔e\d+〕；这段经历里有 \d+ 句原话/u);
+    assert.ok(opened.items.every((i) => i.layer === 'look' && i.appraisalRef));
+    // when：今天上午的经过
+    const span = await w.pm.look({ settingId: sid, trigger: 'message' }, { when: '今天上午', deadlineMs: 3000 });
+    assert.equal(span.look.kind, 'when');
+    assert.match(span.look.note, /^翻看：今天（\d+\/\d+）\S+ 6:00–12:00；这段时间有 \d+ 段经历/u);
+    assert.ok(span.items.length >= 1 && span.items.every((i) => i.layer === 'outline'));
+    assert.ok(span.items.some((i) => /小笼包/u.test(i.rendered)), show(span.items));
+    // 各种拒绝：记号认不出、记忆不在了、时间看不懂
+    assert.equal((await w.pm.look({ settingId: sid, trigger: 'message' }, { open: '随便写的', deadlineMs: 3000 })).look.reason, 'bad-ref');
+    assert.equal((await w.pm.look({ settingId: sid, trigger: 'message' }, { open: 'e999999', deadlineMs: 3000 })).look.reason, 'not-found');
+    assert.equal((await w.pm.look({ settingId: sid, trigger: 'message' }, { when: '很久很久', deadlineMs: 3000 })).look.reason, 'bad-time');
+    // 隐藏了的就是不在了
+    w.core.store.run("INSERT INTO suppressions(owner_kind, owner_id, state, by, at) VALUES ('episode', ?, 'hidden', 'owner', ?)", Number(bf.id.slice(1)), w.clock.now());
+    assert.equal((await w.pm.look({ settingId: sid, trigger: 'message' }, { open: bf.id, deadlineMs: 3000 })).look.reason, 'not-found');
+  } finally { await w.cleanup(); }
 });

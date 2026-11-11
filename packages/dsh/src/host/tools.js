@@ -1,4 +1,4 @@
-// 记忆工具（§10.8、§8.5）：memory_recall / memory_note / memory_fix。
+// 记忆工具（§10.8、§8.5）：memory_recall / memory_note / memory_fix，D156 起还有 memory_look（翻看）。
 // 注册：agent/created 时对认得出的会话（配置里的 preset、或者符合某个适配器绑定声明的会话特征）用 agent.ctx.tools.register 只给它注册
 // （宿主先例 tool-agent-team，附录 G.4）；第一次认领成功时补注册；插件启动和重载时遍历 agents.list() 补注册；自己维护 agent → disposer 表。
 // 授权全部由核心判定（依据是库里存的那条感知，不是工具参数）：这里只把「这一轮她看到的、别人对她说的消息」交过去
@@ -8,7 +8,7 @@
 // execute 第一步重新判定场合，判不出就返回「现在用不了」。返回给她的文字都过清洗（【】→「」、去不可见字符）。
 import { sessionInfoOf, matchesSignature } from './claim.js';
 import { agentId } from './session-state.js';
-import { renderRecallResult } from './render.js';
+import { renderRecallResult, renderLookResult } from './render.js';
 import { randomId, charLen, sanitizeForPrompt, clip, settleWithin, errCode } from './util.js';
 
 const TEXT_OUTPUT = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] };
@@ -23,6 +23,18 @@ export const TOOL_TEXT = Object.freeze({
   // 读不到这个场合的档位（核心出错）：不给内容（fail closed）
   withheld: '这会儿想不起来更具体的了。',
   readOnly: '记忆现在是只读的，这次记不下来。',
+});
+
+/** 翻看（memory_look，D156）没给出东西时告诉她的话。 */
+export const LOOK_TEXT = Object.freeze({
+  ask: '要翻看什么？open 写 memory_recall 结果里〔〕中间的记号（比如 e840），或者 when 写一段时间（「今天上午」「11/10 晚上」）。',
+  'bad-ref': '没认出这个记号。open 照抄 memory_recall 结果里〔〕中间的那一串（比如 e840），一次一个。',
+  'not-found': '这个记号对应的记忆已经不在了（可能被忘掉或删了），想不起来了。',
+  withheld: TOOL_TEXT.withheld,
+  'bad-time': '看不懂这个时间。when 写「今天上午」「昨天晚上」「11/10」这样的说法。',
+  nothing: '那段时间想不起有什么经历。照实说不记得了，别编。',
+  unavailable: TOOL_TEXT.unavailable,
+  error: '这会儿翻不出来，过一会儿再说。',
 });
 
 /**
@@ -92,6 +104,21 @@ const DESCRIPTIONS = {
 };
 /** 详细指引里 memory_recall 的 where 那一行（D154）：原来的四行一字不改，补在后面（同 memory_note 的经验那一行）。 */
 export const RECALL_WHERE_GUIDED = 'where 是在哪儿（「这个群」「私聊」或群名，可选）。';
+/** memory_recall 指向 memory_look 的那一行（D156）：两种写法都补在最后，原文不动。 */
+export const RECALL_LOOK_GUIDED = '结果里每行前面〔〕中的是记号：想看某一条的全部、或者某段时间还发生了什么，用 memory_look。';
+export const RECALL_LOOK_PURPOSE = '结果里〔〕中的是记号，想看全某一条或某段时间用 memory_look。';
+/** memory_look（D156）的说明：两种写法。 */
+export const LOOK_DESCRIPTIONS = Object.freeze({
+  guided: [
+    '翻看想起来的东西。memory_recall 的结果里每行前面〔〕中的是记号（比如 e840）。',
+    '想看某一条的全部（那段经历里的原话、看到的图、一条事实是从哪句话来的），open 写那个记号；想知道某段时间还发生了什么，when 写时间（「今天上午」「11/10 晚上」），可以加 where（在哪儿）、about（关于谁）。两样给一个。',
+    '只说这个工具真正返回过的内容，没有的就说不记得了，别编。',
+  ].join('\n'),
+  purpose: [
+    '翻看：把 memory_recall 结果里的一条展开（open 写〔〕里的记号，比如 e840），或者看某段时间的经过（when 写「今天上午」「11/10 晚上」，可加 where、about）。',
+    '只说返回里真有的，别编。',
+  ].join('\n'),
+});
 /** 详细指引里 memory_note 的经验那一行（D124）。 */
 export const NOTE_LESSON_GUIDED = '你自己做事的办法（工具怎么用才成、踩过的坑、主人教你的做法）用 kind: lesson 自己记：text 写以后怎么做，trap 写要避开的坑，tool 写是哪个工具的，here 为 true 表示只在这里适用；主人教的就在 evidence_quote 照抄主人的原话。别人的事、别人的要求用 remember。验证过没有由插件按证据标。';
 const DESCRIPTIONS_PURPOSE = {
@@ -111,12 +138,14 @@ const DESCRIPTIONS_PURPOSE = {
   ].join('\n'),
 };
 /** 总字数上限：「只讲目的」不超过 D124 以前三个说明的总字数（806）；「详细指引」是原文另加经验那一行和 where 那一行（D154，各带换行）。 */
-export const DESCRIPTION_BUDGET = 806;
-export const DESCRIPTION_BUDGET_GUIDED = 806 + [...NOTE_LESSON_GUIDED].length + 1 + [...RECALL_WHERE_GUIDED].length + 1;
+// D156：memory_recall 补了指向 memory_look 的一行，上限跟着加这一行（同 D154 的 where 那一行）；memory_look 自己的说明另算
+export const DESCRIPTION_BUDGET = 806 + [...RECALL_LOOK_PURPOSE].length + 1;
+export const DESCRIPTION_BUDGET_GUIDED = 806 + [...NOTE_LESSON_GUIDED].length + 1 + [...RECALL_WHERE_GUIDED].length + 1 + [...RECALL_LOOK_GUIDED].length + 1;
 /** 写法 → 三个工具的说明（不认识的按 guided）。 */
 export function descriptionsFor(style) {
-  if (style === 'purpose') return DESCRIPTIONS_PURPOSE;
-  return { ...DESCRIPTIONS, recall: [DESCRIPTIONS.recall, RECALL_WHERE_GUIDED].join('\n'), note: [DESCRIPTIONS.note, NOTE_LESSON_GUIDED].join('\n') };
+  if (style === 'purpose') return { ...DESCRIPTIONS_PURPOSE, recall: [DESCRIPTIONS_PURPOSE.recall, RECALL_LOOK_PURPOSE].join('\n'), look: LOOK_DESCRIPTIONS.purpose };
+  return { ...DESCRIPTIONS, recall: [DESCRIPTIONS.recall, RECALL_WHERE_GUIDED, RECALL_LOOK_GUIDED].join('\n'), note: [DESCRIPTIONS.note, NOTE_LESSON_GUIDED].join('\n'),
+    look: LOOK_DESCRIPTIONS.guided };
 }
 
 /** 工具定义（defineTool 的输入）。style：核心的 context.usageStyle（D125），不给按 guided。 */
@@ -144,6 +173,13 @@ export function memoryToolSpecs(style = 'guided') {
       here: { type: 'boolean', description: 'lesson：只在这里适用（可选）' },
       evidence_quote: { type: 'string', description: guided ? '对方刚发给你的消息里的原话（照抄一小段）；remember / todo 必填' : '他刚发给你的消息里的原话（照抄一小段）；remember / todo 必填，lesson 是主人教的就填' },
     } },
+    // 翻看（D156）：open 和 when 给其一（模式里没法写「二选一」，写在说明里）
+    look: { name: 'memory_look', description: DESC.look, timeoutMs: 15_000, parameters: {
+      open: { type: 'string', description: '要展开的那一条的记号（memory_recall 结果里〔〕中间的，比如 e840）' },
+      when: { type: 'string', description: '要看的一段时间，例如「今天上午」「11/10 晚上」' },
+      where: { type: 'string', description: '和 when 一起用：在哪儿（可选）' },
+      about: { type: 'string', description: '和 when 一起用：关于谁（可选）' },
+    } },
     fix: { name: 'memory_fix', description: DESC.fix, timeoutMs: 15_000, parameters: {
       op: { type: 'string', enum: ['forget', 'correct', 'confirm'], required: true, description: 'forget 忘掉 / correct 改正 / confirm 确认' },
       target: { type: 'string', required: true, description: '指的是哪件事' },
@@ -161,12 +197,13 @@ const say = (s) => sanitizeForPrompt(s, { keepNewlines: true });
  *          blockedFor?: (adapterId: string) => boolean, infoOf?: typeof sessionInfoOf}} deps
  *   infoOf：读会话现在的 preset（D112：从下拉里换过预设的会话，会话头还是旧的），默认只看会话头
  */
-export function createMemoryTools({ getPm, claims, states, assembler, hostConfig, log, getDefineTool, recallNonces, blockedFor = () => false, infoOf = sessionInfoOf, coreConfig = () => ({}) }) {
+export function createMemoryTools({ getPm, claims, states, assembler, hostConfig, log, getDefineTool, recallNonces, blockedFor = () => false, infoOf = sessionInfoOf, coreConfig = () => ({}),
+  blockedToolFor = () => false }) {
   /** 用法说明的写法（D125，核心配置 context.usageStyle；读不到按 guided）。 */
   const style = () => { try { return coreConfig()?.context?.usageStyle === 'purpose' ? 'purpose' : 'guided'; } catch { return 'guided'; } };
   /** agentId → disposer */
   const registered = new Map();
-  const stats = { registered: 0, calls: { memory_recall: 0, memory_note: 0, memory_fix: 0 }, results: {} };
+  const stats = { registered: 0, calls: { memory_recall: 0, memory_note: 0, memory_fix: 0, memory_look: 0 }, results: {} };
   const bump = (k) => { stats.results[k] = (stats.results[k] ?? 0) + 1; };
 
   const claimFor = (exec) => {
@@ -221,6 +258,53 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     }
     if (exec?.callId) recallNonces.set(String(exec.callId), { sessionId: claim.sessionId, nonce });
     bump('recalled');
+    return text;
+  }
+
+  /**
+   * memory_look（D156）：open 一个记号 → 展开这一条；when → 那段时间的经过。和 memory_recall 一样的认领、截止时间、注入记录（层名 memory_look）；
+   * 核心没给出东西时按原因说一句人话（LOOK_TEXT）。
+   */
+  async function look(args, exec) {
+    stats.calls.memory_look += 1;
+    const pm = getPm();
+    const claim = claimFor(exec);
+    if (!pm || !claim || typeof pm.look !== 'function') { bump('look:unavailable'); return TOOL_TEXT.unavailable; }
+    const open = String(args?.open ?? '').trim();
+    const when = String(args?.when ?? '').trim();
+    if (!open && !when) { bump('look:ask'); return LOOK_TEXT.ask; }
+    const tc = hostConfig().tools ?? {};
+    const st = states.get(claim.sessionId);
+    const sit = { settingId: claim.settingId, sessionId: claim.sessionId, trigger: !st.trigger?.obsId && st.selfTurn ? 'idle' : 'message', homeSettingId: claim.settingId,
+      ...(st.trigger?.obsId ? { focusObsId: st.trigger.obsId } : {}) };
+    const deadline = tc.recallDeadlineMs ?? 8000;
+    const opt = { deadlineMs: deadline, ...(open ? { open: clip(open, 64) } : { when: clip(when, 40), ...(args?.where ? { where: clip(String(args.where), 40) } : {}),
+      ...(args?.about ? { about: clip(String(args.about), 80) } : {}) }), ...(exec?.signal ? { signal: exec.signal } : {}) };
+    const t0 = Date.now();
+    const r = await settleWithin(pm.look(sit, opt), deadline + 1000);
+    if (!r.value) {
+      try { pm.sessions?.recallOutcome?.(claim.sessionId, { outcome: r.timedOut ? 'timeout' : 'error', waitedMs: Date.now() - t0, trigger: 'tool', ...(r.error ? { code: errCode(r.error) } : {}) }); } catch { /* 只是计数 */ }
+      bump('look:error');
+      return LOOK_TEXT.error;
+    }
+    const reason = r.value.look?.reason;
+    if (!r.value.items?.length) { bump(`look:${reason ?? 'nothing'}`); return say(LOOK_TEXT[reason] ?? LOOK_TEXT.nothing); }
+    if (assembler.modeOf(claim.settingId) !== 'live') { bump('look:withheld'); return TOOL_TEXT.withheld; }
+    const { text, used } = renderLookResult(r.value, { tools: tc, style: style() });
+    if (!used.length) { bump('look:nothing'); return LOOK_TEXT.nothing; }
+    const nonce = randomId(12);
+    try {
+      pm.sessions.injected({ sessionId: claim.sessionId, nonce, layer: 'memory_look', mode: 'live', chars: charLen(text),
+        items: used.map((it) => ({ id: it.id, layer: it.layer, verdict: it.verdict, appraisalRef: it.appraisalRef,
+          ...(typeof it.rendered === 'string' ? { chars: charLen(it.rendered) } : {}) })),
+        ...(Number.isInteger(r.value.degradeLevel) ? { degradeLevel: r.value.degradeLevel } : {}) });
+    } catch (e) {
+      log.warn('tools.look.rejected', { error: errCode(e) });
+      bump('look:unappraised');
+      return LOOK_TEXT.error;
+    }
+    if (exec?.callId) recallNonces.set(String(exec.callId), { sessionId: claim.sessionId, nonce });
+    bump(`look:${open ? 'open' : 'when'}`);
     return text;
   }
 
@@ -315,12 +399,14 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
   /** 包一层：工具体出错只给她一句人话，不让整轮失败。 */
   const safe = (fn) => async (args, exec) => { try { return await fn(args, exec); } catch (e) { log.warn('tools.error', { error: errCode(e) }); return '记忆工具这会儿出了点问题，照常聊就好。'; } };
 
-  function definitions() {
+  function definitions({ noLook = false } = {}) {
     const defineTool = getDefineTool();
     if (!defineTool) return null;
     const specs = memoryToolSpecs(style());
     return [
       defineTool({ ...specs.recall, output: TEXT_OUTPUT, isConcurrencySafe: () => true, execute: safe(recall) }),
+      // 翻看（D156）：桥接的白名单还是旧补丁时（自检报出来的）不给，免得她反复撞拒绝
+      ...(noLook ? [] : [defineTool({ ...specs.look, output: TEXT_OUTPUT, isConcurrencySafe: () => true, execute: safe(look) })]),
       defineTool({ ...specs.note, output: TEXT_OUTPUT, isConcurrencySafe: () => false, execute: safe(note) }),
       defineTool({ ...specs.fix, output: TEXT_OUTPUT, isConcurrencySafe: () => false, execute: safe(fix) }),
     ];
@@ -345,12 +431,21 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     return !!matched;
   }
 
+  /** 这个 agent 是哪个适配器的会话（认领过的按认领；还没认领的按会话特征；都认不出给 null）。 */
+  function adapterOf(agent) {
+    const info = infoOf(agent);
+    const known = info.id ? claims.get(info.id) : null;
+    if (known?.adapterId) return known.adapterId;
+    for (const b of claims.activeBindings()) { let sig = null; try { sig = b.sessionSignature?.(); } catch { sig = null; } if (matchesSignature(info, sig)) return b.adapterId; }
+    return null;
+  }
+
   function registerOn(agent, opt = {}) {
     const id = agentId(agent);
     if (!id || registered.has(id) || !eligible(agent, opt)) return false;
     const reg = agent?.ctx?.tools?.register;
     if (typeof reg !== 'function') return false;
-    const defs = definitions();
+    const defs = definitions({ noLook: !!adapterOf(agent) && blockedToolFor(adapterOf(agent), 'memory_look') });
     if (!defs) return false;
     const disposers = [];
     try { for (const d of defs) disposers.push(agent.ctx.tools.register(d)); } catch (e) {
@@ -369,7 +464,7 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     unregister(agent) { const id = agentId(agent); const d = registered.get(id); if (d) { registered.delete(id); d(); } },
     disposeAll() { for (const d of registered.values()) d(); registered.clear(); },
     has: (id) => registered.has(id),
-    handlers: { recall: safe(recall), note: safe(note), fix: safe(fix) },
+    handlers: { recall: safe(recall), note: safe(note), fix: safe(fix), look: safe(look) },
     status: () => ({ ...stats, live: registered.size, calls: { ...stats.calls }, results: { ...stats.results } }),
   };
 }
