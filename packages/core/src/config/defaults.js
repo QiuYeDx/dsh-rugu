@@ -319,8 +319,14 @@ export const DEFAULTS = deepFreeze({
     // windowWeight（D149）：有焦点那一句（对她说的那句、有意回想的 query）时，窗口那条查询单独查、名次按它打折再融合（1 = 和焦点一样重）
     dense: { memoryTopK: 100, rawTopK: 50, coarseTopK: 200, windowWeight: 0.3 },
     lexical: {
-      topK: 50, maxTerms: 12, commonRowFraction: 0.01, hotMonths: 3,
-      commonMinDocs: 20,                 // 「常见词」还要求含它的行数超过这么多：刚装上、库里只有几十行时出现一次就过了 1%（S24、D72）
+      topK: 50, maxTerms: 12, hotMonths: 3,
+      // D150：常见词降权（BM25 的 IDF 本来就给得低）、不剔除；只有出现在一半以上的行里（BM25 的 IDF 到 0，只剩查询的开销）
+      // 而且行数也超过 commonMinDocs 的词才跳过（刚装上、库里只有几十行时出现几次就过了比例，S24、D72）
+      skipRowFraction: 0.5, commonMinDocs: 20,
+      cohesionMin: 1,                    // 二元组的凝聚度 df(ab)·N / (df(a)·df(b)) 到这个数才当词用；不到的是跨词边界的碎片
+      cohesionRivalRatio: 0.5,           // 还不能比和它重叠的左右二元组弱太多（不到它们的这么多倍也是碎片）
+      contextWeight: 0.3,                // 有焦点（有意回想的 query、最新对她说的那句）时，对话其余部分的词的权重
+      maxPostings: 100_000,              // 选中的词加起来最多匹配这么多行（按 termStats 的条数估），超了先去掉最常见的词（查询开销约和它成正比）
       fallback: { maxTerms: 6, limit: 20, hotMonths: 1 },   // worker 线程起不来时在主线程上查：更少的词、更少的行（§8.8）
     },
     entity: {

@@ -137,3 +137,17 @@ test('init 之前用到 registry：同步建一个不带 jieba 的，不抛错',
   assert.equal(reg.info.jieba, false);
   assert.ok(core.mods.lang.indexTokens(core, '你好世界').includes('世界'));
 }, { init: false }));
+
+test('termClass（D150）：虚词是汉语的封闭词类（代词、疑问词、语气词、助词……），两个虚字连成的二元组也算；实词交给统计；词典里的名字优先', () => withLang((core) => {
+  const { lang } = core.mods;
+  for (const t of ['你', '我们', '哪些', '什么', '吗', '呢', '的', '了', '过', '还', '或者', '有没有', '你还', '过哪', '给我']) {
+    assert.equal(lang.termClass(core, t), 'function', t);
+  }
+  for (const t of ['记得', '知道', '群里', '有', '猫', '昨天', '还记', '些猫', 'hello', 'ent_5']) assert.equal(lang.termClass(core, t), null, t);
+  // 用户词典里的整词（名字、别名）优先：有人就叫这个
+  lang.registry(core).setUserDictionary(['那些']);
+  assert.equal(lang.termClass(core, '那些'), 'word');
+  assert.equal(lang.termClass(core, '这些'), 'function');
+  // 随机语言标签、混合文字照样按文字分派到 zh
+  assert.equal(lang.termClass(core, '吗', { lang: 'x-abc' }), 'function');
+}));

@@ -1464,12 +1464,13 @@ export async function denseSearch(core, q, opt = { deadlineMs: 800 }) {
 
 /**
  * 词法查询：terms 已按 IDF 排好序、≤ 12 个（store.matchQuery 负责安全拼接）；原文分表热路径只查最近 hotMonths 个月。
+ * 【D150】weights 可选（和 terms 一一对应，缺省 1）：同一个权重的词一起查，各组的 −bm25 乘权重后按行相加。
  * tables 是 FTS 表名：'episodes_fts'、'assertions_fts'、登记过的原文分表 'percepts_fts_YYYYMM'；
  * 也可以写别名 HOT_SHARDS（'percepts_fts'，最近 recall.lexical.hotMonths 个月的分表）/ ALL_SHARDS（'percepts_fts_all'，全部）。
  * 不认识的表名直接丢掉。命中的 ref：情节 'e'、事实 'a'、原文感知 'p'；score = −bm25。
  * 降级（线程起不来）时在主线程查，词数、条数、分表数都按 recall.lexical.fallback 收小。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{terms: string[], tables: string[], limit: number}} q
+ * @param {{terms: string[], weights?: number[], tables: string[], limit: number}} q
  * @param {{deadlineMs: number, signal?: AbortSignal}} opt
  * @returns {Promise<{hits: Hit[], timedOut: boolean}>}
  */
@@ -1479,11 +1480,15 @@ export async function lexicalSearch(core, q, opt = { deadlineMs: 800 }) {
   try {
     const p = params(core);
     const fb = s.mode === 'fallback';
-    const terms = (q?.terms ?? []).filter((t) => typeof t === 'string');
+    const pairs = (q?.terms ?? []).map((t, i) => [t, Array.isArray(q.weights) ? Number(q.weights[i] ?? 1) : 1])
+      .filter(([t, w]) => typeof t === 'string' && w > 0 && Number.isFinite(w));
+    const terms = pairs.map(([t]) => t);
+    const weights = pairs.map(([, w]) => w);
     if (!terms.length) return empty;
     const limit = Math.max(1, Math.min(q.limit ?? p.lexical.topK, fb ? p.lexical.fallback.limit : Infinity));
     const args = {
       terms: fb ? terms.slice(0, p.lexical.fallback.maxTerms) : terms,
+      weights: fb ? weights.slice(0, p.lexical.fallback.maxTerms) : weights,
       maxTerms: fb ? p.lexical.fallback.maxTerms : p.lexical.maxTerms,
       tables: q.tables ?? [],
       limit,
@@ -1504,7 +1509,7 @@ export async function lexicalSearch(core, q, opt = { deadlineMs: 800 }) {
 }
 
 /**
- * 词的 IDF（给词法路挑词、剔掉出现在超过 1% 行里的常见词；给 lang.distinctiveTerms 用）。用 fts5vocab 或缓存的统计。
+ * 词的 IDF（给词法路挑词——排序、二元组的凝聚度、跳过一半以上行里都有的词，D150；给 lang.distinctiveTerms 用）。用 fts5vocab 或缓存的统计。
  * IDF = ln(1 + (N − n + 0.5) / (n + 0.5))（N 是情节、事实、原文三类 FTS 行的总数，n 是含这个词的行数）；rowFraction = n / N。
  * 【补】docs = n、rows = N 一起给：库还小的时候比例说明不了什么（N < 100 时出现一次就超过 1%），调用方要看绝对条数
  * （词法路的常见词门槛、lang.distinctiveTerms 的「只在一条文字里出现过」）；docs = 0 的词哪一行都匹配不上。

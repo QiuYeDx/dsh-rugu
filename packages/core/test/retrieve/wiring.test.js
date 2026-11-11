@@ -350,7 +350,7 @@ test('提炼背景：到点没下文的计划（unknown）不是结案——说�
   } finally { await w.cleanup(); }
 });
 
-test('词法路挑词：库还小（几十行）时出现过一两次的词不算常见；库里一行都没有的词排在能匹配上的词后面；库大了常见词照样剔掉', async () => {
+test('词法路挑词：库还小（几十行）时出现过一两次的词不跳过；库里一行都没有的词排在能匹配上的词后面；库大了常见词降权不剔除，只有出现在一半以上的行里才跳过（D72、D150）', async () => {
   let stats = new Map();
   const w = await retrieveCore({ mods: { worker: { termStats: async (core, ts) => new Map(ts.filter((t) => stats.has(t)).map((t) => [t, stats.get(t)])) } } });
   try {
@@ -370,10 +370,11 @@ test('词法路挑词：库还小（几十行）时出现过一两次的词不�
     const firstZero = terms0.findIndex((t) => stats.get(t)?.docs === 0);
     const lastLive = terms0.findLastIndex((t) => (stats.get(t)?.docs ?? 1) > 0);
     assert.ok(firstZero < 0 || lastLive < firstZero, `一行都没有的词排在后面：${JSON.stringify(terms0)}`);
-    // 库大了：同样的比例、行数也多 → 常见，剔掉；只给比例的统计（没有 docs）照旧按比例剔
+    // 库大了：4% 的词留着（BM25 的 IDF 本来就低），排在稀有的后面；一半以上的行里都有的跳过（只给比例的统计也一样）
     stats = new Map([['包裹', st(5, 100_000)], ['取了', st(4000, 100_000)], ['了吗', { idf: 0.1, rowFraction: 0.5 }]]);
     const terms1 = await lexTerms();
-    assert.ok(terms1.includes('包裹'));
-    assert.ok(!terms1.includes('取了') && !terms1.includes('了吗'), JSON.stringify(terms1));
+    assert.ok(terms1.indexOf('包裹') >= 0 && terms1.indexOf('包裹') < terms1.indexOf('取了'), JSON.stringify(terms1));
+    assert.ok(!terms1.includes('了吗'), JSON.stringify(terms1));
+    assert.ok(calls.lexicalSearch.at(-1).weights.every((w) => w === 1), '只有焦点（有意回想的 query）一层');
   } finally { await w.cleanup(); }
 });

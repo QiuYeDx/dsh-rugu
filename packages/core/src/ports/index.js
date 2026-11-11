@@ -107,6 +107,8 @@
  * @property {() => string[]} pastQuestionExemplars              「还记得……吗」这类示例问法（§6.6）
  * @property {(text: string) => number} questionCue              0–1：句式上像不像在问（嵌入不可用时的退路）
  * @property {(words: string[]) => void} [setUserDictionary]     jieba 用户词典（实体别名，§8.2）
+ * @property {(term: string) => ('function'|'word'|null)} [termClass]  【D150】查询词的词类：'function' 虚词（代词、疑问词、语气词、助词……
+ *                                                                这门语言的封闭词类，不当词法查询词）；'word' 认得的整词（用户词典）；null 不知道
  */
 
 /**
