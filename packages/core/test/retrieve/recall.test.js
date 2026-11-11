@@ -81,7 +81,7 @@ test('预过滤拿不到结果就 fail closed：一条都不给', async () => {
   } finally { await w.cleanup(); }
 });
 
-test('激活打分的输入：S = PPR 归一化到 0–S_max + 扇出项（S_max − ln fan）；C 用 RRF 名次分；被取代的标 superseded；种子可复现', async () => {
+test('激活打分的输入：S = max（PPR 归一化 × 最强线索的强度，扇出项 S_max × 专门程度）；C 用 RRF 名次分；被取代的标 superseded；种子可复现', async () => {
   const w = await world();
   try {
     const { core, calls } = w;
@@ -93,11 +93,12 @@ test('激活打分的输入：S = PPR 归一化到 0–S_max + 扇出项（S_max
     const set = await R(core, { settingKey: 'D' }, { mode: 'involuntary' });
     const inputs = calls.activate[0].inputs;
     const by = Object.fromEntries(inputs.map((i) => [i.candidate.ref, i]));
-    const Smax = core.config.get().activation.fanSMax;
-    // 小刚名下 3 条事实：扇出项 = 1.5 − ln 3
-    const fan = Smax - Math.log(3);
-    assert.ok(by[`a${a1}`].S > fan - 1e-9 && by[`a${a1}`].S <= Smax + fan + 1e-9);
-    assert.ok(by[`n${w.cousin}`].S >= Smax - 1e-9, '种子本身 PPR 最高');
+    const act = core.config.get().activation;
+    const Smax = act.fanSMax;
+    // D149：小刚名下 3 条事实，库还小（N 按 fanMinTotal 算）：专门程度 ln(N/3)/ln N；问句里点到了他，名义权重 1
+    const spec = Math.log(act.fanMinTotal / 3) / Math.log(act.fanMinTotal);
+    assert.ok(Math.abs(by[`a${a1}`].S - Smax * spec) < 1e-9, `关于他的事实拿扇出项 ${by[`a${a1}`].S}`);
+    assert.ok(Math.abs(by[`n${w.cousin}`].S - Smax * spec) < 1e-9, '种子本身 PPR 最高，乘这一批最强线索的强度');
     assert.equal(by[`a${a3}`].superseded, true);
     assert.equal(by[`a${a1}`].superseded, false);
     assert.ok(by[`a${a1}`].C > 0, '词法路命中给 C');
@@ -119,13 +120,14 @@ test('扇出项的 fan 连他在场的情节一起数（§6.5「这个实体名�
     seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '小刚最近干嘛呢', addressed: 'to-her' });
     await R(core, { settingKey: 'D' }, { mode: 'involuntary' });
     const by = Object.fromEntries(calls.activate[0].inputs.map((i) => [i.candidate.ref, i]));
-    const Smax = core.config.get().activation.fanSMax;
-    // 1 条事实 + 6 段情节：fan = 7（只数事实时 fan = 1，每段情节都拿满 S_max）
-    const fan = Smax - Math.log(7);
+    const act = core.config.get().activation;
+    const Smax = act.fanSMax;
+    // 1 条事实 + 6 段情节：fan = 7（只数事实时 fan = 1，每段情节都拿满 S_max）；D149 起扇出项 = S_max × ln(N/fan)/ln N
+    const fan = Smax * Math.log(act.fanMinTotal / 7) / Math.log(act.fanMinTotal);
     const ep = eps.map((e) => by[`e${e}`]).find(Boolean);
     assert.ok(ep, '情节进了候选');
-    assert.ok(ep.S <= fan + Smax + 1e-9 && ep.S < Smax, `情节的扇出项按 fan = 7 算：S = ${ep.S}`);
-    assert.ok(by[`a${a1}`].S >= fan - 1e-9);
+    assert.ok(Math.abs(ep.S - fan) < 1e-9 && ep.S < Smax, `情节的扇出项按 fan = 7 算：S = ${ep.S}`);
+    assert.ok(Math.abs(by[`a${a1}`].S - fan) < 1e-9);
   } finally { await w.cleanup(); }
 });
 
@@ -249,13 +251,16 @@ test('重排（调参前）：重排分按名次进 C，和被换掉的稠密、
     assert.equal(top.ref, `a${ids[0]}`);
     assert.equal(top.signals.rerankRank, 1, '重排第一');
     const w8 = core.config.get().recall.weights;
-    assert.ok(Math.abs(top.parts.C - (top.cParts.total - top.cParts.dense - top.cParts.lexical) - (w8.dense + w8.bm25)) < 1e-9,
+    // 稠密那一份照样乘这一轮的倍数（有意回想，D149 matchWeight）
+    const bd = w8.dense * core.config.get().recall.matchWeight.deliberate;
+    assert.equal(top.cParts.boost, core.config.get().recall.matchWeight.deliberate);
+    assert.ok(Math.abs(top.parts.C - (top.cParts.total - top.cParts.dense - top.cParts.lexical) - (bd + w8.bm25)) < 1e-9,
       `重排第一拿满 β_d + β_b，不是 (β_d + β_b) × 原始分 ${top.signals.rerank}`);
     // 调参后（useRrfForC = false）换回 β 加权的原始分数
     core.config.update({ recall: { useRrfForC: false } });
     const s2 = await R(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'deliberate', query: '小刚开网约车' });
     const t2 = s2.items.find((c) => c.ref === top.ref);
-    assert.ok(Math.abs(t2.parts.C - (t2.cParts.total - t2.cParts.dense - t2.cParts.lexical) - (w8.dense + w8.bm25) * t2.signals.rerank) < 1e-9);
+    assert.ok(Math.abs(t2.parts.C - (t2.cParts.total - t2.cParts.dense - t2.cParts.lexical) - (bd + w8.bm25) * t2.signals.rerank) < 1e-9);
   } finally { await w.cleanup(); }
 });
 

@@ -5,6 +5,7 @@ import { listPerceptShards, monthOf, normalizeToken } from '../store/fts.js';
 import { cosine, errKind, log, meanVector, metric, mrefOf, rowsByIds, safe, selfId, wall, withDeadline, sleep } from './util.js';
 import { activeSpace, denseHealth, embedQueryTracked } from './level.js';
 import { fuse } from './fuse.js';
+import { entitySeeds } from './fan.js';
 
 /** @typedef {import('./index.js').RouteResult} RouteResult */
 
@@ -83,13 +84,50 @@ export async function denseRoute(ctx, pseudoSources) {
     layers = ['memory'];
     ctx.pseudo = true;
   }
-  const r = await withDeadline((signal) => core.mods.worker.denseSearch(core, {
-    vectors, spaceId, layers,
+  const search = (vs) => withDeadline((signal) => core.mods.worker.denseSearch(core, {
+    vectors: vs, spaceId, layers,
     topK: { memory: rcfg.memoryTopK, raw: rcfg.rawTopK },
     includeCold: ctx.mode === 'deliberate',
     exclude: ctx.exclude.size ? ctx.exclude : undefined,
   }, { deadlineMs: Math.max(1, remaining(ctx)), signal }), Math.max(1, remaining(ctx)), ctx.signal);
-  return routeOf('dense', r, t0, ctx);
+  // 窗口那条查询是辅助（D149）：有焦点那一句（对她说的那句、有意回想的 query、改写）时，它们是主线索，窗口单独查一次、
+  // 名次按 dense.windowWeight 打折再和主线索的名次融合。原来几条向量对每条记忆取最大相似度，换了话题以后窗口里大半是上一个话题，
+  // 稠密前几名一半是上一个话题的东西。窗口不丢：「那 X 呢」这种短句要靠它提供话题，两边都靠前的排得最前
+  const win = ctx.pseudo || !ctx.cues.windowText ? -1 : ctx.cues.queryTexts.indexOf(ctx.cues.windowText);
+  const ww = Number(rcfg.windowWeight);
+  if (vectors.length >= 2 && win >= 0 && win < vectors.length && Number.isFinite(ww) && ww >= 0 && ww < 1) {
+    const [main, aux] = await Promise.all([search(vectors.filter((_, i) => i !== win)), search([vectors[win]])]);
+    const out = routeOf('dense', main, t0, ctx);
+    if (main.timedOut || main.error) return out;
+    const side = routeOf('dense', aux, t0, ctx);
+    out.hits = blendRanks([[out.hits, 1], [side.hits, ww]], ctx.p.recall.rrfK, rcfg.memoryTopK + rcfg.rawTopK);
+    out.timedOut = out.timedOut || side.timedOut;
+    return out;
+  }
+  return routeOf('dense', await search(vectors), t0, ctx);
+}
+
+/**
+ * 几张按分数降序的命中表按名次加权融合（w / (k + 名次)，同一条只算各表里最好的那次）。分数留各表里最大的原始分（相似度），
+ * 排序按融合分；同分按原始分、再按引用。
+ */
+function blendRanks(lists, k, keep) {
+  const by = new Map();
+  for (const [hits, w] of lists) {
+    const seen = new Set();
+    let rank = 0;
+    for (const h of hits) {
+      if (seen.has(h.ref)) continue;
+      seen.add(h.ref);
+      rank += 1;
+      const x = by.get(h.ref) ?? { ref: h.ref, score: -Infinity, f: 0 };
+      x.f += w / (k + rank);
+      x.score = Math.max(x.score, h.score);
+      by.set(h.ref, x);
+    }
+  }
+  return [...by.values()].sort((a, b) => b.f - a.f || b.score - a.score || (a.ref < b.ref ? -1 : 1))
+    .slice(0, Math.max(1, keep)).map(({ ref, score }) => ({ ref, score }));
 }
 
 // ── 词法 ────────────────────────────────────────────────────────────────
@@ -169,6 +207,8 @@ function dedupe(terms) {
 /**
  * 种子 = 正文里的名字、被提到的人、正在对她说话的人、在场的人（不含她自己），加上查询匹配到的前 5 条事实的实体。
  * 在「实体—事实—情节」图上做局部推送式个性化 PageRank（worker，评审:FE-14）。
+ * D149：种子的权重 = 名义权重（线索的来源）× 线索有多专门（fan.js entitySeeds）：正在说话的人、在场的人是情境，只当弱种子；
+ * 名下几百件事的人对其中每一件都是弱线索。结果带上 seedInfo（各种子的有效权重、这一批最强的线索有多强），激活打分据此定 S。
  * @param {RouteCtx} ctx
  * @param {Promise<RouteResult>} lexicalP
  * @returns {Promise<RouteResult>}
@@ -176,32 +216,24 @@ function dedupe(terms) {
 export async function entityRoute(ctx, lexicalP) {
   const { core, cues } = ctx;
   const t0 = wall();
-  const sw = ctx.p.x.entity.seedWeights;
-  const me = selfId(core);
-  const seeds = new Map();
-  const add = (id, w) => { if (Number.isInteger(id) && id !== me && w > 0) seeds.set(id, Math.max(seeds.get(id) ?? 0, w)); };
-  for (const n of cues.names) add(n.entityId, sw.name * Math.max(0.1, Math.min(1, n.score || 1)));
-  for (const e of cues.mentioned) add(e, sw.mentioned);
-  add(cues.focusSpeaker, sw.focus);
-  for (const e of cues.present) add(e, sw.present);
   // 查询匹配到的前 5 条事实的实体：等词法路一小会儿，等不到就不要了
   const lex = await Promise.race([lexicalP, sleep(Math.max(0, remaining(ctx) * ctx.p.x.entity.factWaitShare)).then(() => null)]);
   const factIds = (lex?.hits ?? []).map((h) => mrefOf(h.ref)).filter((m) => m?.kind === 'assertion')
     .slice(0, ctx.p.recall.entity.seedFacts).map((m) => m.id);
-  if (factIds.length) {
-    const rows = safe(core, 'factSeeds', () => rowsByIds(core.store,
-      "SELECT DISTINCT entity_id AS e FROM assertion_entities WHERE assertion_id IN (?*) AND role IN ('subject','object')", factIds), []);
-    for (const r of rows) add(r.e, sw.fact);
-  }
-  if (!seeds.size) return { ...empty('entity'), ms: wall() - t0 };
+  const factEntities = factIds.length ? (safe(core, 'factSeeds', () => rowsByIds(core.store,
+    "SELECT DISTINCT entity_id AS e FROM assertion_entities WHERE assertion_id IN (?*) AND role IN ('subject','object')", factIds), []) ?? []).map((r) => r.e) : [];
+  const seedInfo = safe(core, 'entitySeeds', () => entitySeeds(core, cues, ctx.p.x.entity.seedWeights, factEntities), null);
+  const seeds = [...(seedInfo?.seeds ?? new Map())].filter(([, s]) => s.weight > 0);
+  if (!seeds.length) return { ...empty('entity'), ms: wall() - t0, seedInfo };
   const maxHops = ctx.mode === 'deliberate' ? Math.max(ctx.p.x.entity.maxHops, ctx.p.recall.deliberateMaxHops) : ctx.p.x.entity.maxHops;
   const r = await withDeadline((signal) => core.mods.worker.pprSearch(core, {
-    seeds: [...seeds].map(([entityId, weight]) => ({ entityId, weight })),
+    seeds: seeds.map(([entityId, s]) => ({ entityId, weight: s.weight })),
     maxHops,
     limit: ctx.p.recall.fuseKeep,
   }, { deadlineMs: Math.max(1, remaining(ctx)), signal }), Math.max(1, remaining(ctx)), ctx.signal);
   const out = routeOf('entity', r, t0, ctx);
-  out.seeds = seeds.size;
+  out.seeds = seeds.length;
+  out.seedInfo = seedInfo;
   return out;
 }
 

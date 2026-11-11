@@ -42,7 +42,7 @@ test('编码强度 w = w_att × w_self × w_sal × w_rel × w_emo；缺的因子
   assert.ok(Math.abs(dyn.encodingWeight(core, { wAtt: 1, closeness: 1 }) - 1.3) < 1e-12);
 }));
 
-test('activate：A = B + S + C + I − P_sup + ε；ε 可复现；P 用不含噪声的均值', () => withCore((core) => {
+test('activate：A = B + S + C + I − P_sup（不含噪声，D149）；ε 另放在 parts.eps、可复现；有意回想不带噪声；P 用 A', () => withCore((core) => {
   const dyn = core.mods.dynamics;
   dyn.addTrace(core, { kind: 'assertion', id: 1 }, { t: T0, w: 1, sourceKey: 's', reason: 'encode' });
   const at = T0 + 7 * D;
@@ -52,14 +52,20 @@ test('activate：A = B + S + C + I − P_sup + ε；ε 可复现；P 用不含�
   const [z] = dyn.activate(core, inp, { at, mode: 'involuntary', seed: ['会话', '4'] });
   const B = dyn.baseActivation(core, { kind: 'assertion', id: 1 }, at);
   assert.equal(x.parts.B, B);
-  assert.ok(Math.abs(x.A - (B + 0.5 + 0.25 + x.parts.eps)) < 1e-12);
-  assert.equal(x.A, y.A);
+  assert.ok(Math.abs(x.A - (B + 0.5 + 0.25)) < 1e-12, '噪声不进 A（不参与排名次）');
+  assert.equal(x.A, z.A);
+  assert.equal(x.parts.eps, y.parts.eps);
   assert.notEqual(x.parts.eps, z.parts.eps);
   assert.equal(x.parts.eps, dyn.seededNoise(['会话', '3', 'a1'], 0.4));
   assert.equal(x.P, dyn.pRecall(B + 0.75, 0, 0.4));
   assert.equal(x.ref, 'a1');
+  // 有意回想是她在用力想：不带噪声
+  const [d] = dyn.activate(core, inp, { at, mode: 'deliberate', seed: ['会话', '3'] });
+  assert.equal(d.parts.eps, 0);
+  assert.equal(d.A, x.A);
   // 关掉噪声：ε = 0
   core.config.update({ activation: { noise: false } });
+  assert.equal(dyn.activate(core, inp, { at, mode: 'involuntary', seed: ['会话', '3'] })[0].parts.eps, 0);
   const [n] = dyn.activate(core, inp, { at, mode: 'deliberate', seed: ['会话', '3'] });
   assert.equal(n.parts.eps, 0);
   assert.equal(n.P, dyn.pRecall(B + 0.75, -1.6, 0.4));
@@ -77,7 +83,7 @@ test('sample：不自主回想按 P 抽样（不是固定取前 k），同一会
   const mean = Math.log(0.3 / 0.7) * 0.4;   // σ(mean / 0.4) = 0.3
   const fake = (seed) => {
     const eps = dyn.seededNoise([...seed, 'a9'], 0.4);
-    return { ref: 'a9', mref: { kind: 'assertion', id: 9 }, ranks: {}, rrf: 0, signals: {}, A: mean + eps, P: 0.3, parts: { B: mean, S: 0, C: 0, I: 0, Psup: 0, eps } };
+    return { ref: 'a9', mref: { kind: 'assertion', id: 9 }, ranks: {}, rrf: 0, signals: {}, A: mean, P: 0.3, parts: { B: mean, S: 0, C: 0, I: 0, Psup: 0, eps } };
   };
   let hits = 0;
   for (let i = 0; i < 3000; i++) if (dyn.sample(core, [fake(['s', String(i)])], { mode: 'involuntary', seed: ['s', String(i)] }).length) hits += 1;
@@ -106,11 +112,18 @@ test('意图项：armed +1.0（线索命中再 +0.5）；完成 / 取消后 −0
   assert.equal(dyn.intentionBias(core, { state: 'formed', window_start: T0 - 2 * H, window_end: T0 - H }, { at: T0, cueHit: true }), 0);
 }));
 
-test('扇出项 S_max − ln(fan)，不小于 0', () => withCore((core) => {
+test('扇出项（D149）：S_max × 专门程度 ln(N/fan)/ln N，截到 [0, S_max]；N 不到 fanMinTotal 按它算', () => withCore((core) => {
   const dyn = core.mods.dynamics;
-  assert.equal(dyn.fanTerm(core, 1), 1.5);
-  assert.ok(Math.abs(dyn.fanTerm(core, 3) - (1.5 - Math.log(3))) < 1e-12);
-  assert.equal(dyn.fanTerm(core, 100), 0);
+  assert.equal(dyn.fanSpecificity(core, 1, 2000), 1, '只连着一件事的线索');
+  assert.equal(dyn.fanSpecificity(core, 2000, 2000), 0, '连着库里每一件事的线索');
+  assert.ok(Math.abs(dyn.fanSpecificity(core, 700, 2000) - Math.log(2000 / 700) / Math.log(2000)) < 1e-12);
+  assert.ok(dyn.fanSpecificity(core, 700, 2000) < 0.15, '名下几百件事的人对其中每一件都是弱线索');
+  assert.ok(dyn.fanSpecificity(core, 15, 2000) > 0.6);
+  // 库还小：名下 3 条不算「连着一切」
+  assert.ok(Math.abs(dyn.fanSpecificity(core, 3, 3) - Math.log(100 / 3) / Math.log(100)) < 1e-12);
+  assert.equal(dyn.fanSpecificity(core, 5000, 2000), 0);
+  assert.ok(Math.abs(dyn.fanTerm(core, 700, 2000) - 1.5 * dyn.fanSpecificity(core, 700, 2000)) < 1e-12);
+  assert.equal(dyn.fanTerm(core, 1, 2000), 1.5);
 }));
 
 test('时态阈值：> 0.7 现在时；< 0.3 过去时；中间不确定', () => withCore((core) => {

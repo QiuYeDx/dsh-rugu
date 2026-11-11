@@ -252,7 +252,7 @@ export function fakeEntities() {
 }
 
 /**
- * dynamics：照 §6.5 的公式（A = B + S + C + I − P_sup + ε，P = σ((A − τ)/s)），B 由测试给（默认 0），ε = 0；
+ * dynamics：照 §6.5 的公式（A = B + S + C + I − P_sup，P = σ((A − τ)/s)），B 由测试给（默认 0），ε = 0；
  * 不自主回想取 P ≥ 0.5（确定的），有意回想取 A ≥ τ_del。pHold / tense 照 §5.4。
  */
 export function fakeDynamics({ B = {}, calls = {} } = {}) {
@@ -278,6 +278,11 @@ export function fakeDynamics({ B = {}, calls = {} } = {}) {
       return ctx.mode === 'deliberate' ? scored.filter((c) => c.A >= a.tauDeliberate) : scored.filter((c) => c.P >= 0.5);
     },
     pRecall: (A, tau, s) => sig((A - tau) / s),
+    // 线索的专门程度（D149）：和真的 dynamics 同一个公式
+    fanSpecificity: (core, fan, total) => {
+      const n = Math.max(2, Number(total) || 0, Number(core.config.get().activation.fanMinTotal) || 0);
+      return Math.min(1, Math.max(0, Math.log(n / Math.max(1, Number(fan) || 1)) / Math.log(n)));
+    },
     pHold: (core, r, at) => {
       if (r.valid_to_known != null && at > r.valid_to_known) return 0;
       if (r.t50_h == null) return r.change_known ? 0.3 : 1;

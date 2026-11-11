@@ -11,7 +11,8 @@ import { hydrate, occTime } from './hydrate.js';
 import { params } from './params.js';
 import { rerankUsable, staticLevel } from './level.js';
 import { clamp, cosine, errKind, log, metric, mrefOf, rowsByIds, safe, selfId, wall, withDeadline } from './util.js';
-import { entityToken, normalizeToken } from '../store/fts.js';
+import { normalizeToken } from '../store/fts.js';
+import { entitySeeds } from './fan.js';
 
 const ROUTES = ['dense', 'lexical', 'entity', 'time', 'present'];
 
@@ -85,7 +86,9 @@ export async function runRecall(core, s, opt, internal = {}) {
   for (const c of fused) c.meta = meta.get(c.ref);
 
   // ── 激活打分 ──
-  const fan = fanOf(core, direct);
+  // 种子（D149）：实体路算好的那一份；实体路超时、出错时按同样的规则现算（不带词法事实的种子）
+  const seedInfo = routes.find((r) => r.route === 'entity')?.seedInfo
+    ?? safe(core, 'entitySeeds', () => entitySeeds(core, cues, p.x.entity.seedWeights, []), null);
   const pprMax = Math.max(0, ...fused.map((c) => c.signals.ppr ?? 0));
   const bm25Max = Math.max(0, ...fused.map((c) => c.signals.bm25 ?? 0));
   const presentOthers = new Set(cues.present.filter((e) => e !== me));
@@ -93,7 +96,8 @@ export async function runRecall(core, s, opt, internal = {}) {
     c.signals.timeHit = c.signals.timeHit ?? timeOverlap(c.meta, cues.timeWindows);
     c.signals.contextSim = contextSim(c.meta, cues.settingKey, presentOthers, p.x.contextSim);
   }
-  const inputs = fused.map((c) => activationInput(c, { p, direct, fan, pprMax, bm25Max, present: presentOthers, core }));
+  const boost = matchBoost(p, mode, cues);
+  const inputs = fused.map((c) => activationInput(c, { p, direct, seedInfo, pprMax, bm25Max, present: presentOthers, core, boost }));
   const seed = [cues.settingKey, String(cues.latestPerceptId), mode];
   let scored = activate(core, p, inputs, { at: ctx.at, mode, seed });
   let sampled = sample(core, p, scored, { mode, seed });
@@ -143,7 +147,8 @@ export async function runRecall(core, s, opt, internal = {}) {
   list = attachVersions(anchorCtx, list, deep);
   if (mode === 'deliberate' || opt.includeHistory) list = attachOutcomes(anchorCtx, list);
   list = orderOccurrences(anchorCtx, list);
-  list = capPerEntity(list, p.recall.perEntityMax, new Set([me, ...cues.aboutEntityIds].filter((x) => x != null)));
+  // 在场的人是情境不是话题（D149）：一对一时大部分记忆都关于对方，按「每人 3 条」会把相关的挤掉；他们不占这个上限
+  list = capPerEntity(list, p.recall.perEntityMax, new Set([me, ...cues.aboutEntityIds, ...presentOthers].filter((x) => x != null)));
   for (const f of fok) if (!list.some((c) => c.ref === f.ref)) list.push(f);
   markBelief(core, list, direct);
   // 补不回的空白（§12.4.5 第 8 步）：有意回想碰到整体恢复后没补回来的那段时间，像人记不清一样说「好像有点印象」。
@@ -222,26 +227,6 @@ function suppressed(core, refs) {
   }
 }
 
-/**
- * 线索直接认出的实体名下有多少条记忆（扇出项的 fan，§6.5「fan 是这个实体名下的记忆条数」）：关于他的事实（主体、宾语、提到他），
- * 加上他在场的情节——扇出项也加在这些情节上，只数事实的话，事实少、聊得多的人每段经历都拿满 S_max。
- * 情节按 episodes_fts 里的实体词元数（ent_<id> 就是情节的参与者，encode 写情节时加的），走 FTS 索引，不扫情节表。
- */
-function fanOf(core, direct) {
-  const m = new Map();
-  if (!direct.size) return m;
-  const rows = safe(core, 'fan', () => rowsByIds(core.store,
-    "SELECT entity_id AS e, COUNT(*) AS n FROM assertion_entities WHERE entity_id IN (?*) AND role IN ('subject','object','mention') GROUP BY entity_id",
-    [...direct]), []);
-  const facts = new Map((rows ?? []).map((r) => [r.e, Number(r.n) || 0]));
-  for (const e of direct) {
-    const eps = Number(safe(core, 'fanEpisodes', () => core.store.get('SELECT count(*) AS n FROM episodes_fts WHERE episodes_fts MATCH ?',
-      `"${entityToken(e)}"`)?.n, 0)) || 0;
-    m.set(e, Math.max(1, (facts.get(e) ?? 0) + eps));
-  }
-  return m;
-}
-
 /** 记忆的时间落在线索的时间窗里吗（没有时间窗 → undefined，不加分也不减分）。 */
 function timeOverlap(meta, windows) {
   if (!windows.length || meta.tStart == null) return undefined;
@@ -285,14 +270,43 @@ function rankScore(p, rank) {
   return Math.max(0, ((k + 1) / (k + rank) - floor) / (1 - floor));
 }
 
+/**
+ * C 的倍数（D149）：线索有多直接。有意回想（工具、被判定在问过去）最大；这一轮有一句对她说的话（焦点是 to-her / mentions-her）次之；
+ * 只是旁听的群聊保持原来的比例（那时「她心里正想着什么」——基础激活——主导是对的）。被直接问到时，相关度比「最近」更重要：
+ * 名次分一路第 1 名才 1.0，基础激活的范围大约 −1 到 0.8，不放大的话「刚发生的不相干的事」和「相关的旧事」打平。
+ */
+export function matchBoost(p, mode, cues) {
+  const m = p.recall.matchWeight ?? {};
+  const v = mode === 'deliberate' ? m.deliberate : cues?.focusDirected ? m.directed : m.overheard;
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+
+/**
+ * 激活打分的输入（§6.5）。S 是联想项（D149）：
+ *   - 图扩散那一份：S_max × (ppr / 这一批的最大 ppr) × 这一批最强的线索有多强（seedInfo.strength）——
+ *     原来只按最大值归一，不管线索多弱总有人拿满 S_max，一对一聊天时关于对方的每一条都拿 1.0 以上；
+ *   - 扇出项：关于某个种子实体的记忆，S_max × 那个种子的有效权重 / 名义上最强的权重（名义权重 × ln(N/fan)/ln N）；
+ *   - 两份取大的（直接关于线索里的人的按扇出给，图上走过去的按 PPR 比例给，不重复算）。
+ * C 里和线索匹配的几项（稠密、词法、时间）乘 matchBoost；γ（情境）和在场者近况那一路不乘。
+ */
 function activationInput(c, o) {
-  const { p, direct, fan, pprMax } = o;
+  const { p, direct, seedInfo, pprMax } = o;
   const Smax = p.act.fanSMax;
-  const sPpr = pprMax > 0 && c.signals.ppr != null ? Smax * clamp(c.signals.ppr / pprMax, 0, 1) : 0;
+  const strength = Number.isFinite(seedInfo?.strength) ? seedInfo.strength : 0;
+  const sPpr = pprMax > 0 && c.signals.ppr != null ? Smax * clamp(c.signals.ppr / pprMax, 0, 1) * strength : 0;
   let sFan = 0;
+  const seeds = seedInfo?.seeds;
   const about = c.meta.kind === 'episode' ? [...c.meta.about, ...c.meta.participants] : c.meta.about;
-  for (const e of about) if (direct.has(e)) sFan = Math.max(sFan, Math.max(0, Smax - Math.log(fan.get(e) ?? 1)));
-  const cp = cParts(c, p, o.bm25Max);
+  if (seeds?.size) {
+    for (const e of about) {
+      const sd = seeds.get(e);
+      if (sd) sFan = Math.max(sFan, Smax * clamp(sd.weight / (seedInfo.nominalMax || 1), 0, 1));
+    }
+  }
+  const raw = cParts(c, p, o.bm25Max);
+  const b = o.boost ?? 1;
+  const cp = { ...raw, dense: raw.dense * b, lexical: raw.lexical, time: raw.time * b, boost: b };
+  cp.total = cp.dense + cp.lexical + cp.present + cp.time + cp.context;
   c.cParts = cp;
   const row = c.meta.row ?? {};
   let cueHit = false;
@@ -307,7 +321,7 @@ function activationInput(c, o) {
   }
   return {
     candidate: c,
-    S: sPpr + sFan,
+    S: Math.max(sPpr, sFan),
     C: cp.total,
     superseded: c.meta.kind === 'assertion' && row.superseded_by != null,
     intention: c.meta.kind === 'intention' ? row : null,
@@ -460,7 +474,9 @@ function continuesFrom(ac, g) {
 async function rerank(core, p, ctx, sampled, mode) {
   const top = [...sampled].sort(byA).slice(0, p.recall.rerank.topN).filter((c) => c.meta?.text);
   if (top.length < 2) return false;
-  const query = ctx.cues.queryTexts[0] ?? ctx.cues.directedText ?? '';
+  // 重排的查询和稠密路一样以焦点为主（D149）：有意回想的 query、对她说的那句；都没有才用窗口
+  const c0 = ctx.cues.queryTexts[0];
+  const query = (c0 && c0 !== ctx.cues.windowText ? c0 : null) ?? ctx.cues.directedText ?? c0 ?? '';
   if (!query) return false;
   const docs = top.map((c) => safe(core, 'sanitize', () => core.mods.intake.sanitizeForPrompt(core, c.meta.text), c.meta.text));
   const ms = Math.min(p.recall.rerank.budgetMs, remaining(ctx));
@@ -484,7 +500,8 @@ async function rerank(core, p, ctx, sampled, mode) {
   const rrfMode = p.recall.useRrfForC !== false;
   top.forEach((c, i) => {
     const old = (c.cParts?.dense ?? 0) + (c.cParts?.lexical ?? 0);
-    const neu = (w.dense + w.bm25) * (rrfMode ? rankScore(p, rankOf[i]) : norm(scores[i]));
+    // 稠密那一份照样乘这一轮的倍数（matchBoost），和被换掉的口径一样
+    const neu = (w.dense * (c.cParts?.boost ?? 1) + w.bm25) * (rrfMode ? rankScore(p, rankOf[i]) : norm(scores[i]));
     c.A = c.A - old + neu;
     c.P = safe(core, 'pRecall', () => core.mods.dynamics.pRecall(c.A, tau, p.act.s), sigmoid((c.A - tau) / p.act.s));
     if (c.parts) c.parts = { ...c.parts, C: (c.parts.C ?? 0) - old + neu };
@@ -790,7 +807,7 @@ function orderOccurrences(ac, list) {
   return out;
 }
 
-/** 每个实体最多 n 条（v1:791）：按「关于谁」数（她自己、这次有意回想问的那个人不限）；顺着链接带出来的跟着锚点走。 */
+/** 每个实体最多 n 条（v1:791）：按「关于谁」数（她自己、这次有意回想问的那个人、在场的人不限）；顺着链接带出来的跟着锚点走。 */
 function capPerEntity(list, n, exempt) {
   const count = new Map();
   const kept = new Set();

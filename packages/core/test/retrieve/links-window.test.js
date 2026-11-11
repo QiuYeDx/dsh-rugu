@@ -131,7 +131,7 @@ test('实体路的种子：正文里的名字、被提到的人、正在对她�
     const seed = Object.fromEntries(q.seeds.map((s) => [s.entityId, s.weight]));
     assert.equal(seed[w.ming], 1, '正文里的名字');
     assert.equal(seed[jie], 1, '被 @ 的人是线索');
-    assert.equal(seed[w.boss], 1, '正在对她说话的人');
+    assert.equal(seed[w.boss], 0.5, '正在对她说话的人是情境不是内容，只当弱种子（D149）');
     assert.equal(seed[lurker], 0.5, '在场的人');
     assert.equal(seed[third], 0.5, '词法命中的事实的主体');
     assert.equal(seed[w.me], undefined, '她自己不是种子（关于她的事太多，稀释一切）');
