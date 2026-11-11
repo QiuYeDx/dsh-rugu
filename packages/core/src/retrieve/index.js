@@ -9,7 +9,8 @@
 // 契约细节：docs/实现/模块与接口.md §4.6。
 // 内部文件：cues.js（线索）、routes.js（五路）、fuse.js（RRF、MMR）、hydrate.js（候选元数据）、pipeline.js（主流程）、
 //   render.js（渲染）、past.js（看起来在问过去）、prefetch.js（预取和缓存）、background.js（提炼背景）、level.js（降级和熔断）、
-//   params.js（参数和还没并进 defaults.js 的默认值）、names.js（称呼）、working.js（工作记忆的候选，§8.10）、util.js。
+//   params.js（参数和还没并进 defaults.js 的默认值）、names.js（称呼）、working.js（工作记忆的候选，§8.10）、util.js、
+//   scope.js（范围，D153）、intent.js（读懂问题，D154）、recollect.js（回忆，D155）。
 import { buildCues as buildCuesImpl } from './cues.js';
 import { runRecall, emptySet } from './pipeline.js';
 import { fuse as fuseImpl, mmr as mmrImpl } from './fuse.js';
@@ -22,6 +23,7 @@ import { backgroundForExtraction as backgroundImpl } from './background.js';
 import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, topicSimilarity } from './working.js';
 import { staticLevel, storeOk } from './level.js';
 import { scopeOf as scopeOfImpl } from './scope.js';
+import { recollect as recollectImpl, recollectEnabled, recollectTier as recollectTierImpl } from './recollect.js';
 import { errKind, latestPerceptAnywhere, latestPerceptOf, log, metric, safe } from './util.js';
 
 /**
@@ -85,8 +87,15 @@ export function buildCues(core, s) { return buildCuesImpl(core, s); }
  * 降级级别：稠密路可不可用以 worker.health 为准（线程挂了 embedQuery 照样给向量，只有扫描降级，D40）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: string}} s
+ * 【D155】有意回想（mode = 'deliberate'）默认走「回忆」（retrieve/recollect.js）：读懂问题（buildIntent）→ 圈范围（scopeOf）→ 范围内稠密 + 字面
+ * （按名次合并）+ 上面这条全库流水线照跑一次 → 范围内的在前、有时间窗时盖住时间 → 名额按 recall.recollect 的两档（工具 / 自动触发，随花费档位）。
+ * 结果另带 recollect：{tier, fallback, intent, scope, segments, ms}（给 context 写「找了哪儿」那一行、记进注入日志），每条候选带
+ * recollect: {pick, t, scoped, seg}（pick 是名额的先后，t 是时间）。意图、范围、范围内检索出错或超时退回只有全库那一份（fallback 记哪一步）。
+ * opt.recollect === false（夜里反思取证据）或 recall.recollect.enabled 关掉时照旧走全库流水线。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: string}} s
  * @param {{mode: 'involuntary'|'deliberate', query?: string, about?: string, time?: string, where?: string, includeHistory?: boolean,
- *          deadlineMs: number, signal?: AbortSignal}} opt
+ *          deadlineMs: number, signal?: AbortSignal, recollect?: boolean}} opt
  * @returns {Promise<import('../core-types.js').CandidateSet>}
  */
 export async function recall(core, s, opt) {
@@ -109,10 +118,16 @@ export async function recall(core, s, opt) {
     if (s.trigger === 'idle' && plain && st.lastSeen.get(s.settingKey) === latest) return emptySet(null, staticLevel(core));
     // 预取时（直接对她说的消息）做过的指代改写，同一份线索的回想接着用（有意回想的查询扩展，§6.6）
     const rewrites = fresh?.rewrites ?? [];
-    const { set, queryVectors } = await runRecall(core, s, opt ?? { mode, deadlineMs: 0 }, { queryVectors: entry?.queryVectors ?? null, rewrites });
+    // 回忆（D155）：有意回想走新路（读懂问题 → 圈范围 → 范围内找 + 全库照跑一次）；recall.recollect.enabled 关掉、或者调用方说不要
+    // （夜里反思取证据）时照旧
+    const { set, queryVectors } = mode === 'deliberate' && opt?.recollect !== false && recollectEnabled(core)
+      ? await recollectImpl(core, s, { ...opt, mode }, { entry, fresh })
+      : await runRecall(core, s, opt ?? { mode, deadlineMs: 0 }, { queryVectors: entry?.queryVectors ?? null, rewrites });
     st.lastSeen.set(s.settingKey, latest);
     if (mode === 'involuntary' && plain && CACHEABLE_TRIGGERS.has(s.trigger) && set.cues) {
-      storeCache(core, s.settingKey, { key: set.cues.latestPerceptId, cueHash: set.cues.hash, full: true, set, queryVectors, rewrites, at: core.now(), any: latestPerceptAnywhere(core) });
+      // 预取时改写的结构化结果（D154）跟着线索一起留下：她自己开口的轮重算时原来只带了 rewrites，「读懂问题」就拿不到它了
+      storeCache(core, s.settingKey, { key: set.cues.latestPerceptId, cueHash: set.cues.hash, full: true, set, queryVectors, rewrites,
+        ...(fresh?.rewrite ? { rewrite: fresh.rewrite } : {}), at: core.now(), any: latestPerceptAnywhere(core) });
     }
     return set;
   } catch (e) {
@@ -208,7 +223,8 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  * opt.previous（旧版本也过了关口①时传进来，渲染成「之前……，后来……」；没传就只渲染这一版）；
  * opt.placeAllowed【补】（场合键 → 能不能在目标这里写出那个场合的名字：别的场合的名字也是记忆，场合的档案卡过了关口①才写，
  * 否则来源说法里不写在哪儿；context 总是给，不给时照旧写名字）；
- * opt.timeStyle【补】（D148：'full' 缺省，几个小时以内带「多久以前」；'day' 不带，常驻区这种会冻结一段时间的文字用）。
+ * opt.timeStyle【补】（D148：'full' 缺省，几个小时以内带「多久以前」；'day' 不带，常驻区这种会冻结一段时间的文字用）；
+ * opt.excerpt【补】（D155，只在回忆这条路上给：几句线索；正文放不下时截和它们的词最对得上的那一段，两头带「…」，不是从头截）。
  * 候选上的 belief（maybe_same）让措辞带「好像」、把握不超过链接的置信度；计划写明状态和结案的绝对时间；
  * blank（补不回的空白）只写「那几天有些事记不太清」，说个大概也一样，不给锚点的内容。
  * 记忆已经不在了（被删）返回空字符串，调用方跳过这条。
@@ -216,7 +232,7 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  * @param {import('../core-types.js').ScoredCandidate} c
  * @param {{verdict: 'share'|'share_vague', vagueText?: string|null, at: number, itemChars: number, settingKey?: string|null,
  *          previous?: {candidate: import('../core-types.js').ScoredCandidate, verdict: 'share'|'share_vague', vagueText?: string|null}|null,
- *          placeAllowed?: (settingKey: string) => boolean, timeStyle?: 'full'|'day'}} opt
+ *          placeAllowed?: (settingKey: string) => boolean, timeStyle?: 'full'|'day', excerpt?: string[]}} opt
  * @returns {{rendered: string, provenance: string, confidence: number}}
  */
 export function render(core, c, opt) { return renderImpl(core, c, opt); }
@@ -327,3 +343,12 @@ export function degradeLevel(core) {
  *            counts: {episodes: number, assertions: number, windows: number}, clipped: boolean, failed?: string}}
  */
 export function scopeOf(core, spec, opt) { return scopeOfImpl(core, spec, opt ?? {}); }
+
+/**
+ * 【D155】回忆这一档的名额：tool（她调记忆工具）/ auto（被直接问到以前的事、自动触发）。recall.recollect 的 maxItems、totalChars
+ * 乘花费档位的 recollectScale（节省档 0.5），itemChars 不变。同步、不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {'tool'|'auto'} kind
+ * @returns {{kind: 'tool'|'auto', maxItems: number, itemChars: number, totalChars: number}}
+ */
+export function recollectTier(core, kind) { return recollectTierImpl(core.config.get(), kind); }

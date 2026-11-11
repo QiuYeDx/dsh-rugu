@@ -330,14 +330,16 @@ test('花费护栏的数据：三档每一项的值（每天输出按宿主每�
   assert.equal(v.custom, true);
   assert.deepEqual(v.overrides, { dailyCalls: 1200, rerank: false }, '不认识的键、越界的值不算改过');
   assert.deepEqual(v.keys, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
-    'injectShare', 'injectPerSessionPerDay']);
+    'injectShare', 'injectPerSessionPerDay', 'recollectScale']);
   assert.deepEqual(v.presets.loose, { dailyCalls: 3000, dailyUncachedTokens: 5_000_000, dailyOutputTokens: 1_000_000, perSourceShare: 0.5, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.25, injectPerSessionPerDay: null });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.25, injectPerSessionPerDay: null, recollectScale: 1 });
   assert.deepEqual(v.presets.unlimited, { dailyCalls: null, dailyUncachedTokens: null, dailyOutputTokens: null, perSourceShare: 1, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null, recollectScale: 1 });
   // 注入预算（D133）：节省档是原来的数
   assert.deepEqual([v.presets.saving.injectShare, v.presets.saving.injectPerSessionPerDay], [0.05, 8000]);
   assert.deepEqual([v.effective.injectShare, v.effective.injectPerSessionPerDay], [0.05, 8000]);
+  // 回忆的名额（D155）：节省档减半
+  assert.deepEqual([v.presets.saving.recollectScale, v.presets.loose.recollectScale], [0.5, 1]);
   assert.equal(v.effective.dailyCalls, 1200);
   assert.equal(v.effective.dailyOutputTokens, 300_000);
   assert.equal(v.effective.rerank, false);

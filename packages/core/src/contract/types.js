@@ -240,7 +240,7 @@ export {};
  * @property {number} budgetChars
  * @property {AbortSignal} [signal]
  */
-/** @typedef {'people'|'recentFromPresent'|'todaySoFar'|'gap'|'warmStart'|'recalled'|'awarePrivate'|'intentions'|'working'|'lessons'|'pointBack'} Layer */
+/** @typedef {'people'|'recentFromPresent'|'todaySoFar'|'gap'|'warmStart'|'recalled'|'awarePrivate'|'intentions'|'working'|'lessons'|'pointBack'|'recollect'} Layer */
 /**
  * 一条已过关口①的记忆（§9.3.6：每条都能对上一次判定）。omit 的不出现。
  * @typedef {object} RecallItem
@@ -263,6 +263,8 @@ export {};
  * @property {0|1|2|3|4} degradeLevel
  * @property {string} traceId
  * @property {number} [alreadySent]   有意回想：有关、过了关口①、但本周期已经给过她的条数（她上下文里已经有了，D95）；没有就不带
+ * @property {{note: string, log: object}} [recollect]   【D155】这一轮是回忆（有意回想走了新路）：note 是「找了哪儿」那一行（集成层放在回忆那一节的开头，
+ *                                    不含记忆内容）；log 是意图和范围的摘要（只有条数、来源、时间窗，集成层原样交回注入记录的 recollect）
  */
 /**
  * @typedef {object} ResidentBlock

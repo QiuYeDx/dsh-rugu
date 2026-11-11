@@ -27,13 +27,15 @@ import { needsRefresh, refreshResident, swapStaged, isRestoring, noteSettingId }
 import { activateExtras, cardFor, bestImpression, burstGap, bestName } from './people.js';
 import { buildWorking } from './working.js';
 import { recallDiag } from './diag.js';
+import { recollectNote, recollectOrder } from './recollect.js';
 import { sanitize, clip, charLen, whenText, nowText, spanText, dayStart, newTraceId, HOUR_MS, MINUTE_MS } from './text.js';
 
 const CONTENT = new Set(['share', 'share_vague']);
 // 「心里有数」「还在想」的提示只跟着话题线索走；暖启动、人物卡这些背景层不给暗示
-const HINT_LAYERS = new Set(['recalled', 'recentFromPresent', 'todaySoFar']);
+const HINT_LAYERS = new Set(['recalled', 'recollect', 'recentFromPresent', 'todaySoFar']);
 // retrieve 召回的候选落在这几层（routeRecalled）：版本合并、计划和结果成组只在这几层里做
-const RECALL_LAYERS = new Set(['recalled', 'recentFromPresent', 'todaySoFar']);
+// 回忆（D155）的结果自成一层 recollect：和「想起来的」同一档，名额、每条字数另算
+const RECALL_LAYERS = new Set(['recalled', 'recollect', 'recentFromPresent', 'todaySoFar']);
 const PENDING_TEXT = '你隐约记得和这个问题有关的事，还在想这里能不能说';
 const AWARE_TEXT = '你记得一件和这个话题有关的事，这里不适合提';
 // 「讲过了」附注要占的字数放不下时，正文至少还要留这么多字，否则不带附注（附注只是提醒，正文才是内容）
@@ -72,7 +74,8 @@ export async function recall(core, s, opt) {
     // 目标拿不到：只认这一刻（之后没有新消息）已经判过的那一份，不用「工作记忆那一层还能用」的旧一份（判它时的目标更早）
     if (out.lost) return lostFallback(core, s, traceId, diag, { exactOnly: out.lost === 'target' });
     diag.done({ items: out.items.length });
-    return { items: out.items, degradeLevel: out.degradeLevel, traceId, ...(out.alreadySent > 0 ? { alreadySent: out.alreadySent } : {}) };
+    return { items: out.items, degradeLevel: out.degradeLevel, traceId, ...(out.alreadySent > 0 ? { alreadySent: out.alreadySent } : {}),
+      ...(out.recollect ? { recollect: out.recollect } : {}) };
   } catch (e) {
     // 各步都单独兜住了，到这里的是没想到的（D117）：记下来，已经算好、写进缓存的照给
     diag.fault('fatal', e);
@@ -178,7 +181,7 @@ function cachedFor(core, s, { exactOnly = false } = {}) {
   }
   const items = pack(list, {
     cfg, mode: entry.mode, sent: session ? sentTags(core, session) : new Set(), budgetChars: cfg.context.blockMaxChars,
-    budget: budgetState(core, session, core.now()),
+    budget: budgetState(core, session, core.now()), ...(entry.recollectTier ? { recollectTier: entry.recollectTier } : {}),
   });
   return { hit: true, items, degradeLevel: entry.degradeLevel };
 }
@@ -387,6 +390,8 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   }
   const degradeLevel = Number.isInteger(cset?.degradeLevel) ? cset.degradeLevel : degrade(core);
   diag.setLevel(degradeLevel);
+  // 回忆（D155）：有意回想走了新路，结果带着意图、范围和这一档的名额；想起来的那一层换成 recollect
+  const rc = mode === 'deliberate' && cset?.recollect && typeof cset.recollect === 'object' ? cset.recollect : null;
   // 她自己调记忆工具认真想一件事（D148，实测问题 #51）：查到的排最前；工作记忆、在场者近况只留和要想的这件事有关的
   const toolRecall = opt.mode === 'deliberate' && typeof opt.query === 'string' && !!opt.query.trim();
   const asked = toolRecall ? guard('tool-focus', () => askedRelevance(core, opt.query, cset, cfg), null) : null;
@@ -413,11 +418,19 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   const slots = [];
   let order = 0;
 
-  const routed = guard('route', () => routeRecalled(core, recalledItems, { key, at, tz, restart, restartAt: session?.restart_marker, cfg }),
+  const plainLayer = rc ? 'recollect' : 'recalled';
+  const routed = guard('route', () => routeRecalled(core, recalledItems, { key, at, tz, restart, restartAt: session?.restart_marker, cfg, plainLayer }),
     // 分层出错：重新开始时不给（「这里最近在聊什么」要等压缩结束，判断不了就不给）；平常都当「想起来的」
     () => (restart ? [] : recalledItems.filter((c) => { const m = parseRef(c?.ref); return m && m.kind !== 'intention' && m.kind !== 'link'; })
-      .map((c) => ({ ref: c.ref, layer: isPresentRoute(c) ? 'recentFromPresent' : 'recalled', role: 'recalled' }))));
-  routed.forEach((x) => { slots.push({ ...x, group: `r:${x.ref}`, order: order++ * 10 }); });
+      .map((c) => ({ ref: c.ref, layer: isPresentRoute(c) ? 'recentFromPresent' : plainLayer, role: 'recalled' }))));
+  // 回忆这一层（D155）：名额按 retrieve 给的先后（范围内的名次、盖住时间之后的），展示在有时间窗时按时间从早到晚
+  const rcOrder = rc ? guard('recollect-order', () => recollectOrder(routed, new Map(recalledItems.map((c) => [c.ref, c])),
+    { timed: (rc.intent?.timeWindows ?? []).length > 0 }), () => new Map()) : new Map();
+  routed.forEach((x) => {
+    const o = x.layer === 'recollect' ? rcOrder.get(x.ref) : null;
+    const n = order++ * 10;
+    slots.push({ ...x, group: `r:${x.ref}`, order: o ? o.order : n, ...(o ? { alloc: o.alloc } : {}) });
+  });
 
   const extras = [];
   const addExtra = (x) => { extras.push(x); slots.push({ ...x, order: order++ * 10 }); };
@@ -466,7 +479,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
       const ref = refOf('assertion', l.id);
       const slot = slots.find((x) => x.ref === ref);
       if (slot) { if (l.scoped) { slot.layer = 'lessons'; slot.role = 'lesson'; slot.group = `l:${ref}`; } continue; }
-      addExtra({ ref, layer: l.scoped ? 'lessons' : 'recalled', role: 'lesson', group: `l:${ref}` });
+      addExtra({ ref, layer: l.scoped ? 'lessons' : plainLayer, role: 'lesson', group: `l:${ref}` });
     }
   });
 
@@ -502,7 +515,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   // 这一轮在场 / 在受众里的人（暗示具体到谁时，只点在场的人，§9.3.4）
   const aud = target?.audience ?? {};
   const here = guard('present', () => new Set([...present, ...(aud.members ?? []), ...(aud.recentSpeakers ?? [])].filter(Number.isInteger)), () => new Set(present));
-  const entries0 = guard('render', () => renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, focus, selfId, intent, here, placeOk, diag }), []);
+  const entries0 = guard('render', () => renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, focus, selfId, intent, here, placeOk, diag, rc }), []);
   const entries = [...wm.entries, ...entries0];
   if (intent && !entries.some((e) => e.layer === 'intentions')) {
     try { core.mods.discretion.logDecision(core, { kind: 'omit', settingKey: key, ref: intent.ref, reason: 'intention-not-cleared', at }); } catch { /* 记不了就算了 */ }
@@ -512,13 +525,14 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
 
   // 6. 缓存（给 recallCached），然后按这个会话去重、打包。预取时替这一轮先判的不进这份缓存：它按预计的污点判，
   // 只用来让第二段的结论提前进判定缓存（按污点分开），不直接交给宿主
-  if (!prefetch) guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries, degradeLevel, mode, at, triggerEntityId }));
+  if (!prefetch) guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries, degradeLevel, mode, at, triggerEntityId, ...(rc?.tier ? { recollectTier: rc.tier } : {}) }));
   // 算不出预算（D133）：这一轮不限（和原来「今天还没用」一样），记忆效果优先
   const budget = guard('budget', () => budgetState(core, session, at), () => ({ dayUsed: 0, dayLimit: Infinity, rollingLeft: Infinity }));
   // 打包出错：退回只打包工作记忆（她眼前这个人的那几句最要紧）
   let packed = {};
-  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall }),
-    () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall }), []));
+  const rcTier = rc?.tier ? { recollectTier: rc.tier } : {};
+  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall, ...rcTier }),
+    () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall, ...rcTier }), []));
   // 6a. 指回去（D146）：这一轮是别人直接对她说的话开启的（她自己开启的轮、旁听的轮、记忆工具那条路都不算——工具那条路有 D95 的提示），
   //     回想排在这一轮新给的「想起来的 / 在场者近况」前面的条目这个周期已经给过、被去重掉了：给一行指回去，和别的条目一起再打包一次
   //     （它排在想起来的那一档前面，块满了时挤掉的是排得比它靠后的新条目）。算不出来就照第一次打包的结果给
@@ -531,7 +545,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
     }), null);
     if (pb?.entries.length) {
       const again = {};
-      const repacked = guard('pack', () => pack([...entries, ...pb.entries], { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: again }), null);
+      const repacked = guard('pack', () => pack([...entries, ...pb.entries], { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: again, ...rcTier }), null);
       if (repacked) { items = repacked; packed = again; }
     }
     if (!core.readOnly) {
@@ -562,12 +576,33 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   if (residentP) await Promise.race([residentP, new Promise((r) => { setTimeout(r, left()); })]);
   // 有意回想：有关、过了关口①、但本周期已经给过她的（D95）。这一次什么都没给出来时，集成层据此说「前面已经有了」
   const alreadySent = mode === 'deliberate' ? guard('pack', () => countSent(entries, sent), 0) : 0;
-  return { items, degradeLevel, alreadySent };
+  // 「找了哪儿」那一行（D155）和注入记录里的摘要：用打包之后真的给了她的回忆条目算
+  const recollect = rc ? guard('recollect-note', () => recollectSummary(core, rc, items, { scored, key, at, placeOk }), null) : null;
+  return { items, degradeLevel, alreadySent, ...(recollect ? { recollect } : {}) };
+}
+
+/**
+ * 回忆的结果（D155）：给集成层的「找了哪儿」那一行（note），和记进注入记录的摘要（log：意图、范围的事实，不含记忆内容）。
+ * given 是打包之后真的给了她的回忆条目。
+ */
+function recollectSummary(core, rc, items, { scored, key, at, placeOk }) {
+  const given = items.filter((i) => i.layer === 'recollect').map((i) => ({ ref: i.id, t: scored.get(i.id)?.recollect?.t ?? null }));
+  const note = recollectNote(core, rc, { given, key, at, placeOk });
+  const it = rc.intent;
+  const sc = rc.scope;
+  const log = {
+    kind: rc.tier?.kind ?? null, given: given.length, fallback: rc.fallback ?? null,
+    intent: it ? { about: (it.aboutEntityIds ?? []).length, windows: (it.timeWindows ?? []).map((w) => [w.start, w.end]), where: (it.settingKeys ?? []).length,
+      shape: it.shape ?? null, cues: (it.cues ?? []).length, from: it.from ?? null } : null,
+    scope: sc ? { total: sc.total, counts: sc.counts, clipped: !!sc.clipped, found: sc.found, searched: !!sc.searched } : null,
+    segments: (rc.segments ?? []).map((x) => x.total ?? 0),
+  };
+  return { note, log };
 }
 
 // ── 召回的候选分到哪一层 ──────────────────────────────────────────────────
 
-function routeRecalled(core, items, { key, at, tz, restart, restartAt, cfg }) {
+function routeRecalled(core, items, { key, at, tz, restart, restartAt, cfg, plainLayer = 'recalled' }) {
   const eps = items.map((c) => parseRef(c?.ref)).filter((m) => m?.kind === 'episode').map((m) => m.id);
   const epRows = new Map(rowsIn(core, 'SELECT id, ep_kind, setting_key, t_end FROM episodes WHERE id IN', eps).map((r) => [r.id, r]));
   // 她的经验（D124）：五路回想碰到的经验和别的想起来的在同一档（只靠话题对上，评审 M4），照经验的样子渲染（验证过没有、要避开的坑）
@@ -593,7 +628,7 @@ function routeRecalled(core, items, { key, at, tz, restart, restartAt, cfg }) {
       // 重新开始前不久这里的原话：属于「这里最近在聊什么」，等下一次压缩结束再给
       if (r && r.setting_key === key && r.t <= restartAt && r.t >= restartAt - horizon) continue;
     }
-    let layer = 'recalled';
+    let layer = plainLayer;
     const ep = m.kind === 'episode' ? epRows.get(m.id) : null;
     let role = 'recalled';
     if (m.kind === 'assertion' && lessonIds.has(m.id)) role = 'lesson';
@@ -875,10 +910,13 @@ const OWNER_KIND_OK = new Set(['percept', 'window', 'episode', 'assertion', 'ent
 
 // ── 渲染 ──────────────────────────────────────────────────────────────────
 
-function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId, intent, here = new Set(), placeOk = () => false, diag = null }) {
+function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId, intent, here = new Set(), placeOk = () => false, diag = null, rc = null }) {
   const fault = (stage, e, extra) => { if (diag) diag.fault(stage, e, extra); else core.log.warn('context.render.error', { error: e?.code ?? e?.name ?? 'Error' }); };
   const entries = [];
   const itemChars = (mode === 'deliberate' ? cfg.recall.deliberate : cfg.recall.involuntary).itemChars;
+  // 回忆这一层（D155）：每条的字数按这一档，正文放不下时对着问题截取（意图的线索）；只在这一层用，浮现不动
+  const rcChars = Number.isFinite(rc?.tier?.itemChars) ? rc.tier.itemChars : itemChars;
+  const rcExcerpt = (rc?.intent?.cues ?? []).filter((x) => typeof x === 'string' && x);
   let pendingDone = 0;
   let awareDone = 0;
   const L = cfg.context.layers;
@@ -890,6 +928,7 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       ref: slot.ref, layer: slot.layer, verdict: extra.verdict ?? g.verdict, rendered, appraisalRef: g.appraisalRef,
       provenance: extra.provenance ?? '', confidence: extra.confidence ?? scored.get(slot.ref)?.P ?? 0,
       group: slot.group, order: slot.order, ...(extra.bound ? { bound: true } : {}), ...(dups.length ? { duplicates: dups } : {}),
+      ...(Number.isFinite(slot.alloc) ? { alloc: slot.alloc } : {}),
     };
     entries.push(e);
     return e;
@@ -902,7 +941,8 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
     if (refs.length) later = core.mods.discretion.supersededBy?.(core, refs) ?? new Map();
   } catch { later = new Map(); }
   const content = (slot, g, chars, more = {}) => renderContent(core, scored.get(slot.ref), g,
-    { ...rargs, chars, ...(later.has(slot.ref) && RECALL_LAYERS.has(slot.layer) ? { mark: SUPERSEDED_MARK } : {}), ...more });
+    { ...rargs, chars, ...(later.has(slot.ref) && RECALL_LAYERS.has(slot.layer) ? { mark: SUPERSEDED_MARK } : {}),
+      ...(slot.layer === 'recollect' && rcExcerpt.length ? { excerpt: rcExcerpt } : {}), ...more });
 
   // 人物卡要整组看：卡头不能说，印象也不单独出现
   const cards = new Map();
@@ -995,10 +1035,11 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       }
       return;
     }
-    // recalled / recentFromPresent / todaySoFar / warmStart
+    // recalled / recollect / recentFromPresent / todaySoFar / warmStart
     if (absorbed.has(slot.ref)) return;   // 已经并进新版本那一条了
     if (CONTENT.has(g.verdict)) {
-      const chars = slot.layer === 'warmStart' && slot.role === 'storyline' ? Math.min(L.warmStart, itemChars * 2) : itemChars;
+      const chars = slot.layer === 'warmStart' && slot.role === 'storyline' ? Math.min(L.warmStart, itemChars * 2)
+        : slot.layer === 'recollect' ? rcChars : itemChars;
       const pair = pairs.get(slot.ref);
       if (pair && renderPair(core, slot, g, pair, { push, content, chars, scored, rargs })) return;
       const r = content(slot, g, chars);
@@ -1084,7 +1125,7 @@ function groupOutcomes(entries, scored) {
  *   - previous：旧版本也过了关口①时一起交给 render（「之前……，后来……」）；
  *   - told：这件事对这里的人讲过（GatedItem.told，S14），后面带一句「讲过了」，不当新鲜事再讲（§5.6）；放不下就不带。
  */
-function renderContent(core, cand, g, { at, tz, key, chars, previous = null, told = true, placeOk = () => false, mark = '', fault = null }) {
+function renderContent(core, cand, g, { at, tz, key, chars, previous = null, told = true, placeOk = () => false, mark = '', fault = null, excerpt = null }) {
   if (!cand || !(chars > 0)) return null;
   // 「（后来换了新的）」（D110 C7）：它的来源原话被他后来的一句改掉了（第一眼的 replaces）；放得下才带，先于「讲过了」
   const note = `${mark && chars - charLen(mark) >= TOLD_MIN_BODY ? mark : ''}${told && !cand.fok ? toldNote(core, g, at) : ''}`;
@@ -1093,6 +1134,7 @@ function renderContent(core, cand, g, { at, tz, key, chars, previous = null, tol
   try {
     const opt = { verdict: g.verdict, vagueText: g.vagueText ?? null, at, itemChars: room, settingKey: key, placeAllowed: placeOk, ...(g.label ? { label: g.label } : {}) };
     if (previous) opt.previous = previous;
+    if (Array.isArray(excerpt) && excerpt.length) opt.excerpt = excerpt;
     const r = core.mods.retrieve.render(core, cand, opt);
     const body = clip(String(r?.rendered ?? '').trim(), room);
     if (!body) return null;

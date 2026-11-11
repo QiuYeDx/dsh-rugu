@@ -107,6 +107,14 @@ export function recordInjection(core, inj) {
         ...(it.unit ? { unit: it.unit } : {}), ...(it.unitKey ? { unitKey: it.unitKey } : {}), ...(it.chars !== undefined ? { chars: it.chars } : {}) });
     }
   });
+  // 可选（D155）：回忆的意图和范围的摘要（只有条数、来源、时间窗，没有内容），记进注入行已有的 scores_json（不加迁移）
+  let recollect = null;
+  if (inj?.recollect !== undefined) {
+    let j = null;
+    try { j = inj.recollect && typeof inj.recollect === 'object' && !Array.isArray(inj.recollect) ? JSON.stringify(inj.recollect) : null; } catch { j = null; }
+    if (!j || j.length > 4000) errors.push({ path: 'recollect', message: '应为对象（JSON ≤ 4000 字符）' });
+    else recollect = j;
+  }
   if (errors.length) throw new ContractError('Injection', errors);
   const at = core.now();
   return core.store.tx(() => {
@@ -125,9 +133,10 @@ export function recordInjection(core, inj) {
     const s = loadSession(core, inj.sessionId);
     if (!s.setting_key) core.log.warn('context.inject.unbound', { layer: inj.layer });
     const r = core.store.run(`INSERT INTO injections(ts, session_id, cycle, setting_key, layer, nonce, items_json, chars, degrade_level,
-                                route_ms_json, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                route_ms_json, mode, scores_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     at, inj.sessionId, s.cycle, s.setting_key, inj.layer, inj.nonce, JSON.stringify(items), inj.chars,
-    Number.isInteger(inj.degradeLevel) ? inj.degradeLevel : null, inj.routeMs ? JSON.stringify(numbersOnly(inj.routeMs)) : null, inj.mode);
+    Number.isInteger(inj.degradeLevel) ? inj.degradeLevel : null, inj.routeMs ? JSON.stringify(numbersOnly(inj.routeMs)) : null, inj.mode,
+    recollect ? `{"recollect":${recollect}}` : null);
     const id = Number(r.lastInsertRowid);
     const pending = [...s.pending, { nonce: inj.nonce, id, at, live: inj.mode === 'live' }];
     core.store.run('UPDATE sessions SET pending_json = ?, updated_at = ? WHERE session_id = ?', JSON.stringify(pending), at, inj.sessionId);

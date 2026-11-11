@@ -223,7 +223,10 @@ export function createContextAssembler({ getPm, claims, states, guard, hostConfi
     // 块头和小标题的写法跟核心的 context.usageStyle（D125；读不到按 guided）
     let style = 'guided';
     try { style = coreConfig()?.context?.usageStyle === 'purpose' ? 'purpose' : 'guided'; } catch { style = 'guided'; }
-    const { text, used } = renderBlock(layers.items, { maxChars: ic.blockMaxChars ?? 1400, style });
+    // 被判成回忆的那一轮（D155：结果里有回忆那一层）整块的上限加大；浮现的轮不变
+    const rcTurn = layers.items.some((it) => it?.layer === 'recollect');
+    const maxChars = (ic.blockMaxChars ?? 1400) + (rcTurn ? Math.max(0, ic.recollectChars ?? 2400) : 0);
+    const { text, used } = renderBlock(layers.items, { maxChars, style, note: rcTurn ? String(layers.recollect?.note ?? '') : '' });
     if (!used.length) return null;
     // 生效档回想之后再问一次：新场合的第一条消息在回想时才落库、才描述进库（核心先 drain 再算，D96），之前问只能得到 unknown
     const live = (mode === 'live' ? mode : modeOf(claim.settingId)) === 'live';
@@ -232,7 +235,9 @@ export function createContextAssembler({ getPm, claims, states, guard, hostConfi
     const layer = layerName(used);
     try {
       pm.sessions.injected({ sessionId: claim.sessionId, nonce, layer, items: used.map(pick4), chars: charLen(text),
-        ...(Number.isInteger(layers.degradeLevel) ? { degradeLevel: layers.degradeLevel } : {}), mode: 'live' });
+        ...(Number.isInteger(layers.degradeLevel) ? { degradeLevel: layers.degradeLevel } : {}), mode: 'live',
+        // 回忆（D155）：意图和范围的摘要原样交回，注入记录里认得出这是回忆
+        ...(rcTurn && layers.recollect?.log && typeof layers.recollect.log === 'object' ? { recollect: layers.recollect.log } : {}) });
     } catch (e) {
       // §9.3.6 / D47：对不上判定记录的块不能当作已发出，整块不注入
       stats.unappraised += 1;

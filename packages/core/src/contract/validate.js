@@ -501,6 +501,15 @@ export function validateRecallLayers(v) {
   // 可选（D95）：有意回想时，有关但本周期已经给过她的条数
   const already = num(c, l.alreadySent, 'alreadySent', { int: true, min: 0 });
   if (already !== undefined) out.alreadySent = already;
+  // 可选（D155）：回忆的「找了哪儿」那一行和意图、范围的摘要
+  if (l.recollect !== undefined) {
+    if (obj(c, l.recollect, 'recollect', { required: true })) {
+      const note = str(c, l.recollect.note, 'recollect.note', { required: true, max: 400 });
+      const log = l.recollect.log;
+      if (log !== undefined && (log === null || typeof log !== 'object' || Array.isArray(log))) c.err('recollect.log', '应为对象');
+      out.recollect = { note: note ?? '', ...(log && typeof log === 'object' && !Array.isArray(log) ? { log } : {}) };
+    }
+  }
   return result(c, out);
 }
 

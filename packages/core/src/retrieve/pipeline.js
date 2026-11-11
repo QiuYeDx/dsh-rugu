@@ -5,7 +5,7 @@
 // 产出的是还没过关口①的候选；这里永远不按「这里能不能说」过滤（§8.2）。
 import crypto from 'node:crypto';
 import { buildCues, cuesEmpty, directEntities } from './cues.js';
-import { denseRoute, entityRoute, lexicalRoute, presentRoute, queryInputs, remaining, timeRoute } from './routes.js';
+import { denseRoute, entityRoute, lexicalRoute, presentRoute, queryInputs, remaining, timeRoute, vectorGate } from './routes.js';
 import { fuse, mmr } from './fuse.js';
 import { hydrate, occTime } from './hydrate.js';
 import { params } from './params.js';
@@ -39,7 +39,9 @@ export function deadlineOf(p, mode, given) {
  * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: string}} s
  * @param {{mode: 'involuntary'|'deliberate', query?: string, about?: string, time?: string, includeHistory?: boolean,
  *          deadlineMs: number, signal?: AbortSignal}} opt
- * @param {{cues?: object, noDense?: boolean, rewrites?: string[], queryVectors?: object|null, exclude?: Set<string>}} [internal]
+ * @param {{cues?: object, noDense?: boolean, rewrites?: string[], queryVectors?: object|null, exclude?: Set<string>,
+ *          onVectors?: (qv: object|null, ctx: object) => void}} [internal]
+ *        onVectors（D155）：查询向量一有（或者知道这一次没有）就调一次，回忆的范围内检索拿它，不重复嵌入
  * @returns {Promise<{set: import('../core-types.js').CandidateSet, queryVectors: object|null}>}
  */
 export async function runRecall(core, s, opt, internal = {}) {
@@ -59,8 +61,12 @@ export async function runRecall(core, s, opt, internal = {}) {
   const ctx = {
     core, p, cues, mode, at: core.now(), deadlineAt: t0 + budget - p.x.routeReserveMs, signal: opt.signal, level: level0,
     noDense: !!internal.noDense, queryVectors: null, embedFailed: false, pseudo: false,
-    exclude: new Set([...(internal.exclude ?? []), ...inWindow(core, cues)]), routeMs: {},
+    exclude: new Set([...(internal.exclude ?? []), ...inWindow(core, cues)]), routeMs: {}, vectorGate: vectorGate(),
   };
+  // 查询向量一有就交给调用方（D155：回忆的范围内检索不等整个全库回想做完）
+  if (typeof internal.onVectors === 'function') {
+    ctx.vectorGate.promise.then((v) => { try { internal.onVectors(v, ctx); } catch { /* 调用方自己兜 */ } });
+  }
   if (internal.queryVectors && internal.queryVectors.hash === queryInputs(ctx).join('\u0001')) ctx.queryVectors = internal.queryVectors;
 
   // ── 五路并行 ──
@@ -70,6 +76,7 @@ export async function runRecall(core, s, opt, internal = {}) {
   const presP = guard(ctx, 'present', presentRoute(ctx));
   const denseP = guard(ctx, 'dense', denseRoute(ctx, [lexP, entP]));
   const routes = await Promise.all([denseP, lexP, entP, timeP, presP]);
+  ctx.vectorGate.resolve(ctx.pseudo ? null : ctx.queryVectors);
 
   // ── 预过滤（只看能不能访问：隐藏 / 忘掉 / 墓碑；眼前的对话；没被线索点到的档案卡）→ 融合 → 元数据 ──
   // 先过滤再融合：被剔掉的不占各路的名次，也不占 fuseKeep 的名额
@@ -185,7 +192,7 @@ export async function runRecall(core, s, opt, internal = {}) {
  * 眼前这段对话（线索窗口）本身不算「想起来的」：窗口里的感知、整段落在窗口里的原文窗口，她此刻就在上下文里看着
  * （和 context 去掉本周期已发过的同一个道理）。这不是「能不能说」的过滤，只是不把眼前的话当回忆。
  */
-function inWindow(core, cues) {
+export function inWindow(core, cues) {
   const out = new Set();
   const ids = (cues.window ?? []).map((w) => w.perceptId).filter(Number.isInteger);
   if (!ids.length) return out;
@@ -333,6 +340,30 @@ function activationInput(c, o) {
     intention: c.meta.kind === 'intention' ? row : null,
     cueHit,
   };
+}
+
+/**
+ * 回忆的范围内检索找到、全库那一次没有的候选（D155）：照旧算激活（B、P 管「印象很模糊」和来源说得含不含糊），但不进排序——
+ * 排序按范围内的名次。S = 0（范围已经是「关于谁、什么时候」），C 按范围内两路的名次分（和全库的口径一样，乘这一轮的倍数）。
+ * 直接改候选对象（A、P、parts、cParts），返回同一批。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {object[]} cands  带 meta、ranks 的候选
+ * @param {{cues: object, mode?: 'deliberate'|'involuntary', at?: number}} o
+ */
+export function scoreScoped(core, cands, { cues, mode = 'deliberate', at = core.now() }) {
+  if (!cands.length) return cands;
+  const p = params(core);
+  const b = matchBoost(p, mode, cues);
+  const inputs = cands.map((c) => {
+    const raw = cParts(c, p, 0);
+    const cp = { ...raw, dense: raw.dense * b, time: raw.time * b, boost: b };
+    cp.total = cp.dense + cp.lexical + cp.present + cp.time + cp.context;
+    c.cParts = cp;
+    return { candidate: c, S: 0, C: cp.total, superseded: c.meta?.kind === 'assertion' && c.meta.row?.superseded_by != null,
+      intention: c.meta?.kind === 'intention' ? c.meta.row : null, cueHit: false };
+  });
+  activate(core, p, inputs, { at, mode, seed: [cues?.settingKey ?? '', String(cues?.latestPerceptId ?? 0), mode, 'scope'] });
+  return cands;
 }
 
 const sigmoid = (x) => 1 / (1 + Math.exp(-x));

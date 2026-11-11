@@ -386,7 +386,8 @@ test('每个实体最多 3 条（她自己、这次问的那个人不限）', as
     const { core, B } = w;
     for (let i = 0; i < 6; i++) { const id = seedAssertion(core, { text: `小刚的第${i}件事`, subjects: [w.cousin] }); B[`a${id}`] = 2 - i * 0.1; }
     seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '小刚的事', addressed: 'to-her' });
-    const set = await R(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'deliberate' });
+    // 测的是全库流水线（D155 的回忆把问到的人当范围，范围里的不受这个上限）
+    const set = await R(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'deliberate', recollect: false });
     assert.equal(set.items.filter((c) => c.meta?.kind === 'assertion' && c.meta.about.includes(w.cousin)).length, 3);
     const asked = await R(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'deliberate', about: '小刚' });
     assert.ok(asked.items.filter((c) => c.meta?.kind === 'assertion').length > 3);
@@ -418,7 +419,8 @@ test('知道感（有意回想）：线索命中很强、A 只差一点没过 τ
     near.add(`a${a}`);
     far.add(`a${b}`);
     seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: env.boss, text: '小刚是干啥的', addressed: 'to-her' });
-    const set = await R(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'deliberate' });
+    // 测的是全库流水线的知道感；回忆（D155）里范围内找到的不看激活进不进（太淡的渲染成「印象很模糊」），这里关掉回忆
+    const set = await R(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'deliberate', recollect: false });
     assert.equal(set.items.find((x) => x.ref === `a${a}`)?.fok, true);
     assert.ok(!set.items.some((x) => x.ref === `a${b}`), '差得远的就是想不起来');
     assert.equal(set.items.filter((x) => x.fok).length, 1, '最多 fok.maxItems（默认 1）条');

@@ -20,13 +20,15 @@ export const UNMETERED_LAYERS = Object.freeze(['intentions', 'working']);
 // 工作记忆（眼前这个人刚在别处跟她说的、她回他的）紧跟在时间间隔后面：这是这一轮最要紧的上下文
 // 她的经验（D124）放在「你想着的」前面：做事的时候用得上
 // 指回去（D146）紧跟在工作记忆后面：这一轮最相关的那条在她上下文更前面，这一行把她指回去，要显眼
-export const DISPLAY_ORDER = ['gap', 'working', 'pointBack', 'warmStart', 'people', 'recentFromPresent', 'todaySoFar', 'recalled', 'awarePrivate', 'lessons', 'intentions'];
+// 回忆（D155）的结果放在原来「想起来的」的位置（在它前面）
+export const DISPLAY_ORDER = ['gap', 'working', 'pointBack', 'warmStart', 'people', 'recentFromPresent', 'todaySoFar', 'recollect', 'recalled', 'awarePrivate', 'lessons', 'intentions'];
 // 预算紧时谁先拿到：你想着的 > 工作记忆 > 时间间隔 > 她的经验（D124）> 指回去（D146）> （被直接问到时）想起来的和在场者近况 > 人物卡 > 想起来的和在场者近况 > 心里有数
 // > 今天到目前为止 > 暖启动。工作记忆有自己的预算（recall.working.budgetChars），不受每天额度和滚动窗口限制（D100）。
 // 「想起来的」和「在场者近况」是同一次回想按同一个激活排出来的（retrieve 给两组各自的名额，再按 A 合并），放在同一档里
 // 按回想的先后（order）一起分：谁更活跃谁先拿到，各自的条数和字数上限照旧。原来在场者近况排在最后，人物卡 + 五条想起来的
 // 就把 900 字用完，主人两分钟前在别处说的话永远轮不到（实测问题 #5）。
-const RECALL_TIER = Object.freeze(['recalled', 'recentFromPresent']);
+// 回忆（D155）的结果和它们同一档：同一次回想的结果，被直接问到时一样不受每天和滚动窗口的额度限制
+const RECALL_TIER = Object.freeze(['recollect', 'recalled', 'recentFromPresent']);
 /** 「指回去」那一层的名字（D146）。注入日志里它是单独的一层，读者据此和新给的区分开。 */
 export const POINT_BACK_LAYER = 'pointBack';
 // 她的经验（D124）：按范围对上才有、最多两三行，排在时间间隔后面（做事时用得上，又不多占）
@@ -35,7 +37,7 @@ const PRIORITY_DELIBERATE = ['intentions', 'working', 'gap', 'lessons', POINT_BA
 const PRIORITY_INVOLUNTARY = ['intentions', 'working', 'gap', 'lessons', POINT_BACK_LAYER, 'people', RECALL_TIER, 'awarePrivate', 'todaySoFar', 'warmStart'];
 // 她自己调记忆工具认真想一件事（D148，opt.recallFirst）：按问题找到的先拿到位置、排在最前；工作记忆（context 已经只留了和问题有关的那几段）排在后面
 const PRIORITY_RECALL_FIRST = [POINT_BACK_LAYER, RECALL_TIER, 'lessons', 'intentions', 'working', 'people', 'awarePrivate', 'todaySoFar', 'gap', 'warmStart'];
-const DISPLAY_RECALL_FIRST = ['pointBack', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'intentions', 'gap', 'warmStart'];
+const DISPLAY_RECALL_FIRST = ['pointBack', 'recollect', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'intentions', 'gap', 'warmStart'];
 
 /**
  * @typedef {object} Entry   渲染好、还没去重和打包的一条
@@ -57,7 +59,7 @@ const DISPLAY_RECALL_FIRST = ['pointBack', 'recalled', 'recentFromPresent', 'awa
  * @property {number} [alloc]        同一层里各组分预算的先后（小的先分；没有就按 order）。工作记忆最新的一组先分（D108；展示顺序不变）
  */
 
-function capsOf(cfg, mode) {
+function capsOf(cfg, mode, rcTier = null) {
   const L = cfg.context.layers;
   const rc = mode === 'deliberate' ? cfg.recall.deliberate : cfg.recall.involuntary;
   const recalledChars = mode === 'deliberate' ? rc.maxItems * rc.itemChars : cfg.recall.involuntary.maxChars;
@@ -78,6 +80,10 @@ function capsOf(cfg, mode) {
     working: { groups: Infinity, chars: cfg.recall.working?.budgetChars ?? 800, ownBudget: true },
     // 指回去（D146）：每条已经截到 context.pointBack.chars 字，条数由 pointBackOf 管（这里再按 max 兜一道）
     pointBack: { groups: Math.max(0, Math.floor(cfg.context.pointBack?.max ?? 2)), chars: Infinity },
+    // 回忆（D155）：这一档（工具 / 自动触发，随花费档位）的条数和总字数；有自己的预算，不占整块的 blockMaxChars（被判成回忆的那一轮
+    // 集成层整块的上限相应加大）。没给这一档（缓存里的旧条目）按自动触发那一档的原数
+    recollect: { groups: rcTier?.maxItems ?? cfg.recall.recollect?.auto?.maxItems ?? 18, chars: rcTier?.totalChars ?? cfg.recall.recollect?.auto?.totalChars ?? 2000,
+      ownBudget: true },
   };
 }
 
@@ -161,6 +167,7 @@ export function pointBackOf(entries, items, sent, { max, chars, perCycle, counts
  *   budgetDropped：没发过的受限条目里，因为预算没放进去的条数（超了时是整层丢掉的那些；没超时是额度剩得不够放的那些）。
  * @param {Entry[]} entries
  * opt.recallFirst（D148）：她自己调记忆工具的那一次——按问题找到的（想起来的、在场者近况、指回去）先分位置、排在最前，工作记忆排在后面。
+ * opt.recollectTier（D155）：回忆这一层的名额（retrieve.recollectTier：条数、每条字数、总字数）；回忆这一层有自己的预算，不占整块的上限。
  * @param {{cfg: object, mode: 'involuntary'|'deliberate', sent: Set<string>, budgetChars: number,
  *          budget: {dayUsed: number, dayLimit: number, rollingLeft: number}, report?: object, recallFirst?: boolean}} opt
  * @returns {import('../contract/types.js').RecallItem[]}
@@ -211,7 +218,7 @@ export function pack(entries, opt) {
   }
 
   // 2. 按优先级分配
-  const caps = capsOf(cfg, mode);
+  const caps = capsOf(cfg, mode, opt.recollectTier ?? null);
   const used = Object.fromEntries(DISPLAY_ORDER.map((l) => [l, { groups: 0, chars: 0, pending: 0 }]));
   let total = 0;      // 整块（≤ blockCap）
   let budgeted = 0;   // 受每天和滚动窗口限制的那部分（≤ budgetCap）

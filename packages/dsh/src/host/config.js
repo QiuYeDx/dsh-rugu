@@ -41,9 +41,12 @@ export const HOST_DEFAULTS = deepFreeze({
   claim: { excludePresets: [], excludeCwdPrefixes: [], negativeTtlMs: 60_000, signatureRetryMs: 5000, maxAttempts: 5, suspendOnAlarms: ['mismatch', 'multiple'] },
   // graceMs：等核心回想时在截止时间之外多等的余量；「在问过去」时按核心的 recall.deliberate.deadlineMs 等（实测问题 #2）
   // D117：deadlineMs 800 → 1500、graceMs 200 → 300（主人「哪怕提高一些允许的等待时长」；平常几十毫秒就回来，上限只在慢的时候用上）
-  inject: { deadlineMs: 1500, graceMs: 300, budgetChars: 900, blockMaxChars: 1400, onToolResults: true },
+  // recollectChars（D155）：被判成回忆的那一轮（结果里有回忆那一层），整块的上限在 blockMaxChars 上再加这么多（核心回忆那一层自动触发的一档约 2000 字）；
+  // 浮现的轮不变
+  inject: { deadlineMs: 1500, graceMs: 300, budgetChars: 900, blockMaxChars: 1400, recollectChars: 2400, onToolResults: true },
   // seenFreshMs：读消息工具读到的、别人对她说的，最多早于这一轮开始多久还算她这一轮新看到的（记忆工具的触发消息候选，D114）
-  tools: { presets: [], recallDeadlineMs: 8000, recallBudgetChars: 1200, seenFreshMs: 10 * MIN },
+  // recollectChars（D155）：记忆工具的结果里有回忆那一层时，整个结果最多这么多字（核心工具那一档约 4000 字）；没有时照旧 1600
+  tools: { presets: [], recallDeadlineMs: 8000, recallBudgetChars: 1200, recollectChars: 4600, seenFreshMs: 10 * MIN },
   // 她看过的媒体（D116）：认领的会话里，工具结果带图片、或者是 viewTools 里的工具，就算她在看一条消息里的媒体；
   //   viewTools：主人补的「看媒体的工具」（精确名或 MCP 去掉前缀的名字；私有插件的名字写在主人自己的配置里，默认空）；
   //   maxSteps：最多等她几步（看完以后的想法和回话），到了就把有的交给核心

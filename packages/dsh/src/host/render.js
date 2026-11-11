@@ -16,6 +16,10 @@ export const WORKING_TITLES = Object.freeze({
 });
 /** 「指回去」那一节的小标题（D146）：两种写法一样，只说这是什么。 */
 export const POINT_BACK_TITLE = '跟这句话最有关的，前面已经想起过（往上看）：';
+/** 回忆那一节的小标题（D155）：被问到以前的事时想起来的，按时间排好；开头一行是「找了哪儿」。 */
+export const RECOLLECT_TITLE = '想起来的（被问到的那些事，有时间的按时间排）：';
+/** 回忆那一节每条的上限（核心已经按这一档截到 itemChars，这里只兜底）。 */
+export const RECOLLECT_ITEM_MAX = 320;
 /** 写法 → 块头 / 工具结果的头（不认识的按 guided）。 */
 export const headsFor = (style) => (style === 'purpose'
   ? { block: BLOCK_HEAD_PURPOSE, tool: TOOL_HEAD_PURPOSE, working: WORKING_TITLES.purpose }
@@ -37,6 +41,8 @@ const BASE_SECTIONS = [
   { layers: ['people'], title: '人：', max: 180 },
   { layers: ['recentFromPresent'], title: '在场的人最近：', max: 200 },
   { layers: ['todaySoFar'], title: '你今天：', max: 150 },
+  // 回忆（D155）：放在原来「想起来的」的位置；开头一行是「找了哪儿」（RecallLayers.recollect.note，不是一条记忆）
+  { layers: ['recollect'], title: RECOLLECT_TITLE, max: RECOLLECT_ITEM_MAX },
   { layers: ['recalled', 'awarePrivate'], title: '想起来的：', max: 120 },
   // 她的经验（D124）：「（验证过）/（还没验证）」写在每条开头
   { layers: ['lessons'], title: '你做事的经验（下次用得上的做法）：', max: 130 },
@@ -53,10 +59,11 @@ const ALLOC_ORDER = ['intentions', 'working', 'gap', 'lessons', 'pointBack'];
  * 先按优先级分字数（你想着的、工作记忆、时间间隔先拿；工作记忆里最新的先拿），再按 SECTIONS 的展示顺序排出来。
  * 原来按展示顺序边走边分，字数一紧，最后的几行工作记忆（最新的那几句）就被截掉（D108）。
  * @param {import('rugu-core/contract').RecallLayers['items']} items
- * @param {{head?: string, maxChars?: number, style?: 'guided'|'purpose'}} [opt]   style：核心的 context.usageStyle（D125）
+ * @param {{head?: string, maxChars?: number, style?: 'guided'|'purpose', note?: string}} [opt]   style：核心的 context.usageStyle（D125）；
+ *        note（D155）：回忆的「找了哪儿」那一行，回忆那一节有条目时放在它的小标题下面第一行
  * @returns {{text: string, used: object[]}}  used：真正排进去的条目（注入日志只记这些）
  */
-export function renderBlock(items, { head: head0 = null, maxChars = 1400, style = 'guided' } = {}) {
+export function renderBlock(items, { head: head0 = null, maxChars = 1400, style = 'guided', note = '' } = {}) {
   const H = headsFor(style);
   const head = head0 ?? H.block;
   const SECTIONS = BASE_SECTIONS.map((sec) => (sec.layers.includes('working') ? { ...sec, title: H.working } : sec));
@@ -80,6 +87,7 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
     }
     return x.i - y.i;
   });
+  const noteLine = note ? clip(sanitizeForPrompt(note), 200) : '';
   let total = charLen(head);
   const titled = new Set();
   const take = new Set();
@@ -91,7 +99,8 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
     const t = itemText(x.it, sec.max);
     if (!t) continue;
     const line = sec.title ? `- ${t}` : t;
-    const add = charLen(line) + 1 + (!titled.has(x.s) && sec.title ? charLen(sec.title) + 1 : 0);
+    const first = !titled.has(x.s) && sec.title;
+    const add = charLen(line) + 1 + (first ? charLen(sec.title) + 1 : 0) + (first && noteLine && x.it.layer === 'recollect' ? charLen(noteLine) + 1 : 0);
     if (total + add > maxChars) {
       if (wm && leadOf.get(gidOf(x)) === x.i) dropped.add(gidOf(x));
       continue;
@@ -106,6 +115,7 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
     const its = list.filter((x) => x.s === si && take.has(x.i));
     if (!its.length) return;
     if (sec.title) lines.push(sec.title);
+    if (noteLine && sec.layers.includes('recollect')) lines.push(noteLine);
     for (const x of its) {
       lines.push(sec.title ? `- ${itemText(x.it, sec.max)}` : itemText(x.it, sec.max));
       used.push(x.it);
@@ -118,12 +128,15 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
  * memory_recall 工具的返回：一条一行，带来源说法和把握（§8.5）。核心的 rendered 已经带着来源说法（RecallItem.rendered：
  * 时态、来源说法、含糊程度都按目标场合渲染好了），provenance 只在 rendered 里没有它时才补在后面，不重复说两遍。
  */
-export function renderToolResult(items, { maxChars = 1600, style = 'guided' } = {}) {
+export function renderToolResult(items, { maxChars = 1600, style = 'guided', note = '' } = {}) {
   const out = [];
   const used = [];
   let total = 0;
+  // 回忆（D155）：「找了哪儿」那一行在最前（不是一条记忆）；回忆的条目每条上限放宽
+  const noteLine = note ? clip(sanitizeForPrompt(note), 200) : '';
+  if (noteLine) total += charLen(noteLine) + 1;
   for (const it of items ?? []) {
-    const t = itemText(it, 160);
+    const t = itemText(it, it?.layer === 'recollect' ? RECOLLECT_ITEM_MAX : 160);
     if (!t) continue;
     const p = it?.provenance ? clip(sanitizeForPrompt(it.provenance), 30) : '';
     const prov = p && !t.includes(p) ? `（${p}）` : '';
@@ -133,5 +146,5 @@ export function renderToolResult(items, { maxChars = 1600, style = 'guided' } = 
     used.push(it);
     total += charLen(line) + 1;
   }
-  return { text: out.length ? [headsFor(style).tool, ...out].join('\n') : '', used };
+  return { text: out.length ? [headsFor(style).tool, ...(noteLine ? [noteLine] : []), ...out].join('\n') : '', used };
 }

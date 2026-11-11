@@ -95,6 +95,32 @@ export function zhSpan(ms) {
   return `约 ${Math.round(m / (365 * DAY_MS))} 年`;
 }
 
+/**
+ * zh：一段时间（D155，回忆的「找了哪儿」）。整天（从 0 点起、在同一天里）：「今天（11/11）」「周日（11/8）」「10/31」；
+ * 一天里的一段：「上午 9:12–11:40」（opt.day：前面带那一天）；跨了几天：「11/8–11/11」。
+ * @param {number} start @param {number} end @param {number} now
+ * @param {{tzOffsetMin?: number|null, day?: boolean}} [opt]
+ */
+export function zhRange(start, end, now, opt = {}) {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(now)) return '';
+  const clock = localClock(opt.tzOffsetMin);
+  const ps = clock.parts(Math.min(start, end));
+  const pe = clock.parts(Math.max(start, end));
+  const n = clock.parts(now);
+  const dayLabel = (p) => {
+    const dd = dayNo(n) - dayNo(p);
+    const word = zhDayWord(dd);
+    if (word) return `${word}（${p.m + 1}/${p.d}）`;
+    if (Math.abs(dd) <= 6) return `${ZH_WEEK[p.wd]}（${p.m + 1}/${p.d}）`;
+    return zhDate(p, n);
+  };
+  if (dayNo(ps) === dayNo(pe)) {
+    if (ps.h === 0 && ps.min === 0) return dayLabel(ps);
+    return `${opt.day ? dayLabel(ps) : ''}${partOf(ps.h)} ${clockOf(ps)}–${clockOf(pe)}`;
+  }
+  return `${zhDate(ps, n)}–${zhDate(pe, n)}`;
+}
+
 // ── 和语言无关的兜底：绝对时间（没有给自己说法的语言用） ─────────────────
 function isoParts(t, tz) {
   const p = localClock(tz).parts(t);
@@ -113,6 +139,16 @@ export function undNow(at, opt = {}) {
   const p = isoParts(at, opt.tzOffsetMin);
   return `${p.date} ${p.hm}`;
 }
+/** 兜底：一段时间「MM-DD HH:MM–HH:MM」，跨天「MM-DD–MM-DD」。 */
+export function undRange(start, end, now, opt = {}) {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(now)) return '';
+  const a = isoParts(Math.min(start, end), opt.tzOffsetMin);
+  const b = isoParts(Math.max(start, end), opt.tzOffsetMin);
+  const n = isoParts(now, opt.tzOffsetMin);
+  const date = (p) => (p.y === n.y ? p.date.slice(5) : p.date);
+  if (a.date === b.date) return a.hm === '00:00' ? date(a) : `${opt.day ? `${date(a)} ` : ''}${a.hm}–${b.hm}`;
+  return `${date(a)}–${date(b)}`;
+}
 export function undSpan(ms) {
   const m = Math.max(0, Number(ms) || 0);
   if (m < HOUR_MS) return `${Math.max(1, Math.round(m / MINUTE_MS))} min`;
@@ -122,8 +158,8 @@ export function undSpan(ms) {
 
 /** 语言 → 说法（主标签）。不认识的用兜底。 */
 export const PHRASINGS = Object.freeze({
-  zh: Object.freeze({ when: zhWhen, now: zhNow, span: zhSpan }),
-  und: Object.freeze({ when: undWhen, now: undNow, span: undSpan }),
+  zh: Object.freeze({ when: zhWhen, now: zhNow, span: zhSpan, range: zhRange }),
+  und: Object.freeze({ when: undWhen, now: undNow, span: undSpan, range: undRange }),
 });
 export function phrasingFor(locale) {
   const l = String(locale ?? 'zh').toLowerCase().split(/[-_]/)[0];

@@ -121,7 +121,7 @@ test('S1 拿快递：计划 → 拿到了（这一次结案、意图撤掉）→
     t.diagnostic(`三天后问：${show(L)}`);
     const p = itemOf(L, planRef);
     assert.ok(p, `问起来能想到这次计划（${show(L)}）`);
-    assert.equal(p.layer, 'recalled');
+    assert.equal(p.layer, 'recollect', '被问到以前的事：回忆（D155）那一层');
     assert.ok(['share', 'share_vague'].includes(p.verdict));
     assert.match(p.rendered, /快递/);
     assert.match(p.rendered, /做完了/, '时态正确：做完了');

@@ -137,6 +137,23 @@ export function describeNow(core, at) {
 export function describeSpan(core, ms) {
   try { return phrasingFor(core.ports?.selfProfile?.locale).span(ms); } catch { return ''; }
 }
+
+/**
+ * 【补，D155】一段时间的说法（回忆结果开头「找了哪儿」那一行用）：zh 整天的是「今天（11/11）」「周日（11/8）」，几天的是「11/8–11/11」，
+ * 一天里的一段是「上午 9:12–11:40」（opt.day 为 true 时前面带那一天：「今天（11/11）上午 9:12–11:40」）。不抛错：出问题返回空字符串。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} start  UTC 毫秒
+ * @param {number} end    UTC 毫秒
+ * @param {{now?: number, day?: boolean}} [opt]
+ * @returns {string}
+ */
+export function describeRange(core, start, end, opt = {}) {
+  try {
+    const P = phrasingFor(core.ports?.selfProfile?.locale);
+    const now = Number.isFinite(opt.now) ? opt.now : core.now();
+    return P.range(start, end, now, { tzOffsetMin: core.config?.get?.().time?.tzOffsetMin ?? null, day: !!opt.day });
+  } catch { return ''; }
+}
 const phraseCfg = (core) => core.config?.get?.().lang?.timePhrase ?? LANG_FALLBACK.timePhrase ?? {};
 
 /**

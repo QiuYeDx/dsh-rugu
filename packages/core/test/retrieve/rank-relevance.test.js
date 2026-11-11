@@ -111,7 +111,8 @@ test('正在对她说话的人不占「每人最多 3 条」：一对一时关�
       B[`a${seedAssertion(core, { text: `小刚的第${i}件事`, subjects: [w.cousin] })}`] = 2 - i * 0.1;
     }
     const q = seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '小刚的事', addressed: 'to-her' });
-    const set = await R(core, { settingKey: 'D', focusPerceptId: q, trigger: 'simulate' }, { mode: 'deliberate' });
+    // 测的是全库流水线的「每人 3 条」：回忆（D155）把问到的人当范围，范围里的不受这个上限，这里关掉回忆
+    const set = await R(core, { settingKey: 'D', focusPerceptId: q, trigger: 'simulate' }, { mode: 'deliberate', recollect: false });
     const about = (e) => set.items.filter((c) => c.meta?.kind === 'assertion' && c.meta.about.includes(e)).length;
     assert.equal(about(w.cousin), 3);
     assert.ok(about(w.boss) > 3, `关于在场的老板 ${about(w.boss)} 条`);

@@ -89,7 +89,7 @@ export async function reflectStep(core, ctx) {
     if (home && !ctx.signal?.aborted) {
       try {
         const set = await core.mods.retrieve.recall(core, { settingKey: home, focusPerceptId: null, sessionId: null, trigger: 'idle' },
-          { mode: 'deliberate', query: question, deadlineMs: r.deadlineMs, signal: ctx.signal });
+          { mode: 'deliberate', query: question, deadlineMs: r.deadlineMs, signal: ctx.signal, recollect: false });
         for (const c of set?.items ?? []) {
           const m = parseRef(c.ref);
           if (!m || !['episode', 'assertion'].includes(m.kind)) continue;

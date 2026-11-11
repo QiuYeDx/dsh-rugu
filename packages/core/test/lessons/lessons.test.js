@@ -129,7 +129,8 @@ test('只靠话题对上（没有工具、没有人）也想得起，和别的�
     const r = await recallAt(w, 'smallGroup', q);
     const it = r.items.find((i) => /^（还没验证）玩数字游戏时先复述一遍规则再答/.test(i.rendered));
     assert.ok(it, JSON.stringify(r.items.map((i) => [i.layer, i.rendered])));
-    assert.equal(it.layer, 'recalled', '只靠话题对上的不占「你的经验」那一档');
+    // 「规则还记得吗」被判成在问过去：想起来的是回忆（D155）那一层，和别的想起来的同一档
+    assert.equal(it.layer, 'recollect', '只靠话题对上的不占「你的经验」那一档');
   } finally { await w.close(); }
 });
 

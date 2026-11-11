@@ -101,6 +101,7 @@ function whenOf(core, ms, at, style, tzOffsetMin) {
  *          label?: {limit?: {quote: string|null, by: number|null}|null}|null}} opt
  *        label（D113）：关口①在非公开目标上原文放进来的条目带的来源标签——说不出名字的别处来源按结构写，核对过原话的叮嘱写在后面
  *        timeStyle【补】（D148）：时间的写法，'full'（缺省：几个小时以内带「多久以前」）/ 'day'（不带「多久以前」：常驻区这种会冻结一段时间的文字用）
+ *        excerpt【补】（D155）：几句线索（回忆这条路才给）；正文放不下时截和它们最对得上的那一段（focusOn），不是从头截
  * @returns {{rendered: string, provenance: string, confidence: number}}
  */
 export function render(core, c, opt) {
@@ -196,6 +197,11 @@ export function render(core, c, opt) {
     if (sure < x.render.hedgeAbove) { hedge = L.maybe; faint = L.faint; } else if (sure <= x.render.sureAbove || maybeSame) hedge = L.maybe;
     const time = m.time != null ? whenOf(core, m.time, at, timeStyle, tzOffsetMin) : '';
     const prefix = `（${[time, prov.text].filter(Boolean).join(L.sep)}）${hedge}`;
+    // 对着问题截取（D155，只在回忆这条路上给 excerpt）：放不下时截和问题最对得上的那一段，不是从头截
+    if (Array.isArray(opt?.excerpt) && opt.excerpt.length) {
+      const room = max - charLen(prefix) - charLen(`${notes}${faint}`);
+      content = focusOn(core, content, room >= 4 ? room : max - charLen(prefix), opt.excerpt);
+    }
     return { rendered: fit(prefix, content, `${notes}${faint}`, max), provenance: prov.text, confidence: round2(sure) };
   } catch (e) {
     safe(core, 'render', () => { throw e; }, null);
@@ -204,6 +210,68 @@ export function render(core, c, opt) {
 }
 
 const round2 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
+
+/**
+ * 对着问题截取（D155）：文字放不下 room 个字时，取和问题（几句线索）的词对得上最多的那一段——词按 lang.queryTerms 挑（实体词元不算），
+ * 每个词只算一次、按字数加权（单字算半个）；一段从对上的那个词往前带 room 的 FOCUS_LEAD 作上文。最好的一段就是开头时照旧从头截；
+ * 不是开头时前面加「…」，后面还有字也加「…」，整段 ≤ room。一个词都对不上也从头截。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} text
+ * @param {number} room
+ * @param {string[]} cues
+ * @returns {string}
+ */
+export function focusOn(core, text, room, cues) {
+  const chars = Array.from(String(text ?? ''));
+  if (!(room >= 8) || chars.length <= room) return String(text ?? '');
+  const terms = new Map();
+  for (const q of cues) {
+    if (typeof q !== 'string' || !q.trim()) continue;
+    for (const t of safe(core, 'focusTerms', () => core.mods.lang.queryTerms(core, q) ?? [], []) ?? []) {
+      const n = String(t).normalize('NFKC').toLowerCase();
+      if (!n || /^ent_\d+$/u.test(n)) continue;
+      const len = Array.from(n).length;
+      terms.set(n, len === 1 ? 0.5 : len);
+    }
+  }
+  if (!terms.size) return chars.slice(0, room).join('');
+  const low = chars.map((c) => { const l = c.toLowerCase(); return Array.from(l).length === 1 ? l : c; });
+  const lowText = low.join('');
+  // 每个词出现在第几个字（按码点数）
+  const hits = [];
+  for (const [t, w] of terms) {
+    let from = 0;
+    for (;;) {
+      const i = lowText.indexOf(t, from);
+      if (i < 0) break;
+      hits.push({ at: Array.from(lowText.slice(0, i)).length, t, w, len: Array.from(t).length });
+      from = i + t.length;
+    }
+  }
+  if (!hits.length) return chars.slice(0, room).join('');
+  const lead = Math.floor(room * FOCUS_LEAD);
+  const scoreOf = (s) => {
+    const got = new Map();
+    for (const h of hits) if (h.at >= s && h.at + h.len <= s + room) got.set(h.t, h.w);
+    let n = 0;
+    for (const w of got.values()) n += w;
+    return n;
+  };
+  let best = 0;
+  let bestScore = scoreOf(0);
+  for (const h of hits) {
+    const s = Math.max(0, Math.min(chars.length - room, h.at - lead));
+    const sc = scoreOf(s);
+    if (sc > bestScore || (sc === bestScore && s < best)) { best = s; bestScore = sc; }
+  }
+  if (best === 0) return chars.slice(0, room).join('');
+  const head = '…';
+  const end = best + room - 1;
+  const tail = end < chars.length ? '…' : '';
+  return `${head}${chars.slice(best + 1, best + room - (tail ? 1 : 0)).join('')}${tail}`;
+}
+/** 对着问题截取时，对上的词前面带多少上文（占这一条字数的比例）。 */
+const FOCUS_LEAD = 0.25;
 
 /** prefix + content + suffix ≤ max：先截内容，还放不下就丢后缀，最后整条截断。 */
 function fit(prefix, content, suffix, max) {

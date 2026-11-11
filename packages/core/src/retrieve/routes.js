@@ -6,6 +6,7 @@ import { cosine, errKind, log, meanVector, metric, mrefOf, rowsByIds, safe, self
 import { activeSpace, denseHealth, embedQueryTracked } from './level.js';
 import { fuse } from './fuse.js';
 import { entitySeeds } from './fan.js';
+import { scopeOf } from './scope.js';
 
 /** @typedef {import('./index.js').RouteResult} RouteResult */
 
@@ -31,6 +32,19 @@ import { entitySeeds } from './fan.js';
 export const remaining = (ctx) => Math.max(0, ctx.deadlineAt - wall());
 const empty = (route, extra = {}) => ({ route, hits: [], ms: 0, timedOut: false, ...extra });
 
+/**
+ * 查询向量什么时候有（D155）：稠密路嵌入完了（或者知道这一次不会有）就交出来，时间那一路、回忆的范围内检索不用等整个稠密路做完。
+ * 交出来的是 {spaceId, vectors, hash}（真的查询向量，不是 L3 的伪向量），没有就是 null。pipeline 建，稠密路交，pipeline 收尾时兜底交 null。
+ * @returns {{promise: Promise<object|null>, resolve: (v: object|null) => void, done: boolean}}
+ */
+export function vectorGate() {
+  let resolve;
+  const g = { done: false, promise: new Promise((r) => { resolve = r; }) };
+  g.resolve = (v) => { if (!g.done) { g.done = true; resolve(v ?? null); } };
+  return g;
+}
+const handVectors = (ctx, v) => { try { ctx.vectorGate?.resolve(v); } catch { /* 只是通知 */ } };
+
 /** 查询端的文字：通用指令 + 线索（§8.1）。 */
 export function queryInputs(ctx) {
   const inst = ctx.p.x.queryInstruct || '';
@@ -46,9 +60,9 @@ export function queryInputs(ctx) {
  */
 export async function denseRoute(ctx, pseudoSources) {
   const { core } = ctx;
-  if (ctx.noDense) return empty('dense', { skipped: true });
+  if (ctx.noDense) { handVectors(ctx, null); return empty('dense', { skipped: true }); }
   // worker 线程挂了（fallback）：向量扫描做不了（不在主线程冷加载向量），这一路直接缺席，不白嵌查询、不白取存好的向量（L3，§8.8）
-  if (denseHealth(core)?.scan === false) return empty('dense', { skipped: true, down: true });
+  if (denseHealth(core)?.scan === false) { handVectors(ctx, null); return empty('dense', { skipped: true, down: true }); }
   const t0 = wall();
   const rcfg = ctx.p.recall.dense;
   let qv = ctx.queryVectors;
@@ -62,6 +76,7 @@ export async function denseRoute(ctx, pseudoSources) {
       else ctx.embedFailed = true;
     }
   }
+  handVectors(ctx, qv ?? null);
   let vectors = qv?.vectors ?? null;
   let spaceId = qv?.spaceId ?? null;
   let layers = /** @type {('memory'|'raw')[]} */ (['memory', 'raw']);
@@ -117,7 +132,7 @@ export async function denseRoute(ctx, pseudoSources) {
  * 几张按分数降序的命中表按名次加权融合（w / (k + 名次)，同一条只算各表里最好的那次）。分数留各表里最大的原始分（相似度），
  * 排序按融合分；同分按原始分、再按引用。
  */
-function blendRanks(lists, k, keep) {
+export function blendRanks(lists, k, keep) {
   const by = new Map();
   for (const [hits, w] of lists) {
     const seen = new Set();
@@ -365,8 +380,13 @@ export async function entityRoute(ctx, lexicalP) {
 
 // ── 时间 ────────────────────────────────────────────────────────────────
 /**
- * 时间窗（lang 解析出来的「昨天、上周、那天晚上……」）里的情节、事实和本场合的原文窗口。
- * 分数 = 离时间窗中心越近越高（窗口内 ≥ 0.5），同分时近的在前（「最近发生」的先验）。没有时间表达就不出结果。
+ * 时间窗（lang 解析出来的「昨天、上周、那天晚上……」）里按话题找（D155）：时间窗是「在哪儿找」——先用 retrieve.scopeOf 取出时间窗里的
+ * 记忆（情节、事实、原文窗口，所有场合；被取代的、到期的、隐藏的不在里面），再在这里面排：
+ *   - 有查询向量（稠密路嵌入好了就交过来，vectorGate）：范围内的稠密检索（worker.denseSearch 的 only），按相似度的名次；
+ *   - 没有（旁听的便宜预取、嵌入失败、等不到）：在范围里有记忆的时间跨度上均匀地取 topK 条，名次也错开（先取正中，再按二分往两边补），
+ *     不是只取最晚的。
+ * 原来是「时间窗里最晚的 50 段、不看话题」：问「今天吃了什么」时一天 168 段情节只取到傍晚以后的。范围查询几毫秒、范围内稠密十几毫秒，
+ * 照旧受这一路的截止时间管（到点就丢）。没有时间表达就不出结果。
  * @param {RouteCtx} ctx
  * @returns {Promise<RouteResult>}
  */
@@ -374,44 +394,72 @@ export async function timeRoute(ctx) {
   const { core, cues } = ctx;
   const t0 = wall();
   if (!cues.timeWindows.length) return empty('time');
-  const topK = ctx.p.x.time.topK;
-  const score = new Map();
-  const put = (ref, s, t) => { const prev = score.get(ref); if (!prev || s > prev.s) score.set(ref, { s, t }); };
-  const closeness = (lo, hi, w) => {
-    const center = (w.start + w.end) / 2;
-    const width = Math.max(w.end - w.start, 3_600_000);
-    const mid = (lo + hi) / 2;
-    const inside = hi >= w.start && lo <= w.end;
-    const d = inside ? Math.abs(mid - center) / 2 : Math.abs(mid - center);
-    return 1 / (1 + d / width);
+  const topK = Math.max(1, ctx.p.x.time.topK);
+  const done = (hits) => {
+    const ms = wall() - t0;
+    ctx.routeMs.time = Math.round(ms);
+    return { route: 'time', hits, ms, timedOut: false };
   };
-  const SPAN = 7 * 86_400_000;   // 只按开始时间走索引：一件事、一段经历很少跨一周以上
-  for (const w of cues.timeWindows.slice(0, 4)) {
-    const eps = safe(core, 'timeEpisodes', () => core.store.all(
-      `SELECT id, t_start, t_end FROM episodes WHERE t_start BETWEEN ? AND ? AND t_end >= ?
-        ORDER BY t_end DESC LIMIT ?`, w.start - SPAN, w.end, w.start, topK), []);
-    for (const e of eps) put(`e${e.id}`, closeness(e.t_start, e.t_end, w), e.t_end);
-    const facts = safe(core, 'timeFacts', () => core.store.all(
-      `SELECT id, event_start, COALESCE(event_end, event_start) AS event_end FROM assertions
-        WHERE event_start BETWEEN ? AND ? AND COALESCE(event_end, event_start) >= ? ORDER BY event_start DESC LIMIT ?`,
-      w.start - SPAN, w.end, w.start, topK), []);
-    for (const a of facts) put(`a${a.id}`, closeness(a.event_start, a.event_end, w), a.event_start);
-    // 本场合这段时间的原文窗口：先用感知的时间索引找出 id 范围，再按（场合，last_percept）索引取窗口
-    const span = safe(core, 'timeSpan', () => core.store.get(
-      'SELECT MIN(id) AS lo, MAX(id) AS hi FROM percepts WHERE at BETWEEN ? AND ?', w.start, w.end), null);
-    if (span?.lo != null) {
-      const wins = safe(core, 'timeWindowsRaw', () => core.store.all(
-        `SELECT id, t_start, t_end FROM raw_windows WHERE setting_key = ? AND last_percept BETWEEN ? AND ?
-          AND t_start <= ? AND t_end >= ? ORDER BY last_percept DESC LIMIT ?`,
-        cues.settingKey, span.lo, span.hi + ctx.p.cfg.intake.rawWindow.maxMsgs, w.end, w.start, topK), []);
-      for (const r of wins) put(`w${r.id}`, closeness(r.t_start, r.t_end, w), r.t_end);
-    }
+  const scope = scopeOf(core, { timeWindows: cues.timeWindows.slice(0, 4) }, { at: ctx.at });
+  if (scope.failed) metric(core, 'retrieve.route.time.scopeFailed');
+  const rows = scope.rows.filter((r) => !ctx.exclude.has(r.ref));
+  if (!rows.length) return done([]);
+  // 查询向量：稠密路嵌入好了就交过来；等到这一路的截止时间前一点，等不到就按时间均匀取
+  let qv = null;
+  if (ctx.vectorGate && !ctx.noDense) {
+    const wait = Math.max(0, remaining(ctx) - TIME_DENSE_MS);
+    qv = await Promise.race([ctx.vectorGate.promise, sleep(wait).then(() => null)]);
   }
-  const hits = [...score].map(([ref, v]) => ({ ref, score: v.s, t: v.t }))
-    .sort((a, b) => b.score - a.score || b.t - a.t || (a.ref < b.ref ? -1 : 1)).slice(0, topK).map(({ ref, score: s }) => ({ ref, score: s }));
-  const ms = wall() - t0;
-  ctx.routeMs.time = Math.round(ms);
-  return { route: 'time', hits, ms, timedOut: false };
+  const vectors = qv?.vectors?.length ? mainVectors(ctx, qv.vectors) : null;
+  if (vectors && remaining(ctx) > 5) {
+    const r = await withDeadline((signal) => core.mods.worker.denseSearch(core, {
+      vectors, spaceId: qv.spaceId, layers: ['memory', 'raw'], topK: { memory: topK, raw: topK },
+      includeCold: ctx.mode === 'deliberate', exclude: ctx.exclude.size ? ctx.exclude : undefined, only: rows.map((x) => x.ref),
+    }, { deadlineMs: Math.max(1, remaining(ctx)), signal }), Math.max(1, remaining(ctx)), ctx.signal);
+    const hits = !r.timedOut && !r.error && Array.isArray(r.value?.hits)
+      ? r.value.hits.filter((h) => h && typeof h.ref === 'string' && Number.isFinite(h.score)).slice(0, topK) : null;
+    if (hits?.length) return done(hits);
+  }
+  return done(spreadOver(rows, topK).map((ref, i) => ({ ref, score: 1 / (1 + i) })));
+}
+/** 时间路等查询向量时给范围内稠密检索留的时间（毫秒）。 */
+const TIME_DENSE_MS = 60;
+
+/**
+ * 主线索的查询向量（和稠密路同一个口径，D149 / D151）：有焦点那一句时不用窗口那条；焦点那一句没有内容时只用窗口和改写。
+ * 对不上（只有一条、找不到窗口那条）就全用。
+ */
+function mainVectors(ctx, vectors) {
+  const win = ctx.cues.windowText ? ctx.cues.queryTexts.indexOf(ctx.cues.windowText) : -1;
+  if (win < 0 || win >= vectors.length || vectors.length < 2) return vectors;
+  const nq = ctx.cues.queryTexts.length;
+  if (ctx.cues.focusContent === false) return vectors.filter((_, i) => i === win || i >= nq);
+  return vectors.filter((_, i) => i !== win);
+}
+
+/**
+ * 按开始时间排好的行里均匀取 n 条，名次错开：先取正中，再按二分往两边补（名次靠前的散在整个跨度上，不是集中在一头）。
+ * @param {{ref: string, tStart: number}[]} rows  按 tStart 升序
+ * @param {number} n
+ * @returns {string[]}
+ */
+export function spreadOver(rows, n) {
+  const len = rows.length;
+  if (len <= n) return bisectOrder(len).map((i) => rows[i].ref);
+  const picked = [];
+  for (let i = 0; i < n; i++) picked.push(rows[Math.min(len - 1, Math.floor(((i + 0.5) * len) / n))].ref);
+  return bisectOrder(n).map((i) => picked[i]);
+}
+/** 0..n-1 的二分次序：正中、两边的四分之一处……（同一深度从早到晚）。 */
+function bisectOrder(n) {
+  const out = [];
+  const seen = new Uint8Array(n);
+  for (let step = n; out.length < n && step >= 1; step = Math.floor(step / 2)) {
+    for (let i = Math.floor(step / 2); i < n; i += Math.max(1, step)) if (!seen[i]) { seen[i] = 1; out.push(i); }
+    if (step === 1) break;
+  }
+  for (let i = 0; i < n; i++) if (!seen[i]) out.push(i);
+  return out;
 }
 
 // ── 在场者近况 ─────────────────────────────────────────────────────────────

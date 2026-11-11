@@ -53,6 +53,8 @@ export const BUDGET_RANGES = Object.freeze({
   // 注入预算（D133）：比例 1%–100% 或不限；每个会话每天 1000 字起（再少回想几乎给不出东西）或不限
   injectShare: { kind: 'ratio', min: 0.01, max: 1 },
   injectPerSessionPerDay: { kind: 'cap', min: 1000, max: 10_000_000 },
+  // 回忆的名额（D155）：10%–100%
+  recollectScale: { kind: 'share', min: 0.1, max: 1 },
 });
 const fmtInt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 /**

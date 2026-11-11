@@ -358,6 +358,18 @@ export const DEFAULTS = deepFreeze({
     // 范围（D153，retrieve.scopeOf）：maxRefs 范围里最多几条记忆（超了留最近的、标 clipped）；
     // exactMax 稠密检索「只看这些」时条数不超过它就不走二值粗排、直接用存的 int8 向量逐条精确比
     scope: { maxRefs: 5000, exactMax: 5000 },
+    // 回忆（D155，retrieve/recollect.js）：有意回想（她调记忆工具、这一轮被判定在问过去）的新路——读懂问题 → 圈范围 → 范围内找 + 全库照跑一次
+    // → 范围内的在前、盖住时间 → 照旧过关口① → 对着问题截取。enabled 关掉就完全走原来的有意回想（评测拿它做改前改后）。
+    // 两档名额：tool（她调记忆工具）、auto（被直接问到以前的事、自动触发的那一轮）；maxItems 条、每条 itemChars 字、一共 totalChars 字。
+    // 随花费档位：budget.presets 的 recollectScale 乘 maxItems 和 totalChars（节省档 0.5）。
+    // poolFactor：交给关口①的候选 = maxItems × 它；scopeTopK：范围内稠密、字面各取前多少；segments：有时间窗时把范围里有记忆的跨度
+    // 等分成几段（盖住时间）；reserveMs：全库那一次少用这么多时间，留给范围内检索和合并
+    recollect: {
+      enabled: true,
+      tool: { maxItems: 36, itemChars: 300, totalChars: 4000 },
+      auto: { maxItems: 18, itemChars: 240, totalChars: 2000 },
+      poolFactor: 2, scopeTopK: 120, segments: 6, reserveMs: 300,
+    },
     // 在场者近况：相关度之外，这条记忆现在有多活跃（基础激活 B，对数尺度）占的分量（评审:SC-07、实测问题 #5）；
     // maxItems 也是召回结果里这一路自己的名额（不和别的几路抢不自主回想的那 15 条）
     // 没有「最近 N 小时」的时间窗（D103）：基础激活 B 低于 floorB 的不算近况（编码强度 1、衰减 0.3 时约 12 小时，强的记得更久、
@@ -655,13 +667,13 @@ export const DEFAULTS = deepFreeze({
     presets: {
       loose: { mainChatRatioCap: null, dailyCalls: 3000, dailyUncachedTokens: 5_000_000, perSourceShare: 0.5,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: 0.25, injectPerSessionPerDay: null },
+        injectShare: 0.25, injectPerSessionPerDay: null, recollectScale: 1 },
       saving: { mainChatRatioCap: 0.25, dailyCalls: 600, dailyUncachedTokens: 1_000_000, perSourceShare: 0.3,
         stage2Scope: 'direct', prefetchRewrite: false, rerank: true, sleepDepth: 'essential', balanceProtectDays: 3,
-        injectShare: 0.05, injectPerSessionPerDay: 8000 },
+        injectShare: 0.05, injectPerSessionPerDay: 8000, recollectScale: 0.5 },
       unlimited: { mainChatRatioCap: null, dailyCalls: null, dailyUncachedTokens: null, perSourceShare: 1,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: null, injectPerSessionPerDay: null },
+        injectShare: null, injectPerSessionPerDay: null, recollectScale: 1 },
     },
     // 主人单独改过的项（管理页「花费护栏 → 自定义」或手改文件），覆盖预设。能写的键和取值见 BUDGET_OVERRIDE_KEYS / checkBudgetOverride；
     // 其中 dailyOutputTokens（每天输出的上限，null = 不设）不在预设里：不改时按宿主每档的数（host.budget.dailyOutputTokens）
@@ -766,6 +778,8 @@ const BUDGET_OVERRIDE_CHECKS = Object.freeze({
   // 注入预算（D133）：null = 不限
   injectShare: (v) => (v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1) ? null : '应为大于 0、不超过 1 的数，或 null（不限）'),
   injectPerSessionPerDay: capV,
+  // 回忆的名额（D155）：recall.recollect 两档的条数和总字数乘它
+  recollectScale: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 1 ? null : '应为 0.1–1 的数'),
 });
 /** budget.overrides 能写的键（顺序就是管理页「自定义」里的顺序）。 */
 export const BUDGET_OVERRIDE_KEYS = Object.freeze(Object.keys(BUDGET_OVERRIDE_CHECKS));

@@ -200,7 +200,9 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     }
     const given = Number(r.value?.alreadySent) > 0;
     if (!r.value?.items?.length) { bump(!r.value ? 'error' : given ? 'alreadyGiven' : 'nothing'); return given ? TOOL_TEXT.alreadyGiven : TOOL_TEXT.nothing; }
-    const { text, used } = renderToolResult(r.value.items, { style: style() });
+    // 回忆（D155）：结果里有回忆那一层时整个结果的上限放开，开头带「找了哪儿」那一行
+    const rcTurn = r.value.items.some((it) => it?.layer === 'recollect');
+    const { text, used } = renderToolResult(r.value.items, { style: style(), ...(rcTurn ? { maxChars: Math.max(1600, tc.recollectChars ?? 4600), note: String(r.value.recollect?.note ?? '') } : {}) });
     if (!used.length) { bump(given ? 'alreadyGiven' : 'nothing'); return given ? TOOL_TEXT.alreadyGiven : TOOL_TEXT.nothing; }
     // 场合的档只有 off / live：关着的场合核心回想就是空的；这里只防读不到档位（不给内容，也不记注入日志）
     if (assembler.modeOf(claim.settingId) !== 'live') { bump('withheld'); return TOOL_TEXT.withheld; }
@@ -211,7 +213,8 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
           ...(typeof it.unit === 'string' ? { unit: it.unit } : {}), ...(typeof it.unitKey === 'string' ? { unitKey: it.unitKey } : {}),
           // 这一条自己的字数（D133：注入预算按条目的层记账）
           ...(typeof it.rendered === 'string' ? { chars: charLen(it.rendered) } : {}) })),
-        ...(Number.isInteger(r.value.degradeLevel) ? { degradeLevel: r.value.degradeLevel } : {}) });
+        ...(Number.isInteger(r.value.degradeLevel) ? { degradeLevel: r.value.degradeLevel } : {}),
+        ...(rcTurn && r.value.recollect?.log && typeof r.value.recollect.log === 'object' ? { recollect: r.value.recollect.log } : {}) });
     } catch (e) {
       log.warn('tools.recall.rejected', { error: errCode(e) });
       bump('unappraised');

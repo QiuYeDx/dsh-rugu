@@ -219,7 +219,7 @@ test('预算（D121）：「不设上限」档不设次数、token、比例上�
 
 test('预算（D121）：budget.overrides 只认那几个键、每个按自己的规则查；写错的那一项忽略并给 warning，其余照用', () => {
   assert.deepEqual(BUDGET_OVERRIDE_KEYS, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
-    'injectShare', 'injectPerSessionPerDay']);
+    'injectShare', 'injectPerSessionPerDay', 'recollectScale']);
   const { config, warnings } = mergeConfig(DEFAULTS, { budget: { overrides: {
     dailyCalls: 0, dailyUncachedTokens: null, dailyOutputTokens: 1.5, perSourceShare: 0, mainChatRatioCap: null, balanceProtectDays: 400,
     stage2Scope: 'direct', prefetchRewrite: 'no', rerank: false, sleepDepth: 'deep', egressReservePerDay: 3 } } });
