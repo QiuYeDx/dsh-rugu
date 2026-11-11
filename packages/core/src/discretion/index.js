@@ -489,7 +489,9 @@ export async function holdDecision(core, token, approve) { return EG.holdDecisio
  *   - 按审视令牌，或（场合、文本哈希、时间窗）对上 utterances；对不上 → 「未经审视的发言」，记 discretion_log 并按场合属性回头补评估；
  *   - 和这个会话本周期已确认送达的注入条目、最近几轮的工具结果比对（区分性词 + 向量），命中的写 told_log 和 known_by(told_by_her)，
  *     并给「讲给新听众」的记忆加痕迹（dynamics.addTrace reason='retell'，每个听众一次）；
- *   - 比对不上但有区分性词的，排一个全库比对任务；
+ *   - 【D134】对象在这句话所在场合（在听众里，或以前亲自在这里出现过；权利层的同一个人也算）、还开着的意图也是候选，
+ *     不管注入过哪个会话：对上了就记一次执行（encode.recordExecution），计数 told.intention.byContent.sync / async；
+ *   - 比对不上但有区分性词的，排一个全库比对任务；同步没对上的意图也排（任务里先按向量 / 区分性词比意图）；
  *   - 回填的旧发言（historical=1）不算未经审视、不补评估，也不和眼下会话的注入比对（只排全库比对）；
  *   - 没对上审视记录、又是在带按轮污点的一轮里说的：记一行 utterances（origin_path='unappraised'，带 TURN_TAINT_MARK）。
  * @param {import('../core-types.js').CoreContext} core

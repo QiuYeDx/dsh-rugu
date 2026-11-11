@@ -295,6 +295,12 @@ function aboutTexts(core, row) {
   return out.filter((t) => typeof t === 'string' && t.trim());
 }
 
+/** 实现 encode.intentionTexts：一条意图要核对的文字（和触发前复核同一份，aboutTexts）。意图不存在返回 []。 */
+export function intentionTexts(core, intentionId) {
+  const row = core.store.get('SELECT * FROM intentions WHERE id = ?', intentionId);
+  return row ? aboutTexts(core, row) : [];
+}
+
 /** 这件事的当事人：意图对象，加上它指向的计划的主人和主体（不含她自己）。 */
 function peopleOf(core, row) {
   const ids = new Set([row.target_entity_id]);

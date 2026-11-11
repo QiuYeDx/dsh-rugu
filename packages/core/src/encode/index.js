@@ -353,6 +353,15 @@ export function prioritizeExtraction(core, perceptIds, ctx) { return seg.priorit
 export async function recheckIntention(core, intentionId, opt) { return pl.recheckIntention(core, intentionId, opt); }
 
 /**
+ * 【D134】一条意图要核对的文字（读）：意图本身、它指向的事（计划 / 事实 / 情节）、那条事实的 future_q。
+ * 和触发前复核（recheckIntention）用的是同一份；关口③按内容认「她问过了」时拿它和她说的话比。意图不存在返回 []。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} intentionId
+ * @returns {string[]}
+ */
+export function intentionTexts(core, intentionId) { return pl.intentionTexts(core, intentionId); }
+
+/**
  * 属性键注册（§5.4：属性键是数据）。已有同义键时返回规范名。
  * @param {import('../core-types.js').CoreContext} core
  * @param {string} key

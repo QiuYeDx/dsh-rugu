@@ -5,7 +5,7 @@
 //     读不到的目标里会留下来的（channel.persistence 不是 'once'）也走这一条。
 //   - 其余目标（同一场合、别的群、私聊、定时提醒、跨场合发送、读不到而说完就过去的目标）：guardUtterance——两条外发守护，只认「几乎原样」的复述：
 //       G1 叮嘱：这个会话本周期注入过的条目里有核对过原话的叮嘱（norms.explicitLimit），草稿几乎是它的原话，而被回答的人不是叮嘱的人；
-//       G2 转述：一对一里另一个真实的人跟她说的话（区分性词够多），草稿几乎是它的原话，而被回答的人不是说那句话的人。
+//       G2 转述：一对一里另一个真实的人跟她说的话（区分性词够多；单条感知，或账本里原文窗口的成员原话），草稿几乎是它的原话，而被回答的人不是说那句话的人。
 //     目标受众本来就都知道的不算。命中只挡那一句，回给她一句事实（不要求换个说法）；没有送审、没有最终拒绝、没有 24 小时的 text_hash。
 //     任何异常、超时一律放行（fail open，egress.failOpen）。说不说、说多少，交给她自己看着上下文里的来源标签判断。
 import { textHash, APPRAISAL_VERDICTS } from '../contract/index.js';
@@ -17,7 +17,7 @@ import {
 } from './util.js';
 import { selfId, isIndividual, actorEntity, settingInfo, settingChain, memoryFacts, displayName, rightsEquivalents, relatedEntities } from './facts.js';
 import { audienceOf, unknownAudience, audiencePeople, managerOnly, circleOf, newKnowers } from './knowledge.js';
-import { evaluate } from './stage1.js';
+import { evaluate, sensitivityFact } from './stage1.js';
 import { features, overlapScore, coverage, idfFor, cosine } from './match.js';
 import { logDecision } from './told.js';
 import { normOf, explicitLimit } from './norms.js';
@@ -280,6 +280,8 @@ export async function prescreen(core, q) {
 
 /** 守护最多看账本里多少条（新注入的在前；筛出来的候选再按 guardScan 封顶）。 */
 const GUARD_LEDGER_MAX = 5000;
+/** 账本里的原文窗口最多逐条看几条成员原话（G2，D135；和 facts.js 原文窗口成员的上限一样）。 */
+const GUARD_WINDOW_MEMBERS = 50;
 
 /** 叮嘱里点了名不让知道的人（同一个人、经确认的关系人也算）在不在这些人里。 */
 function denyReaches(core, deny, people, me, memo) {
@@ -339,8 +341,9 @@ function answeredPeople(core, q, memo) {
  *   - 目标受众只有管理者 → speak；
  *   - 候选 = 这个会话本周期账本（新注入的在前）里先筛、再按 guardScan 封顶的
  *       G1 叮嘱：explicitLimit 不为空（被回答的只有叮嘱的人 → 跳过；只有点名名单的，这里没有被点名的人 / 关系人、人也看得全 → 跳过），
- *       G2 转述：感知、来源是一对一、说话人是真实的个人且不是她、区分性词 ≥ relayMinTerms，而且不是平常话——敏感度（规范的，没有就用
- *       第一眼的）≥ notTellerShareMaxSensitivity，或者这一轮带污点（被回答的只有说话人 → 跳过），
+ *       G2 转述：感知（账本里的原文窗口按它的成员感知逐条看，D135）、来源是一对一、说话人是真实的个人且不是她、区分性词 ≥ relayMinTerms，
+ *       而且不是平常话——敏感度（规范的和第一眼的取大，stage1.sensitivityFact）≥ notTellerShareMaxSensitivity，或者这一轮带污点
+ *      （被回答的只有说话人 → 跳过），
  *     去掉目标受众本来就都知道的（目标 ⊆ 原受众）。候选为空 → 立刻 speak（不查 IDF、不取向量）；
  *   - 命中：草稿和条目原话共有 ≥ minOverlap 个区分性词，并且覆盖率 ≥ told.fullCoverage，或者（一次 embedQuery，≤ vectorWaitMs）
  *     余弦 ≥ vectorSim；向量拿不到只看覆盖率。命中 → reconsider，回给她一句事实。
@@ -370,6 +373,28 @@ export async function guardUtterance(core, q) {
   const people = aud.known ? new Set(audiencePeople(core, aud, memo)) : new Set();
   const incomplete = !aud.known || !!aud.unknownObservers || aud.completeness !== 'exact';
   const cands = [];
+  const seen = new Set();
+  const add = (cm, p, kind, by, text) => {
+    const ref = refOf(cm.kind, cm.id);
+    if (seen.has(ref)) return;
+    if (answered.only(by)) { metric(core, 'egress.guard.skipped.answered'); return; }
+    // 目标受众本来就都知道（目标 ⊆ 原受众）：不是往外说
+    if (p && p.setting_key === q.targetKey) return;
+    if (aud.known && newKnowers(core, circleOf(core, cm, memo), aud, memo).empty) return;
+    seen.add(ref);
+    cands.push({ m: cm, ref, kind, by, text: String(text) });
+  };
+  // G2 转述的条件，逐条原话套（感知自己；原文窗口按成员感知，D135）：一对一来源、说话人是真实的个人且不是她、不是平常话
+  const relayable = (pm, p) => {
+    if (!p || p.actor_self || p.actor_entity_id == null || p.actor_entity_id === me || !isIndividual(core, p.actor_entity_id, memo)) return false;
+    if (p.text == null || p.text_state === 'retracted') return false;
+    const n = normOf(core, pm, memo);
+    if ((n.originExposure?.exposureRank ?? 3) > 0) return false;
+    // G2 只守不平常的私话（评审：「我下周三要去杭州出差」这种平常话原样转一句，挡下来就是误拦）：敏感度（D135：规范的和第一眼的取大，
+    // stage1.sensitivityFact）≥ notTellerShareMaxSensitivity，或者这一轮带污点（转来的、网页、子代理读进来的内容可能在套话）。都读不到的平常话不守
+    const sens = sensitivityFact(core, pm, memo).value;
+    return !!q.tainted || (sens != null && sens >= relaySens);
+  };
   for (const m of refs) {
     if (cands.length >= scan) break;
     const f = memoryFacts(core, m, memo);
@@ -377,28 +402,22 @@ export async function guardUtterance(core, q) {
     const p = f.percept ?? null;
     const g = m.kind === 'percept' ? glances.get(m.id) ?? null : null;
     const lim = explicitLimit(core, m, g, memo);
-    let kind = null;
-    let by = null;
     if (lim) {
       // 只点了名不让谁知道的（名单，没有原话）：只有这里有被点名的人（或他的关系人）、或者这里的人看不全时才算往外说
       if (lim.source === 'list' && (lim.deny ?? []).length && !incomplete && !denyReaches(core, lim.deny, people, me, memo)) continue;
-      kind = 'secret';
-      by = lim.by ?? null;
-    } else if (p && !p.actor_self && p.actor_entity_id != null && p.actor_entity_id !== me && isIndividual(core, p.actor_entity_id, memo)) {
-      const n = normOf(core, m, memo);
-      if ((n.originExposure?.exposureRank ?? 3) > 0) continue;
-      // G2 只守不平常的私话（评审：「我下周三要去杭州出差」这种平常话原样转一句，挡下来就是误拦）：敏感度（规范的，没有就用第一眼的）
-      // ≥ notTellerShareMaxSensitivity，或者这一轮带污点（转来的、网页、子代理读进来的内容可能在套话）。都读不到的平常话不守
-      const sens = !n.unassessed && Number.isFinite(n.sensitivity) ? n.sensitivity : g?.state === 'done' && Number.isFinite(g.sens) ? g.sens : null;
-      if (!q.tainted && !(sens != null && sens >= relaySens)) continue;
-      kind = 'relay';
-      by = p.actor_entity_id;
-    } else continue;
-    if (answered.only(by)) { metric(core, 'egress.guard.skipped.answered'); continue; }
-    // 目标受众本来就都知道（目标 ⊆ 原受众）：不是往外说
-    if (p && p.setting_key === q.targetKey) continue;
-    if (aud.known && newKnowers(core, circleOf(core, m, memo), aud, memo).empty) continue;
-    cands.push({ m, ref: refOf(m.kind, m.id), kind, by, text: String(f.text) });
+      add(m, p, 'secret', lim.by ?? null, f.text);
+    } else if (m.kind === 'percept') {
+      if (relayable(m, p)) add(m, p, 'relay', p.actor_entity_id, f.text);
+    } else if (m.kind === 'window') {
+      // 原文窗口里是原话，她能原样转述（D135）：成员感知逐条套 G2 的条件，命中的那一句单独当候选（比对的是那一句原话）。
+      // 情节、事实是转写过的，不在「几乎原样转述」的守护范围里
+      for (const id of f.perceptIds.slice(0, GUARD_WINDOW_MEMBERS)) {
+        if (cands.length >= scan) break;
+        const pm = { kind: 'percept', id };
+        const mp = memoryFacts(core, pm, memo).percept ?? null;
+        if (relayable(pm, mp)) add(pm, mp, 'relay', mp.actor_entity_id, mp.text);
+      }
+    }
   }
   if (Array.isArray(q.trace)) q.trace.push({ candidates: cands.length, g1: cands.filter((c) => c.kind === 'secret').length, g2: cands.filter((c) => c.kind === 'relay').length });
   if (!cands.length) { metric(core, 'egress.candidates.empty'); return { verdict: 'speak', reasons: [] }; }

@@ -24,10 +24,11 @@ export function platformSeeds() {
 const tick = () => new Promise((r) => setImmediate(r));
 
 /**
- * @param {{seed: number, run?: number, name: string, llm?: FakeLLM, config?: object, friendDm?: boolean, thread?: boolean}} opt
+ * @param {{seed: number, run?: number, name: string, llm?: FakeLLM, config?: object, friendDm?: boolean, thread?: boolean, embedding?: object}} opt
+ *        embedding：换一个嵌入替身（例如带同义词的 FakeEmbedding）；不给用默认的
  *        run：同一个平台种子的第几次（换一把密钥 = 换一组抽样噪声，§14.3「每题跑 5 次」）
  */
-export async function openWorld({ seed, run = 0, name, llm, config, friendDm = false, thread = false }) {
+export async function openWorld({ seed, run = 0, name, llm, config, friendDm = false, thread = false, embedding }) {
   const fp = createFakePlatform({ seed });
   if (thread) {
     // 一次性的场合（一个内容下面的一条评论串，§5.8、§11.2）：公开区的属性，stability = transient，parent = 公开区；
@@ -49,7 +50,7 @@ export async function openWorld({ seed, run = 0, name, llm, config, friendDm = f
   }
   const adapter = fp.adapter;
   const clock = new FakeClock(fp.now());
-  const ports = fakePorts({ clock, llm: llm ?? new FakeLLM() });
+  const ports = fakePorts({ clock, llm: llm ?? new FakeLLM(), ...(embedding ? { embedding } : {}) });
   const dir = tmpDir(`scn-${name}`);
   // 身份哈希密钥按（种子，第几次）固定：场合键、不自主回想的抽样噪声（D33：种子含场合键）都可以复现
   const key = crypto.createHash('sha256').update(`presence-${seed}-${run}`).digest();

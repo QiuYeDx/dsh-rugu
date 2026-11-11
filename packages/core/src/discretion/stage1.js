@@ -87,6 +87,48 @@ function suppressionOf(core, m, memo) {
   return v;
 }
 
+/** 敏感度事实最多看一条记忆的几条来源原话（和 facts.js 里原文窗口成员的上限一样）。 */
+const SENS_SOURCES_MAX = 50;
+
+/** 这条记忆的来源原话（感知 id）：感知是它自己；原文窗口是成员；情节是来源加上归进它的感知；事实是来源感知。别的种类没有。 */
+function sourcePercepts(core, m, f, memo) {
+  switch (m.kind) {
+    case 'percept': return [m.id];
+    case 'window': case 'assertion': return (f.perceptIds ?? []).slice(0, SENS_SOURCES_MAX);
+    case 'episode': {
+      const ids = new Set((f.perceptIds ?? []).slice(0, SENS_SOURCES_MAX));
+      if (ids.size < SENS_SOURCES_MAX) {
+        for (const r of core.store.all('SELECT id FROM percepts WHERE episode_id = ? ORDER BY id LIMIT ?', m.id, SENS_SOURCES_MAX - ids.size)) ids.add(r.id);
+      }
+      return [...ids];
+    }
+    default: return [];
+  }
+}
+
+/**
+ * 【D135】这条记忆的敏感度事实 = 规范的敏感度（有的话）和来源原话第一眼 sens 的最大值。第一眼还没看完的不算（不等它）。
+ * 规范是提炼出来的，常比第一眼低（「他私下说自己欠了一笔钱」第一眼 0.9，提炼完规范只有 0.3），只看规范的话提炼一完成底线就没了；
+ * 原文窗口、情节、事实自己没有第一眼，看的是它们的来源原话。结果在这一次判定的 memo 里缓存。
+ * @returns {{value: number|null, byGlance: boolean}}  value：都读不到时 null；byGlance：第一眼比规范高（这个量是靠第一眼定的）
+ */
+export function sensitivityFact(core, m, memo) {
+  const k = `sensFact:${m.kind}:${m.id}`;
+  if (memo?.has(k)) return memo.get(k);
+  const norm = normOf(core, m, memo);
+  const base = Number.isFinite(norm?.sensitivity) ? norm.sensitivity : null;
+  let glance = null;
+  const ids = sourcePercepts(core, m, memoryFacts(core, m, memo), memo);
+  if (ids.length) {
+    const gs = soft(core, 'stage1.glance', () => glancesOf(core, ids), new Map()) ?? new Map();
+    for (const g of gs.values()) if (g?.state === 'done' && Number.isFinite(g.sens) && (glance == null || g.sens > glance)) glance = g.sens;
+  }
+  const value = base == null ? glance : glance == null ? base : Math.max(base, glance);
+  const out = { value, byGlance: glance != null && (base == null || glance > base) };
+  memo?.set(k, out);
+  return out;
+}
+
 /**
  * 对一个受众判一条记忆。返回的东西第二段的卡片也要用（规范、已知圈、新知情者、备注）。
  * ctx.triggerEntityId：这一轮的触发者（判断「这件事是不是他自己说的」，D99）。
@@ -94,7 +136,8 @@ function suppressionOf(core, m, memo) {
  * @returns {{decision: 'pass'|'block'|'cap'|'stage2', rule: string, cap?: string, notes: string[], N: any, norm: any, circle: any, facts: any,
  *            managerOnly: boolean, subjectPresent: boolean, subjects: number[], ntk: Set<string>, audience: any, hintBlocked: boolean, toldByTrigger: boolean,
  *            repliedToTrigger: boolean, sensitiveOther?: boolean}}  repliedToTrigger：她回这一轮的触发者的那一句（facts.repliedToTrigger，D110），和 toldByTrigger 一样不按「别人问起」封顶；
- *            sensitiveOther：给第三方的敏感私事（D113：已评估、敏感度 ≥ b5Sensitivity、不是他自己的、听的不只是管理者、这里有人没听到且不在同一场合）
+ *            sensitiveOther：给第三方的敏感私事（D113：敏感度 ≥ b5Sensitivity、不是他自己的、听的不只是管理者、这里有人没听到且不在同一场合；
+ *            D135 起敏感度用 sensitivityFact：规范的和来源原话第一眼的取大，感知、原文窗口、情节、事实都看，评估过的也照样）
  */
 export function evaluateOne(core, m, a, memo, ctx = {}) {
   const cfg = dcfg(core);
@@ -268,18 +311,17 @@ export function evaluateOne(core, m, a, memo, ctx = {}) {
   // 别人的敏感事、问的人不是说的人（D102）：已评估、敏感度 ≥ notTellerShareMaxSensitivity、离开了原来的场合、这里有人当时没听到、这一轮的触发者
   // 不是说这件事的人、听的人也不只是管理者 → 最多说个大概（上限在调用第二段之前写在卡片上）。和还没评估的原话「别人问起最多说个大概」
   // 同一个道理：看的是代码看得到的事实（谁说的、谁在问、多敏感），不靠第二段自己报的分寸（它可能被提问的人带偏）
-  if (!norm.unassessed && !hisOwn && !mgrOnly && !N.empty && !N.sameSetting && (norm.sensitivity ?? 0) >= (th.notTellerShareMaxSensitivity ?? 0.5)) {
+  // 敏感度用「这条记忆的敏感度事实」（D135）：规范的和来源原话第一眼的取大
+  const sf = sensitivityFact(core, m, memo);
+  if (!norm.unassessed && !hisOwn && !mgrOnly && !N.empty && !N.sameSetting && (sf.value ?? 0) >= (th.notTellerShareMaxSensitivity ?? 0.5)) {
     capTo('share_vague', 'sensitive');
   }
-  // 给第三方的敏感私事（D113，非公开目标的一条上下文底线）：和上面同一组事实，只是阈值用 b5Sensitivity——已评估、敏感度 ≥ 0.7、
-  // 不是他自己的事、听的人不只是管理者、这里有人当时没听到而且不在同一场合。只多导出这一个量，第一段别的规则不因它改变
-  // 还没提炼出敏感度的感知用第一眼的 sens（一句话落库后约 1 秒就有；现场 2313 条规范里没有一条 ≥ 0.5，只看规范这条底线等于不存在）
-  let sensFact = norm.unassessed ? null : norm.sensitivity ?? 0;
-  if (sensFact == null && m.kind === 'percept') {
-    const g = soft(core, 'stage1.glance', () => glancesOf(core, [m.id]).get(m.id) ?? null, null);
-    if (g?.state === 'done' && Number.isFinite(g.sens)) sensFact = g.sens;
-  }
-  out.sensitiveOther = sensFact != null && !hisOwn && !mgrOnly && !N.empty && !N.sameSetting && sensFact >= th.b5Sensitivity;
+  // 给第三方的敏感私事（D113，非公开目标的一条上下文底线）：和上面同一组事实，只是阈值用 b5Sensitivity——敏感度 ≥ 0.7、
+  // 不是他自己的事、听的人不只是管理者、这里有人当时没听到而且不在同一场合。只多导出这一个量，第一段别的规则不因它改变。
+  // D135：不再限「还没评估的单条感知」——感知、原文窗口、情节、事实都看，评估过的也照样看来源原话的第一眼
+  //（提炼出来的规范常比第一眼低：一句第一眼判成 0.9 的私事，提炼一完成底线就没了；含它的原文窗口、情节原来从不触发）
+  out.sensitiveOther = sf.value != null && !hisOwn && !mgrOnly && !N.empty && !N.sameSetting && sf.value >= th.b5Sensitivity;
+  out.sensitiveByGlance = out.sensitiveOther && sf.byGlance;
 
   // ── 放行 ──
   const selfOnly = circle.selfOnly || norm.derivation === 'inference' || f.visibleTo === 'her-only' || f.derivedSelf;
@@ -372,7 +414,8 @@ export function evaluate(core, m, target, memo = new Map()) {
   const decision = worst.decision === 'pass' && cap ? 'cap' : worst.decision;
   return { ...primary, decision, rule: worst.rule, ...(cap && decision !== 'pass' && decision !== 'block' ? { cap } : {}),
     notes: [...new Set([...primary.notes, ...worst.notes, 'batch'])], worstAudience: worst.audience, hintBlocked: primary.hintBlocked || worst.hintBlocked,
-    sensitiveOther: !!(primary.sensitiveOther || worst.sensitiveOther), ownerCap: !!(primary.ownerCap || worst.ownerCap), namedDeny: !!(primary.namedDeny || worst.namedDeny),
+    sensitiveOther: !!(primary.sensitiveOther || worst.sensitiveOther), sensitiveByGlance: !!(primary.sensitiveByGlance || worst.sensitiveByGlance),
+    ownerCap: !!(primary.ownerCap || worst.ownerCap), namedDeny: !!(primary.namedDeny || worst.namedDeny),
     N: worst.N ?? primary.N };
 }
 

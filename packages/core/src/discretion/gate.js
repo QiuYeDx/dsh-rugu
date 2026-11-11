@@ -140,6 +140,8 @@ export async function gate(core, candidates, target, opt = {}) {
           const id = stage1Row(core, ev, mref, target, 'omit', `stage1:${omitWhy}`);
           log('omit', i, ev, mref, id, `omit:${omitWhy}`);
           metric(core, omitWhy === 'sensitive-other' ? 'gate.omit.sensitiveOther' : 'gate.omit.namedDeny');
+          // 靠第一眼定的（规范比第一眼低，D135）另记一笔：看得见这条底线有多少是第一眼撑着的
+          if (omitWhy === 'sensitive-other' && ev.sensitiveByGlance) metric(core, 'gate.omit.sensitiveOther.byGlance');
           return;
         }
         const id = stage1Row(core, ev, mref, target, 'share', `stage1:${ev.rule}:open`);
