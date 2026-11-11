@@ -2,6 +2,7 @@
 // 对账（异步部分：向量相似度）→ 在 store.completeJob 的一个事务里写完全部输出（§12.8 第 3 条：任务已完成就跳过，重跑幂等）。
 // 预算不允许、没有 LLM：任务推迟（不花钱、不写东西，感知照常在缓冲里、原文照常可检索）。LLM 失败：按 1 / 4 / 16 分钟退避重排；
 // 重试用完了，这一段搁置（D136，stalled.js）：不挡后面的段，按更长的退避再试，什么都不替它编。
+// 输出被上限截断（D141）：这一次什么都不写，这一段对半拆成两段各自重做；一条消息还截断的走失败 / 搁置。
 import { enqueueJob, cancelJob, completeJob, failJob } from '../store/jobs.js';
 import { bumpMetric, registerPromptVersion } from '../store/kv.js';
 import { parseRef } from '../store/refs.js';
@@ -10,7 +11,7 @@ import {
   modeOfPercept, isOccurrenceKind, quoteMatches, TERMINAL_PLAN, TRUST,
 } from './util.js';
 import {
-  selfIdOf, writeEpisode, writeAssertion, addSource, supersede, markChanged, linkSameType, sameTypeOf, assertionRow, assertionSubjects,
+  selfIdOf, writeEpisode, writeAssertion, addSource, noteConfirmed, supersede, markChanged, linkSameType, sameTypeOf, assertionRow, assertionSubjects,
   exposureOfSources, involvesOthers, quotaAdd,
 } from './write.js';
 import { transitionPlan, formIntention } from './plans.js';
@@ -19,7 +20,7 @@ import { parseJsonl } from './parse.js';
 import { verify } from './verify.js';
 import { taintCheck } from './taint.js';
 import { reconcile, reconcileSync } from './reconcile.js';
-import { segment } from './segment.js';
+import { segment, splitPoint, extractDedupeKey } from './segment.js';
 import { markStalled, clearStalled } from './stalled.js';
 
 const FACTISH = new Set(['fact', 'plan', 'self', 'rel']);
@@ -210,6 +211,58 @@ const estimateTokens = (s) => {
   const cjk = (t.match(/[㐀-鿿]/g) ?? []).length;
   return cjk + Math.ceil((t.length - cjk) / 4);
 };
+
+// ── 输出被截断（D141） ──────────────────────────────────────────────────────
+
+/**
+ * 这次输出是不是被 maxTokens 截断了。端口给了停止原因（stopReason）就照它；没给的退路：最后一行不是一条完整的 JSONL、
+ * 而且输出量到了上限的 extract.truncationNearRatio，才算截断——输出远没到上限的坏行是模型自己写坏的，照旧只跳过那一行。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{text?: string, usage?: {out?: number}, stopReason?: string}|null|undefined} res
+ * @param {number} maxTokens
+ * @returns {boolean}
+ */
+function outputTruncated(core, res, maxTokens) {
+  const why = res?.stopReason;
+  if (why === 'length') return true;
+  if (why != null) return false;
+  const rows = String(res?.text ?? '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !/^```/.test(s) && s !== '[' && s !== ']');
+  const last = rows.at(-1);
+  if (!last || parseJsonl(last).errors === 0) return false;
+  const out = isNum(res?.usage?.out) && res.usage.out > 0 ? res.usage.out : estimateTokens(res?.text);
+  return isNum(maxTokens) && maxTokens > 0 && out >= maxTokens * param(core, 'extract.truncationNearRatio');
+}
+
+/**
+ * 截断了：这一次什么都不写（写了半截的话，前半段的事实已经进库、重做时再出现一次只能靠对账去重，保证不了），
+ * 这一段按消息数对半拆成两段各排一个任务（拆的位置见 segment.splitPoint），本任务记成完成（用量照记）；
+ * 只剩一条消息拆不了，走失败：直接搁置（D136，TRUNCATED 算稳定被拒）——原样重试只会再截断一次。
+ * 拆出的前一段的结尾是我们切的，算确定的边界；后一段的结尾就是原来那段的结尾，原来拿不准、模型又没来得及确认的，仍拿不准。
+ */
+function splitTruncated(core, job, payload, rows, { res, usage, tailCertain }) {
+  const k = rows.length >= 2 ? splitPoint(rows) : null;
+  if (k == null) return fail(core, job, 'TRUNCATED', usage, false);
+  const settingKey = payload.settingKey ?? job.scope_key;
+  const halves = [rows.slice(0, k), rows.slice(k)];
+  const depth = (payload.splitDepth ?? 0) + 1;
+  completeJob(core.store, job.id, () => {
+    // 这一段（如果是搁置着在重试的）由拆出的两段接手：各自失败了各自搁置
+    clearStalled(core, settingKey, job.ep_from, job.ep_to);
+    for (const [i, h] of halves.entries()) {
+      const ids = h.map((p) => p.id);
+      const base = `${extractDedupeKey(settingKey, ids[0], ids.at(-1))}#t${job.id}`;
+      enqueueJob(core.store, {
+        kind: job.kind, use: job.use ?? 'extract', priority: job.priority, dedupeKey: base, scopeKey: job.scope_key, epFrom: ids[0], epTo: ids.at(-1),
+        payload: { settingKey, perceptIds: ids, boundaryCertain: i === 0 ? true : tailCertain, historical: h.every((p) => p.historical === 1),
+          reserved: !!payload.reserved, baseKey: base, splitDepth: depth },
+      });
+    }
+    return null;
+  }, { model: res?.model, ...usage });
+  bumpMetric(core.store, 'encode.extract.split');
+  core.log.warn('encode.extract.split', { jobId: job.id, percepts: rows.length, at: k, depth });
+  return { status: 'split', reason: 'truncated' };
+}
 
 // ── 写入（一个事务） ────────────────────────────────────────────────────────
 
@@ -485,7 +538,8 @@ function applyBatch(core, b) {
       hop: isSubject ? 0 : 1, quote: null, confidence: 0.9, at: l.at, jobId: job.id, extractVer };
     if (strong) {
       if ((TRUST[row.certainty] ?? 0) < TRUST.confirmed) core.store.run('UPDATE assertions SET certainty = ?, updated_at = ? WHERE id = ?', 'confirmed', now, id);
-      if (row.t50_h) core.store.run('UPDATE assertions SET valid_from = ?, updated_at = ? WHERE id = ?', l.at, now, id);   // 本人重新确认 = 重置
+      // 本人重新确认 = 到这时还成立：记在 confirmed_at，状态的成立概率从这时重新算起；「什么时候成立的」（valid_from）不动（D142）
+      noteConfirmed(core, id, l.at);
       // 给的是编码强度本身：× events.confirm 由 dynamics.addTrace 按 reason='confirm' 乘（D137：原来这里也乘，实际成了 1.44）
       addSource(core, { kind: 'assertion', id }, src, { w: base, reason: 'confirm' });
     } else addSource(core, { kind: 'assertion', id }, src, { w: base, reason: 'mention' });
@@ -670,17 +724,27 @@ export async function runExtract(core, job, opt = {}) {
     try { res = await callLlm(core, prompt, opt.signal); } catch (e) { return fail(core, job, errCode(e)); }
     usage = { tokensIn: res?.usage?.in ?? 0, tokensCached: res?.usage?.cached ?? 0, tokensOut: res?.usage?.out ?? 0 };
     const parsed = parseJsonl(res?.text ?? '');
+    // 输出被上限截断（D141）：不当成功——前面的照写、封口的话，后半段该提炼出的东西就永远丢了
+    const truncated = outputTruncated(core, res, param(core, 'extract.maxTokens'));
+    if (truncated) {
+      bumpMetric(core.store, 'encode.extract.truncated');
+      core.log.warn('encode.extract.truncated', { jobId: job.id, percepts: rows.length, stopReason: res?.stopReason ?? null, out: usage.tokensOut });
+    }
     if (parsed.errors) bumpMetric(core.store, 'encode.extract.badLines', parsed.errors);
-    if (!parsed.lines.length) return fail(core, job, 'BAD_OUTPUT', usage);
-    // 拿不准的边界：置信度 > 0.7 才封口；没确认就什么都不写（下次段落延长后再提炼）
+    if (!parsed.lines.length && !truncated) return fail(core, job, 'BAD_OUTPUT', usage);
+    // 拿不准的边界：置信度 > 0.7 才封口；没确认就什么都不写（下次段落延长后再提炼）。
+    // 截断了、又没来得及给边界那一行：还不知道，拆开重做时由后一段接着判断
+    let boundaryOk = seg.boundaryCertain;
     if (!seg.boundaryCertain) {
       const b = parsed.lines.find((l) => l.type === 'boundary');
-      if (!(b && Number(b.confidence) > core.config.get().segment.llmBoundaryConfidence)) {
+      boundaryOk = !!b && Number(b.confidence) > core.config.get().segment.llmBoundaryConfidence;
+      if (!boundaryOk && !(truncated && !b)) {
         completeJob(core.store, job.id, () => null, { model: res?.model, ...usage });
         bumpMetric(core.store, 'encode.segment.boundaryRejected');
         return { status: 'skipped', reason: 'boundary-unconfirmed' };
       }
     }
+    if (truncated) return splitTruncated(core, job, payload, rows, { res, usage, tailCertain: boundaryOk });
     const selfId = selfIdOf(core);
     const v = verify(core, parsed.lines, {
       seg, percepts: prompt.percepts, speakers: prompt.speakers, msgRefs: prompt.msgRefs, bgCodes: prompt.bgCodes,

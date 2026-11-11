@@ -42,7 +42,7 @@ const PRIVATE_SYSTEM = [
  */
 export function layerEvidence(core, entityId, { factsPerLayer, at }) {
   const facts = core.store.all(`SELECT DISTINCT a.id, a.text, a.certainty, a.recorded_at, a.event_start, a.superseded_by, a.valid_from, a.valid_to_known,
-        a.t50_h, a.shape, a.change_known
+        a.t50_h, a.shape, a.change_known, a.confirmed_at
       FROM assertion_entities ae JOIN assertions a ON a.id = ae.assertion_id
       WHERE ae.entity_id = ? AND ae.role IN ('subject','object') ORDER BY a.recorded_at DESC LIMIT 300`, entityId);
   const hidden = suppressedSet(core, facts.map((f) => `a${f.id}`));

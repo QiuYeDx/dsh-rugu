@@ -297,7 +297,7 @@ test('回填旧日志（historical）：不形成意图、不推心境；时间�
   } finally { await w.cleanup(); }
 });
 
-test('对账的结论落到写入：重复只追加来源（新来源更严就收紧）；矛盾取代旧的；本人确认 → confirmed、重置开始时间；关系边；对原话的收紧', async () => {
+test('对账的结论落到写入：重复只追加来源（新来源更严就收紧）；矛盾取代旧的；本人确认 → confirmed、记下确认的时间（成立时间不动，D142）；关系边；对原话的收紧', async () => {
   const { w, ming, owner, group } = await setup();
   try {
     const t0 = w.clock.now() - 20 * 24 * HOUR;
@@ -310,7 +310,7 @@ test('对账的结论落到写入：重复只追加来源（新来源更严就�
     w.clock.minutes(1);
     w.percept(group, ming, '我搬到上海了');
     w.clock.minutes(1);
-    w.percept(group, ming, '对，我就是喜欢钓鱼');
+    const fishMsg = w.percept(group, ming, '对，我就是喜欢钓鱼');
     w.clock.minutes(1);
     const pr = w.percept(group, ming, '我和阿杰是大学同学');
     w.state.background = { known: [{ ref: `a${diet}`, text: '阿明在减肥' }, { ref: `a${city}`, text: '阿明住在杭州' }, { ref: `a${hobby}`, text: '阿明喜欢钓鱼' }], private: [] };
@@ -340,7 +340,10 @@ test('对账的结论落到写入：重复只追加来源（新来源更严就�
     // 本人确认
     const h = w.assertion(hobby);
     assert.equal(h.certainty, 'confirmed');
-    assert.ok(h.valid_from > t0, '本人重新确认 = 重置');
+    // D142：确认不改「什么时候成立的」，确认的时间记在 confirmed_at；成立概率从确认的时候重新算起
+    assert.equal(h.valid_from, t0, '确认不改成立时间');
+    const fishAt = w.core.store.get('SELECT at FROM percepts WHERE id = ?', fishMsg).at;
+    assert.equal(h.confirmed_at, fishAt, '确认的时间 = 确认那条消息的时间');
     const conf = w.callsOf('addTrace').find((t) => t.ref === `a${hobby}` && t.reason === 'confirm');
     assert.ok(conf);
     // 交给 addTrace 的是编码强度本身（群里旁听 × 阿明的亲近度），× events.confirm 只由 dynamics 乘一次（D137）

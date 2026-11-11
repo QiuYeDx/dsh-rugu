@@ -7,9 +7,11 @@
 //   - 每一轮只试一次（任务自己不再按 1 / 4 / 16 分钟重试），试成了这一行就删掉；
 //   - 不给这段编造任何东西：不写情节、不写规范（感知仍是「没评估」，分寸对没评估的内容本来就更谨慎），原话照常能被搜到、能进工作记忆。
 //   看得见：计数 encode.extract.stalled.<原因>、encode.extract.stalledRetry、encode.extract.unstalled；管理页诊断（stalledSummary）。
+// 输出被上限截断的段（D141）不当成功：extract 把它对半拆成两段各自重做；拆到一条消息还截断（TRUNCATED）才走到这里，算稳定被拒。
+//   最近 7 天截断了几次、拆了几次也在 stalledSummary 里（计数 encode.extract.truncated / encode.extract.split）。
 // 状态全在库里（重启不丢）：切段、重试都从这张表和 jobs 表重新算，不在内存里另存。
-import { bumpMetric } from '../store/kv.js';
-import { param } from './util.js';
+import { bumpMetric, utcDay } from '../store/kv.js';
+import { param, DAY } from './util.js';
 
 // 过一会儿多半就好的错误：超时、中止、宿主的退避、没有模型服务、余额用完、库被锁、网络（Node 的 E 开头错误码）、
 // 宿主报的 408 / 429 / 5xx。这是错误类型的分类，和内容无关
@@ -25,7 +27,7 @@ const TRANSIENT = new Set(['TIMEOUT', 'Timeout', 'TimeoutError', 'ABORTED', 'Abo
  */
 export function failureKind(code, prevError = null) {
   const c = String(code ?? '');
-  if (c === 'BAD_OUTPUT') return 'rejected';
+  if (c === 'BAD_OUTPUT' || c === 'TRUNCATED') return 'rejected';   // 一条消息的输出就超了上限（D141）：再试多半还是一样
   if (TRANSIENT.has(c) || /^E[A-Z]+$/.test(c) || /^HTTP_(408|429|5\d\d)$/.test(c)) return 'transient';
   return prevError != null && prevError === c ? 'rejected' : 'transient';
 }
@@ -81,12 +83,21 @@ export function expediteStalled(core, settingKey, perceptIds, at) {
   return n;
 }
 
+/** 「最近」的截断次数看几天（D141，管理页诊断）。 */
+export const RECENT_DAYS = 7;
+
 /**
- * 管理页诊断用（只有数字）：搁置了几段、一时的 / 稳定被拒的各几段、最多失败了几轮、最早的从什么时候起、下一次什么时候试。
- * @returns {{segments: number, transient: number, rejected: number, maxRounds: number, oldestAt: number|null, nextAt: number|null}}
+ * 管理页诊断用（只有数字）：搁置了几段、一时的 / 稳定被拒的各几段、最多失败了几轮、最早的从什么时候起、下一次什么时候试；
+ * 最近 RECENT_DAYS 天（按 UTC 日）提炼的输出被上限截断了几次、为此拆了几次（D141）。
+ * @returns {{segments: number, transient: number, rejected: number, maxRounds: number, oldestAt: number|null, nextAt: number|null,
+ *            truncated: number, splits: number}}
  */
 export function stalledSummary(core) {
   const r = core.store.get(`SELECT COUNT(*) AS n, SUM(reason = 'transient') AS t, SUM(reason = 'rejected') AS j, MAX(rounds) AS m,
                                    MIN(first_at) AS first, MIN(next_at) AS next FROM extract_stalled`);
-  return { segments: r?.n ?? 0, transient: r?.t ?? 0, rejected: r?.j ?? 0, maxRounds: r?.m ?? 0, oldestAt: r?.first ?? null, nextAt: r?.next ?? null };
+  const since = utcDay(core.now() - (RECENT_DAYS - 1) * DAY);
+  const m = core.store.all(`SELECT name, SUM(value) AS v FROM metrics WHERE day >= ? AND name IN ('encode.extract.truncated','encode.extract.split') GROUP BY name`, since);
+  const count = (name) => m.find((x) => x.name === name)?.v ?? 0;
+  return { segments: r?.n ?? 0, transient: r?.t ?? 0, rejected: r?.j ?? 0, maxRounds: r?.m ?? 0, oldestAt: r?.first ?? null, nextAt: r?.next ?? null,
+    truncated: count('encode.extract.truncated'), splits: count('encode.extract.split') };
 }

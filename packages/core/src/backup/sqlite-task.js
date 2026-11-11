@@ -355,7 +355,7 @@ const TASKS = {
           type: 'assertion', id: a.id, predicate: a.predicate, value: a.value, objectEntityId: a.object_entity_id, text: a.text, kindHint: a.kind_hint,
           recurrence: jsonParse(a.recurrence, a.recurrence), occurrenceKey: a.occurrence_key, certainty: a.certainty, confidence: a.confidence, imp: a.imp,
           event: { start: a.event_start, end: a.event_end, precision: a.event_precision }, plannedTime: jsonParse(a.planned_time_json),
-          validFrom: a.valid_from, validToKnown: a.valid_to_known, changeKnown: !!a.change_known, t50h: a.t50_h, shape: a.shape,
+          validFrom: a.valid_from, validToKnown: a.valid_to_known, changeKnown: !!a.change_known, t50h: a.t50_h, shape: a.shape, confirmedAt: a.confirmed_at ?? null,
           recordedAt: a.recorded_at, expiredAt: a.expired_at, supersedes: a.supersedes, supersededBy: a.superseded_by,
           plan: a.plan_status ? { agent: a.plan_agent, status: a.plan_status, outcomeRef: a.plan_outcome_ref, history: plans ? plans.all(a.id).map((p) => ({ status: p.status, at: p.at, evidencePercept: p.evidence_percept })) : [] } : null,
           pinned: !!a.pinned, entities: aEnts ? aEnts.all(a.id).map((r) => ({ entityId: r.entity_id, role: r.role })) : [],

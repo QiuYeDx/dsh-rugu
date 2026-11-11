@@ -24,12 +24,17 @@
  * @property {number} out
  */
 /**
+ * 模型为什么停下（可选，D141）：'end' 自己说完了；'length' 输出到了 maxTokens 的上限，后面的被截掉了；'other' 别的（如要调工具）。
+ * 宿主给了才带，给不了就不带——核心另有退路（最后一行不完整、输出量接近上限就按截断算）。
+ * @typedef {'end'|'length'|'other'} LlmStopReason
+ */
+/**
  * 后台 LLM。集成层自己包 ctx.llm.stream：按 use 选模型（必须在允许清单里，不跟随宿主默认模型）、排队、计数，
  * 从 finish 块取用量（§10.6）。DSH 没有 JSON 模式，核心要的结构化输出一律是 JSONL（§7.3）。
  * 失败抛错（AbortError / 超时 / 额度），核心按 fail closed 处理。
  * @typedef {object} LLMPort
  * @property {(req: {use: LlmUse, system: string, messages: LlmMessage[], maxTokens?: number, signal?: AbortSignal})
- *            => Promise<{text: string, usage: LlmUsage, model?: string}>} complete
+ *            => Promise<{text: string, usage: LlmUsage, model?: string, stopReason?: LlmStopReason}>} complete
  */
 
 /**

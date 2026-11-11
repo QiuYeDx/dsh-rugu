@@ -11,7 +11,7 @@ import { parseRef } from '../store/refs.js';
 import { ftsSearch } from '../store/fts.js';
 import { param, isNum, clip, quoteMatches, jaccard, normText, mref, rstr, modeOfPercept, normToInput, jsonParse, HOUR } from './util.js';
 import {
-  writeAssertion, writeEpisode, supersede, addSource, assertionRow, assertionSubjects, assertionEntities, perceptRow, selfIdOf,
+  writeAssertion, writeEpisode, supersede, addSource, noteConfirmed, assertionRow, assertionSubjects, assertionEntities, perceptRow, selfIdOf,
 } from './write.js';
 import { formIntention } from './plans.js';
 import { reconcileSync } from './reconcile.js';
@@ -330,7 +330,8 @@ function applyConfirm(core, { ref, p, by }) {
   const cfg = core.config.get();
   const now = core.now();
   core.store.run('UPDATE assertions SET certainty = ?, updated_at = ? WHERE id = ?', 'confirmed', now, ref.id);
-  if (row.t50_h) core.store.run('UPDATE assertions SET valid_from = ?, updated_at = ? WHERE id = ?', p.at, now, ref.id);   // 本人确认 = 重置
+  // 确认 = 到这时还成立：记在 confirmed_at，状态的成立概率从这时重新算起；「什么时候成立的」（valid_from）不动（D142）
+  noteConfirmed(core, ref.id, p.at);
   // 经验（D124）：主人确认的（applyConfirm 只在主人或本人发起时走到；经验的主体是她，本人确认走不到这里）算验证过
   if (row.kind_hint === LESSON_KIND) confirmLesson(core, ref.id, { at: now });
   const att = cfg.activation.attention[p.attention_class] ?? cfg.activation.attention.toHer;

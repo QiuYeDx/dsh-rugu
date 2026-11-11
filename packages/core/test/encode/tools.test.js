@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWorld, insertRow, ADAPTER } from './harness.js';
 import * as dynamics from '../../src/dynamics/index.js';
+import { noteConfirmed } from '../../src/encode/write.js';
 
 async function setup() {
   const w = await makeWorld();
@@ -33,6 +34,30 @@ test('确认的系数只乘一次（D137）：本人确认写进库的痕迹 = �
     const base = 1.0 * 1 * 1 * (0.8 + 0.7 * 0.3);   // toHer × w_self × w_sal(imp 5) × w_rel
     assert.equal(w.core.config.get().activation.events.confirm, 1.2);
     assert.ok(Math.abs(tr.w - base * 1.2) < 1e-9, `痕迹 w = ${tr.w}，应该是 ${base * 1.2}`);
+  } finally { await w.cleanup(); }
+});
+
+test('工具确认一条状态（D142）：成立时间不动，确认的时间记在 confirmed_at；成立概率从确认的时候重新算起', async () => {
+  const { w, ming, g, enc } = await setup();
+  try {
+    const t0 = w.clock.now() - 300 * 24 * 3600_000;   // 很久以前就成立了
+    const fact = enc.writeAssertion(w.core, { subjects: [ming], predicate: '所在城市', text: '阿明住在海边小城', kindHint: 'state', certainty: 'stated', confidence: 0.8, imp: 5,
+      validFrom: t0, survival: { t50h: 2000, shape: 1 }, sources: [{ perceptId: null, speaker: ming, asserter: ming, mode: 'told_to_her', hop: 0, confidence: 0.8, at: t0 }], norm: {}, w: 1 });
+    const before = w.assertion(fact);
+    const now = w.clock.now();
+    assert.ok(dynamics.pHold(w.core, before, now) < 0.2, '没确认：这么久了多半不成立了');
+    w.percept(g, ming, '对，我还住在那儿', { addressed: 'to-her', obsId: 'c1' });
+    const at = w.core.store.get("SELECT at FROM percepts WHERE text = '对，我还住在那儿'").at;
+    const r = await enc.fix(w.core, { triggerObsId: 'c1', speaker: actor, op: 'confirm', target: `a${fact}`, evidenceQuote: '还住在那儿' });
+    assert.equal(r.status, 'done');
+    const a = w.assertion(fact);
+    assert.equal(a.certainty, 'confirmed');
+    assert.equal(a.valid_from, t0, '确认不改「什么时候成立的」');
+    assert.equal(a.confirmed_at, at, '确认的时间记在 confirmed_at');
+    assert.ok(dynamics.pHold(w.core, a, now) > 0.99, '确认了：成立概率从确认的时候重新算起');
+    // 更早的确认不把 confirmed_at 往回拨
+    noteConfirmed(w.core, fact, at - 1000);
+    assert.equal(w.assertion(fact).confirmed_at, at);
   } finally { await w.cleanup(); }
 });
 

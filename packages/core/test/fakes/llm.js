@@ -5,7 +5,8 @@
 //   - 字符串：原样返回；
 //   - 对象数组：每个对象 JSON.stringify 成一行（JSONL）；
 //   - 函数：调用它（参数是请求），返回值再按上面两条处理；
-//   - Error：抛出（模拟 LLM 挂了、额度用完）。
+//   - Error：抛出（模拟 LLM 挂了、额度用完）；
+//   - { reply, stopReason?, out? }：reply 按上面处理，带上停止原因（D141：'length' 模拟输出被上限截断）、改报的输出 token 数。
 // 队列用完了就用 fallback[use]；也没有就抛错（测试里漏写脚本会立刻暴露，而不是悄悄返回空）。
 export class FakeLLM {
   /**
@@ -47,9 +48,15 @@ export class FakeLLM {
     if (item === undefined) throw new Error(`FakeLLM：use='${req.use}' 没有准备回复`);
     if (typeof item === 'function') item = await item(req);
     if (item instanceof Error) throw item;
+    let extra = null;
+    if (item && typeof item === 'object' && !Array.isArray(item) && 'reply' in item) {
+      extra = item;
+      item = item.reply;
+    }
     const text = Array.isArray(item) ? item.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n') : String(item);
     const inTokens = estimateTokens(req.system) + req.messages.reduce((n, m) => n + estimateTokens(m.content), 0);
-    return { text, usage: { in: inTokens, cached: 0, out: estimateTokens(text) }, model: this.model };
+    const out = Number.isFinite(extra?.out) ? extra.out : estimateTokens(text);
+    return { text, usage: { in: inTokens, cached: 0, out }, model: this.model, ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}) };
   }
 }
 

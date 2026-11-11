@@ -2453,8 +2453,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             // 【D136】提炼一直不成的段：搁置着、按退避再试，不挡后面的；这些对话的原话照常搜得到，只是还没整理成情节和事实
             s.extract ? ['提炼一直不成', s.extract.segments ? h('span', { title: '这几段对话的原话照常搜得到，只是还没整理成情节和事实；会隔一段时间再试，不挡后面的对话' },
               badge(`${fmtNum(s.extract.segments)} 段`, 'warn'),
-              ` 一时出错 ${fmtNum(s.extract.transient ?? 0)} · 一直被拒 ${fmtNum(s.extract.rejected ?? 0)}${s.extract.maxRounds ? `，最多试了 ${fmtNum(s.extract.maxRounds)} 轮` : ''}${s.extract.nextAt ? `，下次 ${when(s.extract.nextAt)}` : ''}`)
-              : '没有'] : null,
+              ` 一时出错 ${fmtNum(s.extract.transient ?? 0)} · 一直被拒 ${fmtNum(s.extract.rejected ?? 0)}${s.extract.maxRounds ? `，最多试了 ${fmtNum(s.extract.maxRounds)} 轮` : ''}${s.extract.nextAt ? `，下次 ${when(s.extract.nextAt)}` : ''}`, truncNote(s.extract))
+              : h('span', {}, '没有', truncNote(s.extract))] : null,
           ])),
           sleepCard(s.sleep),
           card({ title: '检索与嵌入' }, e.error ? h('div', { class: 'pm-err' }, errText(e)) : kv([
@@ -2519,6 +2519,12 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             x?.unclassifiedTools?.length ? h('div', { class: 'pm-sec' }, h('h3', null, '没有分类的工具'), h('div', { class: 'pm-chips' }, x.unclassifiedTools.map((t) => badge(`${t.tool} ×${t.count ?? 0}`, 'warn')))) : null)),
         spacesCard(d.spaces, () => load()),
         h('div', { class: 'pm-foot' }, h('span', null, `读取于 ${when(d.now)} · 这里只有数字，没有任何记忆内容`), btn('刷新', () => load(), { kind: 'sm' })));
+    }
+    /** 【D141】最近 7 天提炼的输出被上限截断了几次（截断的段拆小了重做，不当成功）；没有就什么都不显示。 */
+    function truncNote(x) {
+      if (!x?.truncated) return null;
+      return h('span', { class: 'pm-faint', title: '模型的输出到了上限、后面被截掉了；这几段没有照半截写进去，而是拆成更小的段重新提炼（多花几次调用）' },
+        `；近 7 天输出被截断 ${fmtNum(x.truncated)} 次${x.splits ? `，拆小重做 ${fmtNum(x.splits)} 次` : ''}`);
     }
     /** 上一次夜间整理（D138）：模型调用用了多少、哪几步因为上限少做了、泛化和日记的几个数。 */
     function sleepCard(z) {
