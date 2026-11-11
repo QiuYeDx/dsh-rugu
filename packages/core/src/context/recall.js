@@ -18,10 +18,11 @@
 // 渲染（retrieve.render）时带上目标场合（来源在这里说「在这里」）；新版本和最近被取代的那一版都能说时合成「之前……，后来……」
 // 一条；对这里的人讲过的带一句「讲过了」（S14）；暗示在可以具体一点时（hintSpecific）点出关于谁（§9.3.4）。
 // 整体恢复期间（§12.4.5 第 2 步）不给新回想。
+// 指回去（D146）：别人直接对她说的话开启的一轮，回想排在最前面的条目这个周期已经给过时，给一行「指回去」（pack.pointBackOf）。
 import { refOf, parseRef, bumpMetric } from '../store/index.js';
 import { sameId } from '../contract/index.js';
-import { pack, countSent } from './pack.js';
-import { loadSession, sentTags, budgetState, noteInteraction, clearWarm, pendingLayers } from './ledger.js';
+import { pack, countSent, pointBackOf } from './pack.js';
+import { loadSession, sentTags, budgetState, noteInteraction, clearWarm, pendingLayers, pointBackCounts } from './ledger.js';
 import { needsRefresh, refreshResident, swapStaged, isRestoring, noteSettingId } from './resident.js';
 import { activateExtras, cardFor, bestImpression, burstGap, bestName } from './people.js';
 import { buildWorking } from './working.js';
@@ -507,9 +508,32 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   // 算不出预算（D133）：这一轮不限（和原来「今天还没用」一样），记忆效果优先
   const budget = guard('budget', () => budgetState(core, session, at), () => ({ dayUsed: 0, dayLimit: Infinity, rollingLeft: Infinity }));
   // 打包出错：退回只打包工作记忆（她眼前这个人的那几句最要紧）
-  const packed = {};
-  const items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }),
+  let packed = {};
+  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }),
     () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }), []));
+  // 6a. 指回去（D146）：这一轮是别人直接对她说的话开启的（她自己开启的轮、旁听的轮、记忆工具那条路都不算——工具那条路有 D95 的提示），
+  //     回想排在这一轮新给的「想起来的 / 在场者近况」前面的条目这个周期已经给过、被去重掉了：给一行指回去，和别的条目一起再打包一次
+  //     （它排在想起来的那一档前面，块满了时挤掉的是排得比它靠后的新条目）。算不出来就照第一次打包的结果给
+  const askedTurn = !background && !prefetch && opt.mode === 'involuntary' && s.trigger === 'message' && !selfTurn
+    && !!focus && !focus.actor_self && isToHer(focus);
+  const pbCfg = cfg.context.pointBack ?? {};
+  if (askedTurn && session && sent.size && (pbCfg.max ?? 0) > 0) {
+    const pb = guard('point-back', () => pointBackOf(entries, items, sent, {
+      max: pbCfg.max, chars: pbCfg.chars, perCycle: pbCfg.perCycle, counts: pointBackCounts(core, session),
+    }), null);
+    if (pb?.entries.length) {
+      const again = {};
+      const repacked = guard('pack', () => pack([...entries, ...pb.entries], { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: again }), null);
+      if (repacked) { items = repacked; packed = again; }
+    }
+    if (!core.readOnly) {
+      try {
+        const n = items.filter((i) => i.layer === 'pointBack').length;
+        if (n) bumpMetric(core.store, 'context.pointBack', n);
+        if (pb?.capped) bumpMetric(core.store, 'context.pointBack.capped', pb.capped);
+      } catch { /* 只是计数 */ }
+    }
+  }
   // 注入预算的计数（D133，管理页的诊断）：前台这一轮超了没有、有多少条因为预算没放进去
   if (!background && !core.readOnly) {
     try {

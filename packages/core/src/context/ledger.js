@@ -7,7 +7,7 @@
 import { bumpMetric, parseRef, expireInBatches } from '../store/index.js';
 import { ContractError, LAYERS, ITEM_VERDICTS, SPEAK_LEVELS, WORKING_UNITS, isOpaqueId } from '../contract/index.js';
 import { safeJson, dayStart } from './text.js';
-import { UNMETERED_LAYERS } from './pack.js';
+import { UNMETERED_LAYERS, POINT_BACK_LAYER } from './pack.js';
 import { budgetLimits } from '../config/defaults.js';
 
 const CONTENT = new Set(['share', 'share_vague']);
@@ -396,6 +396,26 @@ export function pendingLayers(core, s) {
   if (!live.length) return out;
   for (const row of core.store.all(`SELECT items_json FROM injections WHERE nonce IN (${live.map(() => '?').join(',')})`, ...live)) {
     for (const it of safeJson(row.items_json, [])) out.add(it.layer);
+  }
+  return out;
+}
+
+/**
+ * 这个会话本周期每一条指回过几次（D146，pointBack 层；只从注入日志推，不另存）：本周期送达的真实注入块 + 还在等确认的。
+ * 回合中止没发出去的不算。只扫带 pointBack 的行（文字里先粗筛一道，大多数行不用解析）。
+ * @returns {Map<string, number>} ref → 次数
+ */
+export function pointBackCounts(core, s) {
+  const out = new Map();
+  if (!s?.session_id) return out;
+  const live = livePending(core, s);
+  const rows = core.store.all(`SELECT items_json FROM injections WHERE session_id = ? AND cycle = ? AND mode = 'live'
+      AND (seen = 1${live.length ? ` OR nonce IN (${live.map(() => '?').join(',')})` : ''}) AND instr(items_json, ?) > 0`,
+  s.session_id, s.cycle, ...live, `"${POINT_BACK_LAYER}"`);
+  for (const row of rows) {
+    for (const it of safeJson(row.items_json, [])) {
+      if (it?.layer === POINT_BACK_LAYER && typeof it.id === 'string') out.set(it.id, (out.get(it.id) ?? 0) + 1);
+    }
   }
   return out;
 }

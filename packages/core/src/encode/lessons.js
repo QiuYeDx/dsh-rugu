@@ -522,7 +522,8 @@ export function lessonUses(core, since) {
   if (!ids.size) return days;
   for (const r of core.store.all('SELECT ts, items_json FROM injections WHERE ts >= ? ORDER BY id DESC LIMIT 5000', since)) {
     for (const it of jsonParse(r.items_json, [])) {
-      if (typeof it?.id !== 'string' || !ids.has(it.id)) continue;
+      // 指回去的那一行（D146）不算又想起了一次
+      if (typeof it?.id !== 'string' || !ids.has(it.id) || it.layer === 'pointBack') continue;
       const set = days.get(it.id) ?? new Set();
       set.add(Math.floor(r.ts / DAY));
       days.set(it.id, set);

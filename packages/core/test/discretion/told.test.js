@@ -65,6 +65,18 @@ test('只给了「说个大概」的条目：记成 vague，不扩充已知圈�
   } finally { await W.cleanup(); }
 });
 
+test('指回去的那一行（D146，pointBack 层）不改早先给过的结论：全文先前给过，这一轮只指回个大概，讲全了照样记 full', async () => {
+  const { W, ming, group, fact } = await scene('t-point-back');
+  try {
+    W.session('s-g', group.key, { ledger: [W.ref(fact)] });
+    W.core.store.run(`INSERT INTO injections(ts, session_id, cycle, setting_key, layer, nonce, items_json, chars, mode, seen) VALUES (?, 's-g', 0, ?, 'pointBack', 'n-pb', ?, 10, 'live', 1)`,
+      W.now(), group.key, JSON.stringify([{ id: W.ref(fact), layer: 'pointBack', verdict: 'share_vague', appraisalRef: 'ap1' }]));
+    const pid = W.percept({ settingKey: group.key, actor: W.me, text: '主人在找新工作，下周三去面试', presence: [W.me, ming], completeness: 'recent-speakers', sessionId: 's-g' });
+    W.D.onSelfUtterance(W.core, W.core.store.get('SELECT * FROM percepts WHERE id = ?', pid));
+    assert.equal(W.core.store.get('SELECT level FROM told_log')?.level, 'full');
+  } finally { await W.cleanup(); }
+});
+
 test('说得多细看讲到了多少（§5.6、S14）：换个代词把整件事讲了一遍 = 讲全了（扩充已知圈）；只沾到人名、讲了一点点 = 说了个大概', async () => {
   const { W, owner, ming, hong, group, fact } = await scene('t-coverage');
   try {

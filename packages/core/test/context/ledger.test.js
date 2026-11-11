@@ -315,7 +315,8 @@ test('滚动预算：每会话每天的字数从注入日志算（确认过的 +
   inject(core, 's1', 'n-3', gated(core, [['a3']]), { chars: 999, mode: 'shadow' });
   let b = budgetState(core, loadSession(core, 's1'), core.now());
   assert.equal(b.dayUsed, 500);
-  assert.equal(b.dayLimit, L.injectPerSessionPerDay, '每天的上限从档位来（默认宽松）');
+  assert.equal(L.injectPerSessionPerDay, null, '默认宽松：每天不设上限（D147）');
+  assert.equal(b.dayLimit, Infinity, '不限：额度是 Infinity');
   assert.equal(L.injectShare, 0.25);
   assert.equal(b.rollingLeft, L.injectShare * N * 400 - 300, '最近 50 步：增量 × 比例 − 已确认注入的');
   assert.equal(b.rollingUsed, 300);
@@ -402,7 +403,7 @@ test('D133：上限跟着花费档位——节省是 5% / 8000 字，不设上�
   assert.deepEqual([r.dayLimit, r.rollingLimit], [12_345, Infinity]);
   // 旧配置里写的 context.rolling.maxShare / perSessionPerDay（已弃用）读到了也忽略，照档位来
   r = await run({ preset: 'loose' }, { rolling: { maxShare: 0.01 }, perSessionPerDay: 10 });
-  assert.deepEqual([r.dayLimit, r.rollingLimit], [40_000, 0.25 * r.N * 100]);
+  assert.deepEqual([r.dayLimit, r.rollingLimit], [Infinity, 0.25 * r.N * 100], '宽松档每天不限（D147），比例照旧');
 });
 
 test('日志里只有类型和计数，没有内容和场合原 id', () => withWorld(async ({ core, logger }) => {
@@ -424,13 +425,13 @@ test('D133：诊断看得到注入预算——每天超了几轮、因为预算�
   inject(core, 'sess-aaaa-1111', 'n-1', gated(core, [['a1']]), { chars: 200 });
   ctx.confirmInjection(core, 'sess-aaaa-1111', 'n-1');
   const day = new Date(core.now()).toISOString().slice(0, 10);
-  for (const [name, v] of [['context.pack.over.day', 2], ['context.pack.over.rolling', 1], ['context.pack.budgetDropped', 7]]) {
+  for (const [name, v] of [['context.pack.over.day', 2], ['context.pack.over.rolling', 1], ['context.pack.budgetDropped', 7], ['context.pointBack', 3], ['context.pointBack.capped', 1]]) {
     core.store.run('INSERT INTO metrics(day, name, value) VALUES (?, ?, ?)', day, name, v);
   }
   const h = ctx.recallHealth(core);
-  assert.deepEqual(h.days[0].inject, { overDay: 2, overRolling: 1, budgetDropped: 7 });
+  assert.deepEqual(h.days[0].inject, { overDay: 2, overRolling: 1, budgetDropped: 7, pointBack: 3, pointBackCapped: 1 }, '指回去的次数（D146）也在这里');
   const a = h.injectBudget.find((s) => s.session === 'sess-aaa');
-  assert.deepEqual(a, { session: 'sess-aaa', adapter: ADAPTER, dayUsed: 200, dayLimit: 40_000, rollingUsed: 200, rollingLimit: Math.round(0.25 * N * 100), steps: N + 1 });
+  assert.deepEqual(a, { session: 'sess-aaa', adapter: ADAPTER, dayUsed: 200, dayLimit: null, rollingUsed: 200, rollingLimit: Math.round(0.25 * N * 100), steps: N + 1 });
   const b = h.injectBudget.find((s) => s.session === 'sess-bbb');
   assert.equal(b.rollingLimit, null, '窗口还没满：不限（JSON 里是 null）');
   assert.equal(h.injectBudget.length, 2);

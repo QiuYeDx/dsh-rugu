@@ -1292,7 +1292,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     const unlimited = bc?.preset === 'unlimited';
     return card({ title: '花费护栏', aside: bc ? `现在：${presetText(bc.preset, custom)}` : '', desc: '效果优先，花费是护栏：正常用的时候后台该做的都照做，这些上限只防程序失控（死循环、刷屏的群把调用放大几十倍）和余额被后台吃光。' },
       h('div', { class: 'pm-opts' },
-        opt({ title: '预设', hint: '宽松（默认）：后台该做的都照做。节省：第二段评估只在对她说、真正等待和有意回想时跑，预取改写关掉，夜间整理只做必要项，后台花费最多是她聊天的 25%，余额不够 3 天就停后台。不设上限：给用得多、不在乎花费的时候，调用次数、token 和比例都不拦，其余和宽松一样，只留余额保护。外发审视三档都单独预留。回想注入她上下文的量也跟着档位：宽松最多占上下文增量的 25%、每个会话每天 4 万字；节省 5%、8000 字；不设上限不限。',
+        opt({ title: '预设', hint: '宽松（默认）：后台该做的都照做。节省：第二段评估只在对她说、真正等待和有意回想时跑，预取改写关掉，夜间整理只做必要项，后台花费最多是她聊天的 25%，余额不够 3 天就停后台。不设上限：给用得多、不在乎花费的时候，调用次数、token 和比例都不拦，其余和宽松一样，只留余额保护。外发审视三档都单独预留。回想注入她上下文的量也跟着档位：宽松最多占上下文增量的 25%、每个会话每天不限；节省 5%、每个会话每天 8000 字；不设上限都不限。',
           control,
           more: custom ? h('div', { class: 'pm-alert info' }, h('span', null, `现在是自定义：以${label(PRESET, bc.preset)}为基础，改了 ${changed.length} 项。点上面任一档就回到那一档，改过的都清掉。`)) : null }),
         bc ? opt({ title: '自定义', hint: '哪一档都不合适（用得特别多，或者想再省一点），就从现在的值开始一项一项改：每天的上限、一个群最多占多少、余额保护几天、后台做多做少的开关。',
@@ -2592,6 +2592,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             // 【D133】注入预算：超了以后只给「你想着的」、工作记忆和被直接问到时的回想
             ['注入预算超了（每天 / 滚动窗口）', `${fmtNum(t.inject?.overDay ?? 0)} / ${fmtNum(t.inject?.overRolling ?? 0)} 轮`],
             ['因为预算没放进去', `${fmtNum(t.inject?.budgetDropped ?? 0)} 条`],
+            // 【D146】被直接追问、最相关的那条前面已经给过时，给一行指回去；同一条本周期指回的次数到了上限就不再指
+            ['被追问时指回前面给过的', `${fmtNum(t.inject?.pointBack ?? 0)} 行${t.inject?.pointBackCapped ? `（到了次数上限没再指 ${fmtNum(t.inject.pointBackCapped)} 条）` : ''}`],
           ]),
           // 各活跃会话：今天已用 / 上限、滚动窗口已用 / 上限（窗口还没记满或档位不限时写「不限」）；用完了的标提醒色
           r.injectBudget?.length ? h('div', { class: 'pm-sec' }, h('h3', null, '各会话的注入预算（字）'),

@@ -489,6 +489,10 @@ export const DEFAULTS = deepFreeze({
     retrieveRetryMinLeftMs: 400,         // D117：retrieve 抛错（不是到点）时，剩下的时间还有这么多就再试一次
     errorLogMax: 50,                     // D117：「最近的出错」留几条（只有时刻、步骤、错误类型、代码位置，没有内容；管理页的诊断）
     intentionTries: 3,                   // 每块最多复核几条到点的意图（§5.5 第 6 条）
+    // 指回去（D146）：别人直接对她说的话开启的一轮，回想排在最前面的条目这个周期已经给过时，给一行指回去（不是整条再发一遍）。
+    // max：一轮最多指回几条（0 = 不指）；chars：每条截到多少字（沿用那一条原来的渲染：来源说法 + 内容的开头）；
+    // perCycle：同一条一个压缩周期里最多指回几次（防止每一轮都重复）
+    pointBack: { max: 2, chars: 80, perCycle: 2 },
     // 按轮污点（§9.3.7、§9.6）。notify：带污点的一轮里读到的素材要不要进「需要你知道」——D118 起默认不进（合并转发、引用、工具结果
     // 每轮都有，主人分不出该看哪条；污点本身照常标，关口①、成长的依据照旧用它），打开时同时让这类旧条目重新显示；
     // notifyMax：打开时每轮最多报几个来源；scanRows：往回扫多少条感知
@@ -614,13 +618,15 @@ export const DEFAULTS = deepFreeze({
   //   不设上限（unlimited，D121）：给重度用户——次数、token、比例都不拦，其余和宽松一样全开；余额保护照留（1 天）
   //   注入预算（D133）：回想注入她上下文的字数，花的是她聊天的输入 token。injectShare：最近 context.rolling.steps 步里受限的注入字数
   //   ≤ 同期上下文增量 × 它；injectPerSessionPerDay：每个会话每天受限的注入字数。null = 不限。「你想着的」和工作记忆不受限、也不记账。
-  //   宽松给得松（记忆效果优先）；节省是 D133 之前的数（5%、8000 字）
+  //   宽松给得松（记忆效果优先）；节省是 D133 之前的数（5%、8000 字）。
+  //   D147：宽松档不设每天的上限（原来 4 万字）。比例已经保证注入不超过聊天内容增长的四分之一，再加一个绝对数只会让最活跃的会话
+  //   先断粮（实测最活跃的群下午就用完了，之后到午夜只剩工作记忆和「你想着的」）；想要的话在「自定义」里自己设一个数
   budget: {
     preset: 'loose',
     presets: {
       loose: { mainChatRatioCap: null, dailyCalls: 3000, dailyUncachedTokens: 5_000_000, perSourceShare: 0.5,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: 0.25, injectPerSessionPerDay: 40_000 },
+        injectShare: 0.25, injectPerSessionPerDay: null },
       saving: { mainChatRatioCap: 0.25, dailyCalls: 600, dailyUncachedTokens: 1_000_000, perSourceShare: 0.3,
         stage2Scope: 'direct', prefetchRewrite: false, rerank: true, sleepDepth: 'essential', balanceProtectDays: 3,
         injectShare: 0.05, injectPerSessionPerDay: 8000 },

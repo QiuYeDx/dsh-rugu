@@ -6,6 +6,7 @@ import {
   withWorld, percept, episode, rawWindow, storyline, impression, entityName, intention, dueRow, entity,
   GROUP, DM, DM2, OTHER, ADAPTER, H, D, M,
 } from './world.js';
+import { budgetState, loadSession } from '../../src/context/ledger.js';
 
 const INVOL = { mode: 'involuntary', deadlineMs: 800, budgetChars: 900 };
 const DELIB = { mode: 'deliberate', deadlineMs: 3000, budgetChars: 900 };
@@ -326,7 +327,7 @@ test('预算：这个会话今天的额度用完了，只留「你想着的」�
   const ctx = core.mods.context;
   ctx.bindSession(core, { sessionId: 's1', settingId: DM2, adapterId: ADAPTER, confidence: 'specific' });
   percept(core, w, { sid: DM2, actor: w.ids.ming, addressed: 'to-her' });
-  // 今天已经发了 4 万字（默认宽松档每个会话每天的上限）
+  // 今天已经发了 4 万字（主人在「自定义」里设的每天上限；宽松档本身每天不限，D147）
   for (let i = 0; i < 10; i++) {
     const out = { items: [] };
     ctx.recordInjection(core, { sessionId: 's1', nonce: `old-${i}`, layer: 'block', items: out.items, chars: 4000, mode: 'live' });
@@ -344,6 +345,26 @@ test('预算：这个会话今天的额度用完了，只留「你想着的」�
   out = await ctx.recall(core, sit(DM2, { sessionId: 's1' }), DELIB);
   assert.deepEqual(ids(out).sort(), ['a1', `t${t}`].sort());
   assert.equal(metric('context.pack.over.day'), 2, '有意回想的这一轮也超了（只是想起来的那一档不受限）');
+}, { config: { budget: { overrides: { injectPerSessionPerDay: 40_000 } } } }));
+
+test('预算（D147）：宽松档每天不设上限——一个会话今天已经注入了 4 万多字，照常给（只受比例限制）', () => withWorld(async ({ core, w }) => {
+  const ctx = core.mods.context;
+  ctx.bindSession(core, { sessionId: 's1', settingId: DM2, adapterId: ADAPTER, confidence: 'specific' });
+  percept(core, w, { sid: DM2, actor: w.ids.ming, addressed: 'to-her' });
+  for (let i = 0; i < 12; i++) {
+    ctx.recordInjection(core, { sessionId: 's1', nonce: `old-${i}`, layer: 'block', items: [], chars: 4000, mode: 'live' });
+    ctx.confirmInjection(core, 's1', `old-${i}`);
+  }
+  const b = budgetState(core, loadSession(core, 's1'), core.now());
+  assert.equal(b.dayUsed, 48_000);
+  assert.equal(b.dayLimit, Infinity);
+  const t = intention(core, { target: w.ids.ming });
+  w.due = [dueRow(core, t)];
+  w.candidates = ['a1'];
+  const metric = (name) => core.store.get('SELECT SUM(value) AS v FROM metrics WHERE name = ?', name)?.v ?? 0;
+  const out = await ctx.recall(core, sit(DM2, { sessionId: 's1' }), INVOL);
+  assert.ok(ids(out).includes('a1') && ids(out).includes(`t${t}`), `想起来的照给（${ids(out)}）`);
+  assert.equal(metric('context.pack.over.day'), 0);
 }));
 
 test('预算（D133）：节省档的 8000 字用完了照样只留「你想着的」；不设上限档再多也照给', async () => {

@@ -44,8 +44,10 @@ function ledgerCandidates(core, sessions) {
     const ids = soft(core, 'context.taintLedger', () => core.mods.context.taintLedger(core, sid), []) ?? [];
     let verdicts = new Map();
     try {
-      for (const r of core.store.all('SELECT i.items_json FROM injections i JOIN sessions s ON s.session_id = i.session_id WHERE i.session_id = ? AND i.seen = 1 AND i.cycle = s.cycle', sid)) {
-        for (const it of parseJson(r.items_json, [])) if (it?.id) verdicts.set(it.id, it.verdict);
+      // 指回去的那一行（D146，pointBack 层）只是一句「前面有」，那一条的内容早先已经按当时的结论进了上下文：不拿它的结论覆盖早先的
+      // （这一轮只让说个大概，不等于前面给过的全文不在她上下文里了）
+      for (const r of core.store.all('SELECT i.items_json FROM injections i JOIN sessions s ON s.session_id = i.session_id WHERE i.session_id = ? AND i.seen = 1 AND i.cycle = s.cycle ORDER BY i.id', sid)) {
+        for (const it of parseJson(r.items_json, [])) if (it?.id && !(it.layer === 'pointBack' && verdicts.has(it.id))) verdicts.set(it.id, it.verdict);
       }
     } catch { verdicts = new Map(); }
     for (const id of ids) {
