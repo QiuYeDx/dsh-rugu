@@ -204,7 +204,9 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     try {
       pm.sessions.injected({ sessionId: claim.sessionId, nonce, layer: 'memory_recall', mode: 'live', chars: charLen(text),
         items: used.map((it) => ({ id: it.id, layer: it.layer, verdict: it.verdict, appraisalRef: it.appraisalRef, ...(typeof it.speak === 'string' ? { speak: it.speak } : {}),
-          ...(typeof it.unit === 'string' ? { unit: it.unit } : {}), ...(typeof it.unitKey === 'string' ? { unitKey: it.unitKey } : {}) })),
+          ...(typeof it.unit === 'string' ? { unit: it.unit } : {}), ...(typeof it.unitKey === 'string' ? { unitKey: it.unitKey } : {}),
+          // 这一条自己的字数（D133：注入预算按条目的层记账）
+          ...(typeof it.rendered === 'string' ? { chars: charLen(it.rendered) } : {}) })),
         ...(Number.isInteger(r.value.degradeLevel) ? { degradeLevel: r.value.degradeLevel } : {}) });
     } catch (e) {
       log.warn('tools.recall.rejected', { error: errCode(e) });

@@ -50,6 +50,9 @@ export const BUDGET_RANGES = Object.freeze({
   prefetchRewrite: { kind: 'bool' },
   rerank: { kind: 'bool' },
   sleepDepth: { kind: 'enum', values: ['full', 'essential'] },
+  // 注入预算（D133）：比例 1%–100% 或不限；每个会话每天 1000 字起（再少回想几乎给不出东西）或不限
+  injectShare: { kind: 'ratio', min: 0.01, max: 1 },
+  injectPerSessionPerDay: { kind: 'cap', min: 1000, max: 10_000_000 },
 });
 const fmtInt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 /**
@@ -776,9 +779,13 @@ export function recallHealthRow(x) {
   const nums = (o) => (isObj(o) ? Object.fromEntries(Object.entries(o).filter(([k, v]) => /^[\w.-]{1,64}$/.test(k) && Number.isFinite(v)).slice(0, 60)) : {});
   const day = (d) => ({ day: short(d?.day, 10), recalls: num(d?.recalls) ?? 0, errors: num(d?.errors) ?? 0, partial: num(d?.partial) ?? 0, lost: num(d?.lost) ?? 0,
     legacyErrors: num(d?.legacyErrors) ?? 0, aborted: num(d?.aborted) ?? 0, skipped: num(d?.skipped) ?? 0,
-    byStage: nums(d?.byStage), byCode: nums(d?.byCode), ms: nums(d?.ms), host: { ...nums(d?.host), wait: nums(d?.host?.wait) }, embed: nums(d?.embed) });
+    byStage: nums(d?.byStage), byCode: nums(d?.byCode), ms: nums(d?.ms), host: { ...nums(d?.host), wait: nums(d?.host?.wait) }, embed: nums(d?.embed),
+    inject: nums(d?.inject) });
   return {
     days: Array.isArray(x.days) ? x.days.slice(0, 7).filter(isObj).map(day) : [],
+    // 【D133】各活跃会话的注入预算：会话 id 的前几位、适配器、今天已用 / 上限、滚动窗口已用 / 上限（null = 不限或窗口还没满）、记了几步
+    injectBudget: Array.isArray(x.injectBudget) ? x.injectBudget.slice(0, 20).filter(isObj).map((s) => ({ session: short(s.session, 8), adapter: short(s.adapter, 32),
+      dayUsed: num(s.dayUsed), dayLimit: num(s.dayLimit), rollingUsed: num(s.rollingUsed), rollingLimit: num(s.rollingLimit), steps: num(s.steps) })) : [],
     buckets: Array.isArray(x.buckets) ? x.buckets.slice(0, 12).map((b) => short(b, 12)) : [],
     recent: Array.isArray(x.recent) ? x.recent.slice(0, 20).filter(isObj).map((r) => ({ at: num(r.at), stage: short(r.stage, 24), code: short(r.code, 32), frame: short(r.frame, 80),
       trigger: short(r.trigger, 16), level: num(r.level), layer: short(r.layer, 20), waitedMs: num(r.waitedMs), served: num(r.served), bg: r.bg === true })) : [],

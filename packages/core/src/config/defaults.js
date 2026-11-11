@@ -466,7 +466,10 @@ export const DEFAULTS = deepFreeze({
       todayItems: 3,                     // 有意回想时「今天到目前为止」给几条小结
     },
     blockMaxChars: 900,
-    rolling: { steps: 50, maxShare: 0.05 },   // 最近 50 步里注入的 token ≤ 同期上下文增量的 5%
+    // 注入预算（§10.4）：上限跟着花费档位走（D133，budget.presets 的 injectShare / injectPerSessionPerDay，生效值从 budgetLimits() 取）。
+    // rolling.steps 照旧有效：滚动窗口看最近多少步。
+    // rolling.maxShare、perSessionPerDay 已弃用（D133）：读到了也忽略，改看档位；留着只是不让旧的覆盖报未知字段
+    rolling: { steps: 50, maxShare: 0.05 },
     perSessionPerDay: 8000,
     pendingTtlMin: 30,                   // 注入后一直没确认、也没中止的块，过了这么久不再挡着它的条目（§10.4「已发过」）
     cacheTtlMin: 10,                     // recallCached 用的已过关口①的条目缓存多久
@@ -593,15 +596,21 @@ export const DEFAULTS = deepFreeze({
   // ── §10.6 预算：三档预设，默认宽松（§17 Q10）。核心只读这些数，执行在集成层的 BudgetPort
   //   调用次数、未命中输入的上限写 null = 不设上限；perSourceShare 1 = 一个来源不单独限；mainChatRatioCap null = 不设比例上限
   //   不设上限（unlimited，D121）：给重度用户——次数、token、比例都不拦，其余和宽松一样全开；余额保护照留（1 天）
+  //   注入预算（D133）：回想注入她上下文的字数，花的是她聊天的输入 token。injectShare：最近 context.rolling.steps 步里受限的注入字数
+  //   ≤ 同期上下文增量 × 它；injectPerSessionPerDay：每个会话每天受限的注入字数。null = 不限。「你想着的」和工作记忆不受限、也不记账。
+  //   宽松给得松（记忆效果优先）；节省是 D133 之前的数（5%、8000 字）
   budget: {
     preset: 'loose',
     presets: {
       loose: { mainChatRatioCap: null, dailyCalls: 3000, dailyUncachedTokens: 5_000_000, perSourceShare: 0.5,
-        stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1 },
+        stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
+        injectShare: 0.25, injectPerSessionPerDay: 40_000 },
       saving: { mainChatRatioCap: 0.25, dailyCalls: 600, dailyUncachedTokens: 1_000_000, perSourceShare: 0.3,
-        stage2Scope: 'direct', prefetchRewrite: false, rerank: true, sleepDepth: 'essential', balanceProtectDays: 3 },
+        stage2Scope: 'direct', prefetchRewrite: false, rerank: true, sleepDepth: 'essential', balanceProtectDays: 3,
+        injectShare: 0.05, injectPerSessionPerDay: 8000 },
       unlimited: { mainChatRatioCap: null, dailyCalls: null, dailyUncachedTokens: null, perSourceShare: 1,
-        stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1 },
+        stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
+        injectShare: null, injectPerSessionPerDay: null },
     },
     // 主人单独改过的项（管理页「花费护栏 → 自定义」或手改文件），覆盖预设。能写的键和取值见 BUDGET_OVERRIDE_KEYS / checkBudgetOverride；
     // 其中 dailyOutputTokens（每天输出的上限，null = 不设）不在预设里：不改时按宿主每档的数（host.budget.dailyOutputTokens）
@@ -701,6 +710,9 @@ const BUDGET_OVERRIDE_CHECKS = Object.freeze({
   prefetchRewrite: boolV,
   rerank: boolV,
   sleepDepth: oneOfV(['full', 'essential']),
+  // 注入预算（D133）：null = 不限
+  injectShare: (v) => (v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1) ? null : '应为大于 0、不超过 1 的数，或 null（不限）'),
+  injectPerSessionPerDay: capV,
 });
 /** budget.overrides 能写的键（顺序就是管理页「自定义」里的顺序）。 */
 export const BUDGET_OVERRIDE_KEYS = Object.freeze(Object.keys(BUDGET_OVERRIDE_CHECKS));

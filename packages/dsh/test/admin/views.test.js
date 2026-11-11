@@ -323,11 +323,15 @@ test('花费护栏的数据：三档每一项的值（每天输出按宿主每�
   assert.equal(v.preset, 'saving');
   assert.equal(v.custom, true);
   assert.deepEqual(v.overrides, { dailyCalls: 1200, rerank: false }, '不认识的键、越界的值不算改过');
-  assert.deepEqual(v.keys, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth']);
+  assert.deepEqual(v.keys, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
+    'injectShare', 'injectPerSessionPerDay']);
   assert.deepEqual(v.presets.loose, { dailyCalls: 3000, dailyUncachedTokens: 5_000_000, dailyOutputTokens: 1_000_000, perSourceShare: 0.5, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full' });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.25, injectPerSessionPerDay: 40_000 });
   assert.deepEqual(v.presets.unlimited, { dailyCalls: null, dailyUncachedTokens: null, dailyOutputTokens: null, perSourceShare: 1, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full' });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null });
+  // 注入预算（D133）：节省档是原来的数
+  assert.deepEqual([v.presets.saving.injectShare, v.presets.saving.injectPerSessionPerDay], [0.05, 8000]);
+  assert.deepEqual([v.effective.injectShare, v.effective.injectPerSessionPerDay], [0.05, 8000]);
   assert.equal(v.effective.dailyCalls, 1200);
   assert.equal(v.effective.dailyOutputTokens, 300_000);
   assert.equal(v.effective.rerank, false);
@@ -358,6 +362,15 @@ test('花费护栏的校验：范围、整数、枚举；不设上限只给上�
   assert.throws(() => budgetValue('sleepDepth', 'half'), /full \/ essential/);
   assert.throws(() => budgetValue('rerank', 1), /true \/ false/);
   assert.throws(() => budgetValue('egressReservePerDay', 5), /不认识/);
+  // 注入预算（D133）：比例 1%–100% 或不限；每天的字数 1000 起或不限
+  assert.equal(budgetValue('injectShare', null), null);
+  assert.equal(budgetValue('injectShare', 0.25), 0.25);
+  assert.throws(() => budgetValue('injectShare', 0), /1%–100%，或不设/);
+  assert.throws(() => budgetValue('injectShare', 1.2), /1%–100%/);
+  assert.equal(budgetValue('injectPerSessionPerDay', null), null);
+  assert.equal(budgetValue('injectPerSessionPerDay', 20_000), 20_000);
+  assert.throws(() => budgetValue('injectPerSessionPerDay', 999), /1,000–10,000,000 的整数/);
+  assert.throws(() => budgetValue('injectPerSessionPerDay', 1500.5), /整数/);
 });
 
 test('花费护栏的风险：和现在生效的比，只提真的变了的', () => {

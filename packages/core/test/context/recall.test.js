@@ -322,24 +322,49 @@ test('今天到目前为止：被直接问到时给她今天在别的场合的�
   assert.deepEqual(ids(out, 'todaySoFar'), [`e${sum}`]);
 }));
 
-test('预算：这个会话今天的额度用完了，只留「你想着的」；有意回想照常给', () => withWorld(async ({ core, w }) => {
+test('预算：这个会话今天的额度用完了，只留「你想着的」；有意回想照常给；前台这一轮超了记计数（D133）', () => withWorld(async ({ core, w }) => {
   const ctx = core.mods.context;
   ctx.bindSession(core, { sessionId: 's1', settingId: DM2, adapterId: ADAPTER, confidence: 'specific' });
   percept(core, w, { sid: DM2, actor: w.ids.ming, addressed: 'to-her' });
-  // 今天已经发了 8000 字
+  // 今天已经发了 4 万字（默认宽松档每个会话每天的上限）
   for (let i = 0; i < 10; i++) {
     const out = { items: [] };
-    ctx.recordInjection(core, { sessionId: 's1', nonce: `old-${i}`, layer: 'block', items: out.items, chars: 800, mode: 'live' });
+    ctx.recordInjection(core, { sessionId: 's1', nonce: `old-${i}`, layer: 'block', items: out.items, chars: 4000, mode: 'live' });
     ctx.confirmInjection(core, 's1', `old-${i}`);
   }
   const t = intention(core, { target: w.ids.ming });
   w.due = [dueRow(core, t)];
   w.candidates = ['a1'];
+  const metric = (name) => core.store.get('SELECT SUM(value) AS v FROM metrics WHERE name = ?', name)?.v ?? 0;
   let out = await ctx.recall(core, sit(DM2, { sessionId: 's1' }), INVOL);
   assert.deepEqual(ids(out), [`t${t}`]);
+  assert.equal(metric('context.pack.over.day'), 1);
+  assert.ok(metric('context.pack.budgetDropped') >= 1, '想起来的那条因为预算没放进去');
+  assert.equal(metric('context.pack.over.rolling'), 0);
   out = await ctx.recall(core, sit(DM2, { sessionId: 's1' }), DELIB);
   assert.deepEqual(ids(out).sort(), ['a1', `t${t}`].sort());
+  assert.equal(metric('context.pack.over.day'), 2, '有意回想的这一轮也超了（只是想起来的那一档不受限）');
 }));
+
+test('预算（D133）：节省档的 8000 字用完了照样只留「你想着的」；不设上限档再多也照给', async () => {
+  for (const preset of ['saving', 'unlimited']) {
+    await withWorld(async ({ core, w }) => {
+      const ctx = core.mods.context;
+      ctx.bindSession(core, { sessionId: 's1', settingId: DM2, adapterId: ADAPTER, confidence: 'specific' });
+      percept(core, w, { sid: DM2, actor: w.ids.ming, addressed: 'to-her' });
+      for (let i = 0; i < 10; i++) {
+        ctx.recordInjection(core, { sessionId: 's1', nonce: `old-${i}`, layer: 'block', items: [], chars: 800, mode: 'live' });
+        ctx.confirmInjection(core, 's1', `old-${i}`);
+      }
+      const t = intention(core, { target: w.ids.ming });
+      w.due = [dueRow(core, t)];
+      w.candidates = ['a1'];
+      const out = await ctx.recall(core, sit(DM2, { sessionId: 's1' }), INVOL);
+      if (preset === 'saving') assert.deepEqual(ids(out), [`t${t}`]);
+      else assert.ok(ids(out).includes('a1') && ids(out).includes(`t${t}`), `不限：想起来的照给（${ids(out)}）`);
+    }, { config: { budget: { preset } } });
+  }
+});
 
 test('按轮污点：目标里带着这一轮的污点（关口①据此不给能说，§9.6）', () => withWorld(async ({ core, w }) => {
   const ctx = core.mods.context;

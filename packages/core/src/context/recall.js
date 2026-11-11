@@ -487,10 +487,19 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   // 6. 缓存（给 recallCached），然后按这个会话去重、打包。预取时替这一轮先判的不进这份缓存：它按预计的污点判，
   // 只用来让第二段的结论提前进判定缓存（按污点分开），不直接交给宿主
   if (!prefetch) guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries, degradeLevel, mode, at, triggerEntityId }));
-  const budget = guard('budget', () => budgetState(core, session, at), () => ({ dayUsed: 0, dayLimit: cfg.context.perSessionPerDay, rollingLeft: Infinity }));
+  // 算不出预算（D133）：这一轮不限（和原来「今天还没用」一样），记忆效果优先
+  const budget = guard('budget', () => budgetState(core, session, at), () => ({ dayUsed: 0, dayLimit: Infinity, rollingLeft: Infinity }));
   // 打包出错：退回只打包工作记忆（她眼前这个人的那几句最要紧）
-  const items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget }),
-    () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget }), []));
+  const packed = {};
+  const items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }),
+    () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed }), []));
+  // 注入预算的计数（D133，管理页的诊断）：前台这一轮超了没有、有多少条因为预算没放进去
+  if (!background && !core.readOnly) {
+    try {
+      if (packed.over) bumpMetric(core.store, `context.pack.over.${packed.over}`);
+      if (packed.budgetDropped > 0) bumpMetric(core.store, 'context.pack.budgetDropped', packed.budgetDropped);
+    } catch { /* 只是计数 */ }
+  }
   if (!background) guard('continuity', () => noteContinuity(core, wm.top, items));
 
   if (!background && session) {

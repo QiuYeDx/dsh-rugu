@@ -1169,6 +1169,9 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     prefetchRewrite: { name: '预取改写', options: [[true, '开'], [false, '关']], hint: '把对她说的话里的「那个」「他」先改写成线索再回想。开：指代多的话想得更准；关：省一点。' },
     rerank: { name: '重排', options: [[true, '开'], [false, '关']], hint: '回想的候选再排一次序。在本机算、不花模型钱（要配了重排服务才有用）；关掉排序差一点。' },
     sleepDepth: { name: '夜间整理', options: [['full', '完整'], ['essential', '只做必要项']], hint: '完整：泛化、反思、社区、日记、自我概念都做；只做必要项：省钱，她长进得慢一些。' },
+    // 注入预算（D133）：花的是她聊天的输入，不是后台的钱
+    injectShare: { name: '回想注入最多占上下文增量的', unit: '%', pct: true, none: '不限', hint: '最近 50 步里，回想注入她上下文的字数最多是同期上下文增长的多少。调高：想起来的给得更全；调低：她聊天的输入少一点。「你想着的」和工作记忆不算在内。' },
+    injectPerSessionPerDay: { name: '每个会话每天回想注入', unit: '字', none: '不限', hint: '一个会话一天里回想最多注入多少字（零点清零）。到了以后当天只给「你想着的」、工作记忆和被直接问到时的回想，别的先不给。' },
   };
   /** 一项的值写成人话（null = 不设上限）。 */
   function budgetVal(k, v) {
@@ -1252,7 +1255,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
         (bc.keys ?? Object.keys(BUDGET_FIELDS)).map(row));
     }
     draw();
-    add(dlg.body, h('p', { class: 'pm-desc' }, '按自己的用量改。前几条是每天的上限（零点清零），后几条是后台做多做少的开关。保存后立即生效；和那一档一样的项不算改过，随时可以在花费护栏里点一档回去。'), list);
+    add(dlg.body, h('p', { class: 'pm-desc' }, '按自己的用量改。前几条是每天的上限（零点清零），中间几条是后台做多做少的开关，最后两条是回想往她上下文里注入多少（花在她聊天的输入上）。保存后立即生效；和那一档一样的项不算改过，随时可以在花费护栏里点一档回去。'), list);
     const save = btn('保存', async () => {
       const out = {};
       let bad = null;
@@ -1282,7 +1285,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     const unlimited = bc?.preset === 'unlimited';
     return card({ title: '花费护栏', aside: bc ? `现在：${presetText(bc.preset, custom)}` : '', desc: '效果优先，花费是护栏：正常用的时候后台该做的都照做，这些上限只防程序失控（死循环、刷屏的群把调用放大几十倍）和余额被后台吃光。' },
       h('div', { class: 'pm-opts' },
-        opt({ title: '预设', hint: '宽松（默认）：后台该做的都照做。节省：第二段评估只在对她说、真正等待和有意回想时跑，预取改写关掉，夜间整理只做必要项，后台花费最多是她聊天的 25%，余额不够 3 天就停后台。不设上限：给用得多、不在乎花费的时候，调用次数、token 和比例都不拦，其余和宽松一样，只留余额保护。外发审视三档都单独预留。',
+        opt({ title: '预设', hint: '宽松（默认）：后台该做的都照做。节省：第二段评估只在对她说、真正等待和有意回想时跑，预取改写关掉，夜间整理只做必要项，后台花费最多是她聊天的 25%，余额不够 3 天就停后台。不设上限：给用得多、不在乎花费的时候，调用次数、token 和比例都不拦，其余和宽松一样，只留余额保护。外发审视三档都单独预留。回想注入她上下文的量也跟着档位：宽松最多占上下文增量的 25%、每个会话每天 4 万字；节省 5%、8000 字；不设上限不限。',
           control,
           more: custom ? h('div', { class: 'pm-alert info' }, h('span', null, `现在是自定义：以${label(PRESET, bc.preset)}为基础，改了 ${changed.length} 项。点上面任一档就回到那一档，改过的都清掉。`)) : null }),
         bc ? opt({ title: '自定义', hint: '哪一档都不合适（用得特别多，或者想再省一点），就从现在的值开始一项一项改：每天的上限、一个群最多占多少、余额保护几天、后台做多做少的开关。',
@@ -1298,6 +1301,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
           ['一个群或私聊最多占', share],
           ['后台花费最多是她聊天的', L.mainChatRatioCap != null ? pct(L.mainChatRatioCap) : '不设（只看上面的上限）'],
           ['余额保护', L.balanceProtectDays ? `余额不够 ${L.balanceProtectDays} 天的预计花费时停后台` : '关了'],
+          bc ? ['回想注入她的上下文', `最多占上下文增量的 ${budgetVal('injectShare', bc.effective?.injectShare)}，每个会话每天 ${budgetVal('injectPerSessionPerDay', bc.effective?.injectPerSessionPerDay)}`] : null,
           ['余额还够', balanceText(bud)],
         ], true),
         h('div', { class: 'pm-sec' },
@@ -2527,7 +2531,18 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             ['超时后退回缓存给了', fmtNum(t.host?.cachedServed ?? 0)],
             ['查询嵌入失败 / 重试 / 重试成功', `${fmtNum(t.embed?.failed ?? 0)} / ${fmtNum(t.embed?.retry ?? 0)} / ${fmtNum(t.embed?.retryOk ?? 0)}`],
             ['昨天出错 / 整轮没给', `${fmtNum(y.errors ?? 0)} / ${fmtNum(y.lost ?? 0)}${y.legacyErrors ? `（另有升级前 ${fmtNum(y.legacyErrors)}）` : ''}`],
-          ])),
+            // 【D133】注入预算：超了以后只给「你想着的」、工作记忆和被直接问到时的回想
+            ['注入预算超了（每天 / 滚动窗口）', `${fmtNum(t.inject?.overDay ?? 0)} / ${fmtNum(t.inject?.overRolling ?? 0)} 轮`],
+            ['因为预算没放进去', `${fmtNum(t.inject?.budgetDropped ?? 0)} 条`],
+          ]),
+          // 各活跃会话：今天已用 / 上限、滚动窗口已用 / 上限（窗口还没记满或档位不限时写「不限」）；用完了的标提醒色
+          r.injectBudget?.length ? h('div', { class: 'pm-sec' }, h('h3', null, '各会话的注入预算（字）'),
+            kv(r.injectBudget.map((s) => {
+              const lim = (v) => (v == null ? '不限' : fmtNum(v));
+              const over = (s.dayLimit != null && (s.dayUsed ?? 0) >= s.dayLimit) || (s.rollingLimit != null && (s.rollingUsed ?? 0) >= s.rollingLimit);
+              const roll = s.rollingLimit == null ? `不限（记了 ${fmtNum(s.steps ?? 0)} 步）` : `${fmtNum(s.rollingUsed ?? 0)} / ${fmtNum(s.rollingLimit)}`;
+              return [h('span', { class: 'pm-mono' }, s.session), [over ? badge('用完了', 'warn') : null, ` 今天 ${fmtNum(s.dayUsed ?? 0)} / ${lim(s.dayLimit)}，滚动窗口 ${roll}`]];
+            }))) : null),
           h('div', { class: 'pm-sec', style: { marginTop: '0' } }, h('h3', null, '耗时（毫秒）'),
             msTotal ? h('div', { class: 'pm-bars' }, buckets.map((b) => {
               const n = t.ms?.[b] ?? 0;

@@ -2,11 +2,11 @@
 // 同一层里最新的一组先分预算（alloc），展示顺序不变（最新的一组在最后）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS } from '../../src/config/defaults.js';
+import { DEFAULTS, budgetLimits } from '../../src/config/defaults.js';
 import { pack } from '../../src/context/pack.js';
 
 const cfg = DEFAULTS;
-const free = { dayUsed: 0, dayLimit: cfg.context.perSessionPerDay, rollingLeft: Infinity };
+const free = { dayUsed: 0, dayLimit: budgetLimits(cfg).injectPerSessionPerDay, rollingLeft: Infinity };
 const W = (ref, gi, i, n, chars) => ({
   ref, layer: 'working', verdict: 'share', rendered: '字'.repeat(chars), provenance: '', confidence: 1, appraisalRef: `ap-${ref}`,
   group: `wm:${gi}`, order: gi * 1000 + i * 10, alloc: (n - 1 - gi) * 1000 + i * 10, prio: i, speak: 'careful',
