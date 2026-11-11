@@ -311,11 +311,12 @@ export function evaluateOne(core, m, a, memo, ctx = {}) {
   // 别人的敏感事、问的人不是说的人（D102）：已评估、敏感度 ≥ notTellerShareMaxSensitivity、离开了原来的场合、这里有人当时没听到、这一轮的触发者
   // 不是说这件事的人、听的人也不只是管理者 → 最多说个大概（上限在调用第二段之前写在卡片上）。和还没评估的原话「别人问起最多说个大概」
   // 同一个道理：看的是代码看得到的事实（谁说的、谁在问、多敏感），不靠第二段自己报的分寸（它可能被提问的人带偏）
-  // 敏感度用「这条记忆的敏感度事实」（D135）：规范的和来源原话第一眼的取大
-  const sf = sensitivityFact(core, m, memo);
-  if (!norm.unassessed && !hisOwn && !mgrOnly && !N.empty && !N.sameSetting && (sf.value ?? 0) >= (th.notTellerShareMaxSensitivity ?? 0.5)) {
+  // 这条上限只看规范的敏感度，不看第一眼的（D135 一度改成取大，当天改回）：线上第一眼落在 0.5–0.7 的 34 句几乎都是群里的玩笑、
+  // 亲昵的话、聊她自己的话——那一段的分数更像「情绪浓不浓」，不是「私不私密」，拿它压上限只会把正常的记忆降成说个大概
+  if (!norm.unassessed && !hisOwn && !mgrOnly && !N.empty && !N.sameSetting && (norm.sensitivity ?? 0) >= (th.notTellerShareMaxSensitivity ?? 0.5)) {
     capTo('share_vague', 'sensitive');
   }
+  const sf = sensitivityFact(core, m, memo);
   // 给第三方的敏感私事（D113，非公开目标的一条上下文底线）：和上面同一组事实，只是阈值用 b5Sensitivity——敏感度 ≥ 0.7、
   // 不是他自己的事、听的人不只是管理者、这里有人当时没听到而且不在同一场合。只多导出这一个量，第一段别的规则不因它改变。
   // D135：不再限「还没评估的单条感知」——感知、原文窗口、情节、事实都看，评估过的也照样看来源原话的第一眼

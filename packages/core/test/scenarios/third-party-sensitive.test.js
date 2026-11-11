@@ -131,3 +131,34 @@ test('外发守护：他自己问起时注入过的原文窗口，后来别人�
     assert.equal(c.verdict, 'speak', `平常的话不挡 ${JSON.stringify(c.reasons)}`);
   } finally { await w.close(); }
 });
+
+test('第一眼落在中间一段（0.6）、规范很低：别人在群里问起，不因为第一眼降成「说个大概」——那条上限只看规范（D135 当天的修正）', async () => {
+  const { evaluate } = await import('../../src/discretion/stage1.js');
+  const MID = '今天心情有点复杂，说不上来';
+  const w = await openWorld({ seed: SEED, name: 'tps-mid', config: LIVE, friendDm: true,
+    llm: new FakeLLM({ fallback: { appraise: () => [], glance: glancer((t) => (t.text.includes('复杂') ? { sens: 0.6 } : {})) } }) });
+  try {
+    addGroup(w);
+    await w.flush();
+    const { core } = w;
+    const D = core.mods.discretion;
+    const a = w.say('friendDm', 'friend', MID, TO_HER);
+    const b = w.say('friendDm', 'friend', PLAIN, TO_HER);
+    await w.flush();
+    await D.glancesIdle(core);
+    const mid = w.perceptOf(a);
+    const plain = w.perceptOf(b);
+    assert.equal(D.glancesOf(core, [mid.id]).get(mid.id)?.sens, 0.6);
+    for (const id of [mid.id, plain.id]) D.writeNorm(core, { kind: 'percept', id }, { sensitivity: 0.1, restriction: 'none' });
+    core.mods.intake.markAssessed(core, [mid.id, plain.id]);
+    core.store.run("UPDATE percepts SET norm_state = 'assessed' WHERE setting_key = ?", mid.setting_key);
+    const ask = w.say('groupY', 'other', '@她 他最近怎么样', ASK);
+    await w.flush();
+    const target = D.targetFor(core, { settingKey: w.keyOf('groupY'), homeSettingKey: w.keyOf('groupY'), sessionId: null,
+      triggerEntityId: w.perceptOf(ask).actor_entity_id, mode: 'involuntary', at: w.clock.now() });
+    const evMid = evaluate(core, { kind: 'percept', id: mid.id }, target, new Map());
+    const evPlain = evaluate(core, { kind: 'percept', id: plain.id }, target, new Map());
+    assert.equal(evMid.sensitiveOther, false, '没到 0.7：底线不触发');
+    assert.deepEqual([evMid.decision, evMid.cap ?? null], [evPlain.decision, evPlain.cap ?? null], '和一句平常的话判得一样，没有被第一眼的 0.6 压成说个大概');
+  } finally { await w.close(); }
+});
