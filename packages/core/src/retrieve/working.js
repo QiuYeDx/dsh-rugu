@@ -24,6 +24,8 @@
 // 最多 recall.working.repliedRun 句）一起带（repliedLead）。这几句都不是候选行：不参与 A、排名和切段，只在算他这一行的话题相似度时
 // 把它们的词并进来（他回的话继承被回那句的话题）；带不带进她心里由 discretion.admitWorking 逐句按第一段判（replied），怎么摆由 context 定。
 // 闲聊段的 core 另加「和眼前话题最相近的他的那一句」（topicSim ≥ recall.working.onTopicMin，D145）。
+// 闲聊段的 core 里「他最后一句」取有内容的那句，纯动作（拍一拍）不顶掉它；最新那一行是她的回话时，换成她接的那一句他的话（D148：
+// 回复 / 引用的目标，其次词对得上的，answeredBy；对不上照旧是他最后一句）——留着她的回话就留着他问的那句。
 import { safe, selfId, metric } from './util.js';
 
 const COLS = 'id, adapter, setting_key, at, actor_entity_id, actor_self, kind, text, w_enc, visible_to, addressed, mentions_json, media_json, reply_to_key, quote_json';
@@ -482,16 +484,22 @@ function buildUnits(core, { lines, exchanges, openIntents, overdueOf, gl, W, her
     u.latestRoot = false;
     if (u.kind === 'open') continue;
     if (u.kind === 'talk') {
-      // 闲聊的 core 是最新的一两句（他最后一句和最新那一行）：开头那句可能是几个小时前的一张图（评审：「［图片］ …（中间又来回了 72 句）」占名额）
+      // 闲聊的 core 是最新的一两句（他最后一句和最新那一行）：开头那句可能是几个小时前的一张图（评审：「［图片］ …（中间又来回了 72 句）」占名额）。
+      // 他最后一句取他最后一句有内容的话：纯动作（拍一拍这种，kind = action）不顶掉它（D148，实测问题 #47：带时间的段头挂在拍一拍上，
+      // 他有内容的那一句被折掉了）；他只有动作时照旧取最后一个动作
       const first = ls.find((l) => l.role === 'trigger') ?? ls[0];
-      const lastHis = [...ls].reverse().find((l) => l.role === 'trigger') ?? ls.at(-1);
+      const his = ls.filter((l) => l.role === 'trigger');
+      const lastHis = [...his].reverse().find((l) => l.row?.kind !== 'action') ?? his.at(-1) ?? ls.at(-1);
+      // 最新那一行是她的回话：她接的是他哪一句，那一句也留着（D148）——留着她的回话却折掉他问的那句，她自己读着都接不上
+      const answered = ls.at(-1).role === 'reply' ? answeredBy(core, ls.at(-1), ls, W, own) : null;
       u.root = first.role === 'trigger' ? first.ref : null;
       // 加上和眼前话题最相近的他的那一句（D145）：几十句的闲聊里切题的那一句不是最新的，只留最新的一两句它就被省掉了。
       // 相似度过了 onTopicMin 才加（和 B1 豁免「他就在这里提起了它」同一个口径），没过就和原来一样
       const onTopicMin = Number.isFinite(W.onTopicMin) ? W.onTopicMin : 0.35;
       const onTopic = ls.filter((l) => l.role === 'trigger' && (l.topicSim ?? 0) >= onTopicMin)
         .sort((x, y) => y.topicSim - x.topicSim || y.perceptId - x.perceptId)[0] ?? null;
-      u.core = [...new Set([lastHis.ref, ls.at(-1).ref, ...(onTopic ? [onTopic.ref] : [])])];
+      // 她接的那一句代替他最后一句（他最后一句在她回话之前，又不是她接的那句，省掉它不丢意思；core 的行数不变）
+      u.core = [...new Set([(answered ?? lastHis).ref, ls.at(-1).ref, ...(onTopic ? [onTopic.ref] : [])])];
       continue;
     }
     // thread：根；根之后她的前 acceptLines 句；最后一步和她紧接着的回答；根改掉了的那一句（准入了才出现，见 context）
@@ -639,6 +647,47 @@ function repliedTarget(core, r, people, W, own) {
   return { main, lead };
 }
 
+/**
+ * 她这一句回话接的是他哪一句（D148，和 D145「他在回哪一句」同一个办法，只认结构和词的重合，不认任何关键词）。ls 是这一段的行（按 id 排好）。
+ *   - 她这一句带着回复 / 引用的目标，目标是这一段里他的一句：就是它；
+ *   - 否则在这一段里她这一句之前、他最近的 recall.working.repliedScan 句有内容的话（纯动作不算）里，挑和她这一句词重合最多的
+ *     （他那一句的词有多大一部分出现在她这一句里）；一样多的取近的；都对不上（0）返回 null——那时他最后一句已经在 core 里了。
+ * @returns {object|null}  他的那一行
+ */
+function answeredBy(core, reply, ls, W, own) {
+  const r = reply.row ?? {};
+  const his = ls.filter((l) => l.role === 'trigger' && l.perceptId < reply.perceptId);
+  if (!his.length) return null;
+  let qid = null;
+  if (r.reply_to_key && r.adapter) {
+    qid = safe(core, 'workingAnsweredKey', () => core.store.get('SELECT id FROM percepts WHERE adapter = ? AND ext_key = ?', r.adapter, r.reply_to_key)?.id ?? null, null);
+  } else if (r.quote_json) {
+    let qj = null;
+    try { qj = JSON.parse(r.quote_json); } catch { qj = null; }
+    if (Number.isSafeInteger(qj?.perceptId)) qid = qj.perceptId;
+    else if (typeof qj?.obsKey === 'string' && r.adapter) {
+      qid = safe(core, 'workingAnsweredQuote', () => core.store.get('SELECT id FROM percepts WHERE adapter = ? AND ext_key = ?', r.adapter, qj.obsKey)?.id ?? null, null);
+    }
+  }
+  if (qid != null) return his.find((l) => l.perceptId === qid) ?? null;
+  const scan = Math.max(1, Math.floor(W.repliedScan ?? 4));
+  const cands = his.filter((l) => l.row?.kind !== 'action').reverse().slice(0, scan);   // 近的在前
+  if (!cands.length) return null;
+  const mine = termsOf(core, r, own);
+  if (!mine.size) return null;
+  let best = null;
+  let bestV = 0;
+  for (const l of cands) {
+    const t = termsOf(core, l.row, own);
+    if (!t.size) continue;
+    let k = 0;
+    for (const w of t) if (mine.has(w)) k += 1;
+    const v = k / t.size;
+    if (v > bestV) { bestV = v; best = l; }
+  }
+  return best;
+}
+
 function isHere(core, id, here) {
   return safe(core, 'workingReplacedHere', () => core.store.get('SELECT setting_key AS k FROM percepts WHERE id = ?', id)?.k === here, false) ?? false;
 }
@@ -670,7 +719,9 @@ function mk(core, r, role) {
     ref: `p${r.id}`, perceptId: r.id, settingKey: r.setting_key, at: r.at, role, actorEntityId: r.actor_entity_id ?? null,
     text, w: r.w_enc, A: 0, parts: { B: 0, trigger: 0, topic: 0, open: 0 }, topicSim: 0, focusSim: 0, open: false, intentionIds: [],
     context: null, primary: false, anchor: false, exchange: '', unitKey: null,
-    row: { id: r.id, text: r.text, addressed: r.addressed, mentions_json: r.mentions_json ?? null, ...(seen ? { note: seen.summary } : {}) },
+    // kind（纯动作不顶掉有内容的话）、回复 / 引用的目标（她的回话接的是他哪一句）：D148
+    row: { id: r.id, text: r.text, addressed: r.addressed, mentions_json: r.mentions_json ?? null, kind: r.kind ?? null, adapter: r.adapter ?? null,
+      reply_to_key: r.reply_to_key ?? null, quote_json: r.quote_json ?? null, ...(seen ? { note: seen.summary } : {}) },
   };
 }
 

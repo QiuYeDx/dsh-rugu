@@ -1,7 +1,9 @@
 // 按目标场合渲染一条记忆（§5.3「存储比人精确，表达像人」、§5.4 时态、§6.6 措辞、§8.5 来源说法、F25 绝对时间）。
 //   - 来源在写入时就精确记录；「像人」只在措辞上：激活低时「我是听谁说的」说成「好像是听那边谁提过」（来源比内容忘得快）；
 //   - 时态由 dynamics.pHold + tense 决定；计划带状态；被取代的旧版本、同类事的哪一次都写明；
-//   - share_vague 只用第二段写好的含糊版本，来源也含糊；时间一律写绝对时间（注入的文字会留在会话里，「昨天」过两天就错了）；
+//   - share_vague 只用第二段写好的含糊版本，来源也含糊；
+//   - 时间按人感觉的写（D148，lang.describeTime）：「今晚 21:39 · 20 分钟前」「昨天晚上 22:14」「周日（11/8）下午」，不让她自己和「现在」做减法。
+//     会冻结一段时间的文字（常驻区）传 timeStyle 'day'，不带「多久以前」；钟点和日子照样写着，留在会话里也认得出是什么时候（F25）；
 //   - 文字过 intake.sanitizeForPrompt，整条 ≤ itemChars。
 // 渲染出来的文字是给她自己看的（注入块整体对她说，§10.4），所以她自己写成「你」；provenance 是不带人称的短说法。
 import { charLen, clip, parseJson, safe } from './util.js';
@@ -69,7 +71,8 @@ export function phrasesFor(core) {
 }
 
 /**
- * 绝对时间（F25）：本地时区按 config.time.tzOffsetMin（null = 本机）。同一年写「10/31 20:15」，跨年带年份；dateOnly 只写日期。
+ * 绝对时间（F25；D148 起只是 lang.describeTime 不可用时的退路）：本地时区按 config.time.tzOffsetMin（null = 本机）。
+ * 同一年写「10/31 20:15」，跨年带年份；dateOnly 只写日期。
  * @param {number} ms @param {number|null} tzOffsetMin @param {number} now @param {boolean} [dateOnly]
  */
 export function formatTime(ms, tzOffsetMin, now, dateOnly = false) {
@@ -83,6 +86,13 @@ export function formatTime(ms, tzOffsetMin, now, dateOnly = false) {
   return `${date} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
+/** 时间说法（D148）：lang.describeTime（style：full / day / date）；不可用时退回绝对时间。 */
+function whenOf(core, ms, at, style, tzOffsetMin) {
+  if (!Number.isFinite(ms)) return '';
+  const s = safe(core, 'describeTime', () => core.mods.lang.describeTime(core, ms, { now: at, style }), '');
+  return typeof s === 'string' && s ? s : formatTime(ms, tzOffsetMin, at, style === 'date');
+}
+
 /**
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../core-types.js').ScoredCandidate & {fok?: boolean, occurrence?: object, meta?: object}} c
@@ -90,6 +100,7 @@ export function formatTime(ms, tzOffsetMin, now, dateOnly = false) {
  *          previous?: {candidate: object, verdict: 'share'|'share_vague', vagueText?: string|null}|null,
  *          label?: {limit?: {quote: string|null, by: number|null}|null}|null}} opt
  *        label（D113）：关口①在非公开目标上原文放进来的条目带的来源标签——说不出名字的别处来源按结构写，核对过原话的叮嘱写在后面
+ *        timeStyle【补】（D148）：时间的写法，'full'（缺省：几个小时以内带「多久以前」）/ 'day'（不带「多久以前」：常驻区这种会冻结一段时间的文字用）
  * @returns {{rendered: string, provenance: string, confidence: number}}
  */
 export function render(core, c, opt) {
@@ -98,6 +109,7 @@ export function render(core, c, opt) {
     const { x, tzOffsetMin } = params(core);
     const L = phrasesFor(core);
     const at = Number.isFinite(opt?.at) ? opt.at : core.now();
+    const timeStyle = opt?.timeStyle === 'day' ? 'day' : 'full';
     const max = Number.isFinite(opt?.itemChars) && opt.itemChars > 0 ? opt.itemChars : core.config.get().recall.involuntary.itemChars;
     const target = opt?.settingKey ?? null;
     const san = (t) => safe(core, 'sanitize', () => core.mods.intake.sanitizeForPrompt(core, String(t ?? '')), String(t ?? '').replace(/\s+/g, ' '));
@@ -134,8 +146,8 @@ export function render(core, c, opt) {
     // ── 补不回的空白（§12.4.5 第 8 步）：只写那几天有些事记不清（那几天别的事可能照常记得），像人记不清一样；
     //    锚点那条的内容（含糊版本也一样）不给，也不提「恢复」 ──
     if (c.fok && c.blank && Number.isFinite(c.blank.from) && Number.isFinite(c.blank.to)) {
-      const a = formatTime(c.blank.from, tzOffsetMin, at, true);
-      const b = formatTime(c.blank.to, tzOffsetMin, at, true);
+      const a = whenOf(core, c.blank.from, at, 'date', tzOffsetMin);
+      const b = whenOf(core, c.blank.to, at, 'date', tzOffsetMin);
       const span = a === b ? L.blankDay(a) : L.blankDays(a, b);
       const here = target ? c.blank.settingKey === target : !!c.blank.here;
       return { rendered: clip(`（${L.blank(span, here)}）`, max), provenance: L.blankSource, confidence: round2(Math.min(P, m.confidence)) };
@@ -145,7 +157,7 @@ export function render(core, c, opt) {
     if (opt?.verdict === 'share_vague') {
       const vague = san(opt.vagueText ?? '').trim();
       if (!vague) return { ...none, provenance: L.vagueSource };
-      const date = formatTime(m.time, tzOffsetMin, at, true);
+      const date = whenOf(core, m.time, at, 'date', tzOffsetMin);
       const prefix = `（${[date, L.vagueSource].filter(Boolean).join(L.sep)}）`;
       return { rendered: fit(prefix, vague, '', max), provenance: L.vagueSource, confidence: round2(Math.min(P, m.confidence)) };
     }
@@ -175,14 +187,14 @@ export function render(core, c, opt) {
       const prevText = opt.previous.verdict === 'share_vague' ? san(opt.previous.vagueText ?? '') : pm ? san(contentOf(core, pm, { L, who })) : '';
       if (prevText) content = `${L.before}${prevText}${L.after}${content}`;
     }
-    let notes = notesOf(core, m, c, { L, at, previous: !!opt?.previous, tzOffsetMin });
+    let notes = notesOf(core, m, c, { L, at, previous: !!opt?.previous, tzOffsetMin, timeStyle });
     // 核对过原话的叮嘱（D113：非公开目标上原文放进来的条目带着它，和工作记忆同一个标签；说不说由她看着标签判断，外发守护只挡原样复述）
     const lim = opt?.label?.limit;
     if (lim) notes = `${L.limitTag(lim.by != null ? who(lim.by) : L.someone, lim.quote ? clip(san(lim.quote), 40) : '')}${notes}`;
     let hedge = '';
     let faint = '';
     if (sure < x.render.hedgeAbove) { hedge = L.maybe; faint = L.faint; } else if (sure <= x.render.sureAbove || maybeSame) hedge = L.maybe;
-    const time = m.time != null ? formatTime(m.time, tzOffsetMin, at) : '';
+    const time = m.time != null ? whenOf(core, m.time, at, timeStyle, tzOffsetMin) : '';
     const prefix = `（${[time, prov.text].filter(Boolean).join(L.sep)}）${hedge}`;
     return { rendered: fit(prefix, content, `${notes}${faint}`, max), provenance: prov.text, confidence: round2(sure) };
   } catch (e) {
@@ -360,7 +372,7 @@ function contentOf(core, m, { L, who }) {
 }
 
 /** 时态、计划状态（变到这个状态是什么时候）、版本、哪一次（§5.4、§5.5、§8.3 第 6 步）。 */
-function notesOf(core, m, c, { L, at, previous, tzOffsetMin }) {
+function notesOf(core, m, c, { L, at, previous, tzOffsetMin, timeStyle = 'full' }) {
   let out = '';
   if (m.kind === 'assertion') {
     const r = m.row;
@@ -379,7 +391,7 @@ function notesOf(core, m, c, { L, at, previous, tzOffsetMin }) {
         const h = safe(core, 'planHistory', () => core.store.get(
           'SELECT at FROM plan_status_history WHERE assertion_id = ? AND status = ? ORDER BY at DESC, id DESC LIMIT 1', r.id, k), null);
         note = L.plan[k];
-        if (Number.isFinite(h?.at)) note = withTime(note, formatTime(h.at, tzOffsetMin, at), L.sep);
+        if (Number.isFinite(h?.at)) note = withTime(note, whenOf(core, h.at, at, timeStyle, tzOffsetMin), L.sep);
       }
       out += note;
     } else if (r.change_known) {
@@ -403,7 +415,7 @@ function notesOf(core, m, c, { L, at, previous, tzOffsetMin }) {
   return out;
 }
 
-/** 「（后来做完了）」→「（后来做完了，10/28 20:15）」：时间放进括号里。 */
+/** 「（后来做完了）」→「（后来做完了，昨天晚上 20:15）」：时间放进括号里。 */
 function withTime(note, time, sep) {
   if (!time) return note;
   const m = /([）)])\s*$/u.exec(note);

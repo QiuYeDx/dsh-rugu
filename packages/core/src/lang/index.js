@@ -14,6 +14,7 @@ import { normalizeToken, entityToken } from '../store/fts.js';
 import { createZh, buildZhAnalyzer } from './zh.js';
 import { createUnicode } from './unicode.js';
 import { prep, segmentRuns } from './text.js';
+import { phrasingFor } from './when.js';
 import { DEFAULTS } from '../config/defaults.js';
 
 /**
@@ -83,6 +84,48 @@ export function registry(core) {
   }
   return st.registry;
 }
+
+/**
+ * 【补】时间说法（D148）：进她上下文的「什么时候」按人感觉的方式写好（今晚 21:39 · 20 分钟前 / 昨天晚上 22:14 / 周日（11/8）下午），
+ * 不让读的人自己和「现在」做减法。说法按 selfProfile.locale 选（zh 有自己的；别的语言用和语言无关的兜底：绝对时间），
+ * 时区按 config.time.tzOffsetMin，「多久以前」为主的范围按 config.lang.timePhrase.agoH。不抛错：出问题返回空字符串。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} t   要说的那个时刻（UTC 毫秒）
+ * @param {{now?: number, style?: 'full'|'day'|'date'}} [opt]
+ *        now：现在（缺省 core.now()）；style：full（缺省，几个小时以内带「多久以前」）/ day（不带「多久以前」：会冻结一段时间的文字用）/ date（只到天）
+ * @returns {string}
+ */
+export function describeTime(core, t, opt = {}) {
+  try {
+    const P = phrasingFor(core.ports?.selfProfile?.locale);
+    const now = Number.isFinite(opt.now) ? opt.now : core.now();
+    return P.when(t, now, { tzOffsetMin: core.config?.get?.().time?.tzOffsetMin ?? null, style: opt.style ?? 'full', agoH: phraseCfg(core).agoH });
+  } catch { return ''; }
+}
+
+/**
+ * 【补】「现在」那一句的时间（D148）：zh 是「2026-11-11（周三）晚上 22:00」——年月日写全，带星期几和时段。不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} [at]  缺省 core.now()
+ * @returns {string}
+ */
+export function describeNow(core, at) {
+  try {
+    const P = phrasingFor(core.ports?.selfProfile?.locale);
+    return P.now(Number.isFinite(at) ? at : core.now(), { tzOffsetMin: core.config?.get?.().time?.tzOffsetMin ?? null });
+  } catch { return ''; }
+}
+
+/**
+ * 【补】一段时长的说法（D148）：zh 是「20 分钟」「4 天」「约 2 个月」。不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} ms
+ * @returns {string}
+ */
+export function describeSpan(core, ms) {
+  try { return phrasingFor(core.ports?.selfProfile?.locale).span(ms); } catch { return ''; }
+}
+const phraseCfg = (core) => core.config?.get?.().lang?.timePhrase ?? LANG_FALLBACK.timePhrase ?? {};
 
 /**
  * Unicode 回退分析器（lang = 'und'）：CJK 连续段切成二元组（单字段保留单字），其他文字按 \p{L}\p{N} 连续段切词并小写。

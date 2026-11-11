@@ -1,4 +1,4 @@
-// context 自己拼的那几句话的小工具：绝对时间、「多久以前」、按字数截断、清洗、哈希。
+// context 自己拼的那几句话的小工具：时间说法（D148，经 lang）、绝对时间（退路）、「多久以前」、按字数截断、清洗、哈希。
 // 只管格式，不做判断（能不能说由关口①决定，这里拿到的都是已经判过的条目）。
 import crypto from 'node:crypto';
 
@@ -38,6 +38,34 @@ export function humanSpan(ms) {
   if (m < 60 * DAY_MS) return `${Math.round(m / (7 * DAY_MS))} 周`;
   if (m < 365 * DAY_MS) return `约 ${Math.round(m / (30 * DAY_MS))} 个月`;
   return `约 ${Math.round(m / (365 * DAY_MS))} 年`;
+}
+
+/**
+ * 时间说法（D148，lang.describeTime）：「今晚 21:39 · 20 分钟前」「昨天晚上 22:14」「周日（11/8）下午」。
+ * style：full（缺省）/ day（不带「多久以前」）/ date（只到天）。lang 不可用时退回绝对时间。
+ */
+export function whenText(core, t, at, style = 'full') {
+  if (!Number.isFinite(t)) return '';
+  let s = '';
+  try { s = core.mods.lang.describeTime(core, t, { now: at, style }); } catch { s = ''; }
+  if (typeof s === 'string' && s) return s;
+  const tz = tzOf(core);
+  return style === 'date' ? fmtDate(t, tz) : fmtShort(t, tz, at);
+}
+/** 「现在」那一句的时间（D148，lang.describeNow）：「2026-11-11（周三）晚上 22:00」。退回 'YYYY-MM-DD HH:MM'。 */
+export function nowText(core, at) {
+  let s = '';
+  try { s = core.mods.lang.describeNow(core, at); } catch { s = ''; }
+  return typeof s === 'string' && s ? s : fmtTime(at, tzOf(core));
+}
+/** 一段时长（D148，lang.describeSpan）：「4 天」。退回 humanSpan。 */
+export function spanText(core, ms) {
+  let s = '';
+  try { s = core.mods.lang.describeSpan(core, ms); } catch { s = ''; }
+  return typeof s === 'string' && s ? s : humanSpan(ms);
+}
+function tzOf(core) {
+  try { return core.config.get().time?.tzOffsetMin ?? null; } catch { return null; }
 }
 
 /** 字数（按码点，不按 UTF-16）。 */
