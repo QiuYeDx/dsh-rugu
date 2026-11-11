@@ -183,8 +183,11 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
       fail('arrange', e);
     }
   }
+  // 展示用的时间：和渲染写出来的那个时间一致（事实写的是第一次听说的时间，不是事件时间——「当天说过想吃夜宵」的事件时间是 0 点，
+  // 按它排会排到最前，读起来像时间乱了）；别的用开始时间
+  const heard = safe(core, 'heardAt', () => heardTimes(core, items), new Map()) ?? new Map();
   items.forEach((c, i) => {
-    const t = c.meta?.tStart ?? null;
+    const t = heard.get(c.ref) ?? c.meta?.tStart ?? null;
     c.recollect = { pick: i, t: Number.isFinite(t) ? t : null, scoped: !!c.scopeRank, seg: Number.isFinite(c.seg) ? c.seg : null };
   });
 
@@ -209,6 +212,18 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
       stats: { ...(set.stats ?? {}), recollect: { inScope: inScope.length, fallback } } },
     queryVectors,
   };
+}
+
+/** 事实第一次听说的时间（来源里按 hop、把握、时间排的第一条，和 retrieve.render 写出来的时间同一个口径）。 */
+function heardTimes(core, items) {
+  const ids = items.filter((c) => c.meta?.kind === 'assertion').map((c) => mrefOf(c.ref)?.id).filter(Number.isSafeInteger);
+  const out = new Map();
+  if (!ids.length) return out;
+  const rows = rowsByIds(core.store, `SELECT owner_id AS id, at FROM sources WHERE owner_kind = 'assertion' AND owner_id IN (?*)
+                                     ORDER BY owner_id, hop, confidence DESC, at`, ids);
+  for (const r of rows) if (!out.has(`a${r.id}`) && Number.isFinite(r.at)) out.set(`a${r.id}`, r.at);
+  for (const c of items) if (c.meta?.kind === 'assertion' && !out.has(c.ref) && Number.isFinite(c.meta.row?.recorded_at)) out.set(c.ref, c.meta.row.recorded_at);
+  return out;
 }
 
 const dedupe = (xs) => [...new Set(xs.filter((x) => typeof x === 'string' && x))];

@@ -100,6 +100,22 @@ test('「老板昨天吃了什么」：时间窗和人是范围，范围内找�
   } finally { await w.cleanup(); }
 });
 
+test('展示用的时间：事实用第一次听说的时间（和渲染写的一致），不是只到天的事件时间', async () => {
+  const w = await world();
+  try {
+    const { core, worker } = w;
+    seedYesterday(w);
+    const a = seedAssertion(core, { text: '老板昨天说过想吃夜宵', subjects: [w.boss], eventStart: Y, recordedAt: Y + 22 * HOUR,
+      sources: [{ speaker: w.boss, perceivedIn: 'G', at: Y + 21 * HOUR }] });
+    worker.addDoc(`a${a}`, '老板昨天说过想吃夜宵');
+    seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '我昨天都吃了啥', addressed: 'to-her' });
+    const set = await R(core, { settingKey: 'D' }, { mode: 'deliberate', query: '老板昨天吃了什么', about: '老板', time: '昨天' });
+    const c = set.items.find((x) => x.ref === `a${a}`);
+    assert.ok(c, '在候选里');
+    assert.equal(c.recollect.t, Y + 21 * HOUR);
+  } finally { await w.cleanup(); }
+});
+
 test('范围是空的：退回全库那一份，范围的事实照实写（0 条）', async () => {
   const w = await world();
   try {
