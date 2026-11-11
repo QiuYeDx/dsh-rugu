@@ -282,7 +282,8 @@ export function makeFakePm(o = {}) {
         vectors: { wiped: null }, adapters: full ? ['qq', 'dsh-web', 'bili'] : [], startup: full ? { jobs: { requeued: 0 }, self: {}, tombstones: { deleted: 0 }, worker: { ok: true }, space: { spaceId: 'sp-4b', status: 'active' } }
           : { jobs: { requeued: 0 }, self: {}, tombstones: { deleted: 0 }, worker: { ok: true }, space: { error: 'EMBED_UNAVAILABLE' } }, files: { main: 'persona-memory.db', vectors: 'persona-vectors.db' },
         // 【D138】上一次夜间整理的摘要（核心 status().sleep 的形状）
-        sleep: full ? { at: now - 6 * HOUR, llmCalls: 12, llmMax: 14, capped: ['generalize'], generalize: { asked: 6, written: 1, skippedAsked: 4, left: 2 }, diary: { written: 2, pending: 0 } } : null };
+        sleep: full ? { at: now - 6 * HOUR, llmCalls: 12, llmMax: 14, capped: ['generalize'], generalize: { asked: 6, written: 1, skippedAsked: 4, left: 2 }, diary: { written: 2, pending: 0 } } : null,
+        extract: full ? { segments: 2, transient: 1, rejected: 1, maxRounds: 3, oldestAt: now - 3 * DAY, nextAt: now + 5 * HOUR } : { segments: 0, transient: 0, rejected: 0, maxRounds: 0, oldestAt: null, nextAt: null } };
     },
     admin: {
       list(q) {

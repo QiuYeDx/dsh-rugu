@@ -335,7 +335,8 @@ function applyConfirm(core, { ref, p, by }) {
   if (row.kind_hint === LESSON_KIND) confirmLesson(core, ref.id, { at: now });
   const att = cfg.activation.attention[p.attention_class] ?? cfg.activation.attention.toHer;
   const closeness = core.store.get('SELECT closeness FROM entities WHERE id = ?', by)?.closeness ?? 0;
-  const w = core.mods.dynamics.encodingWeight(core, { wAtt: att, imp: row.imp, closeness }) * cfg.activation.events.confirm;
+  // 编码强度本身：× events.confirm 由 dynamics.addTrace 按 reason='confirm' 乘（D137：原来这里也乘，实际成了 1.44）
+  const w = core.mods.dynamics.encodingWeight(core, { wAtt: att, imp: row.imp, closeness });
   addSource(core, { kind: 'assertion', id: ref.id }, {
     perceptId: p.id, snapshotId: p.snapshot_id, perceivedIn: p.perceived_in, speaker: by, asserter: by, mode: modeOfPercept(p), hop: 0, quote: null,
     confidence: 0.95, at: p.at,

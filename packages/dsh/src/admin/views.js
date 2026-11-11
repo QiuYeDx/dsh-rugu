@@ -481,7 +481,9 @@ export function createViews(deps) {
           codeSchemaVersion: st.codeSchemaVersion ?? null, schema: numbersOnly(st.schema), migration: numbersOnly(st.migration),
           adapters: Array.isArray(st.adapters) ? st.adapters.map(adapterTitle) : [], startup: startupSummary(st.startup), files: numbersOnly(st.files ?? null), vectors: numbersOnly(st.vectors ?? null),
           // 【D138】上一次夜间整理：模型调用用了多少、哪几步因为上限少做了、泛化问了几组、日记写了几天还缺几天（只有数字和步名）
-          sleep: numbersOnly(st.sleep ?? null) },
+          sleep: numbersOnly(st.sleep ?? null),
+          // 【D136】提炼一直不成、搁置着的段：几段、各类原因、最多失败了几轮、最早从什么时候起、下次什么时候试
+          extract: numbersOnly(st.extract ?? null) },
         embedding: health?.error ? health : healthRow(health),
         spaces: Array.isArray(spaces) ? spaces.map(spaceRow) : spaces,
         gpu, budget, selfCheck: checks,

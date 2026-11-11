@@ -316,8 +316,8 @@ test('render 只给「能说」「说个大概」出文字：别的结论、没�
   } finally { await w.cleanup(); }
 });
 
-test('有意回想的截止：按 recall.deliberate.deadlineMs 封顶，慢的那一路到点丢掉', async () => {
-  const w = await world({ delays: { dense: 5000 }, config: { recall: { deliberate: { deadlineMs: 600 } } } });
+test('截止时间的硬上限（D137）：调用方给得再长，也只到配置里回想的几种截止时间里最大的那个；慢的那一路到点丢掉', async () => {
+  const w = await world({ delays: { dense: 5000 }, config: { recall: { involuntary: { deadlineMs: 300 }, deliberate: { deadlineMs: 600, toolDeadlineMs: 600 } } } });
   try {
     const { core } = w;
     const a = seedAssertion(core, { text: '阿明下周要搬家', subjects: [w.ming] });
@@ -328,6 +328,25 @@ test('有意回想的截止：按 recall.deliberate.deadlineMs 封顶，慢的�
     assert.ok(ms < 1300, `用了 ${Math.round(ms)} ms`);
     assert.equal(set.stats.routes.find((r) => r.route === 'dense').timedOut, true);
     assert.ok(set.items.some((c) => c.ref === `a${a}`), '已完成的几路照样给出');
+  } finally { await w.cleanup(); }
+});
+
+test('调用方放宽的截止时间算数（D137）：不自主回想给 4000 毫秒时，不会在 1500 就截止（真的 retrieve，查询模型冷加载那种慢）', async () => {
+  const w = await world({ delays: { dense: 2000 } });
+  try {
+    const { core } = w;
+    assert.equal(core.config.get().recall.involuntary.deadlineMs, 1500, '用的是默认配置');
+    seedPercept(core, { settingKey: 'D', at: T0 - MIN, actor: w.boss, text: '阿明什么时候搬家', addressed: 'to-her' });
+    const t0 = performance.now();
+    const set = await R(core, { settingKey: 'D' }, { mode: 'involuntary', deadlineMs: 4000 });
+    const ms = performance.now() - t0;
+    assert.ok(ms >= 1900, `等到了慢的那一路（用了 ${Math.round(ms)} ms）`);
+    assert.equal(set.stats.routes.find((r) => r.route === 'dense').timedOut, false, '稠密路没有在 1500 毫秒被截掉');
+    // 没给截止时间：照模式的默认值（不自主 1500）
+    const t1 = performance.now();
+    const plain = await core.mods.retrieve.recall(core, { settingKey: 'D', trigger: 'simulate' }, { mode: 'involuntary', query: '搬家' });
+    assert.ok(performance.now() - t1 < 1900, '没给就按 1500');
+    assert.equal(plain.stats.routes.find((r) => r.route === 'dense').timedOut, true);
   } finally { await w.cleanup(); }
 });
 

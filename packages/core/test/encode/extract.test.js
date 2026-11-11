@@ -343,6 +343,9 @@ test('对账的结论落到写入：重复只追加来源（新来源更严就�
     assert.ok(h.valid_from > t0, '本人重新确认 = 重置');
     const conf = w.callsOf('addTrace').find((t) => t.ref === `a${hobby}` && t.reason === 'confirm');
     assert.ok(conf);
+    // 交给 addTrace 的是编码强度本身（群里旁听 × 阿明的亲近度），× events.confirm 只由 dynamics 乘一次（D137）
+    const att = w.core.config.get().activation.attention.peripheral;
+    assert.ok(Math.abs(conf.w - att * (0.8 + 0.7 * 0.3)) < 1e-9, `w = ${conf.w}`);
     // 关系边
     const rel = w.assertions("predicate = '大学同学'")[0];
     assert.equal(rel.object_entity_id, owner);

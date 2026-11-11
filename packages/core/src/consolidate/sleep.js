@@ -64,7 +64,8 @@ const ESSENTIAL = new Set([0, 1, 2, 5, 6, 7, 9, 10, 11]);
 // ── 第 1 步：封口、补跑失败批次、复核 ─────────────────────────────────────────
 const RETRY_TAG = '#sleep-retry-';
 
-/** 最近几天失败了的提炼批次：它们的感知还都在缓冲里、也没有别的任务在处理同一段，就重排一次（最多 retryMax 次）。 */
+/** 最近几天失败了的提炼批次：它们的感知还都在缓冲里、也没有别的任务在处理同一段，就重排一次（最多 retryMax 次）。
+ * 搁置着的段（D136，encode 记的）不在这里补：它们有自己的退避。 */
 function retryFailedExtracts(core, at, p) {
   let n = 0;
   const rows = core.store.all("SELECT * FROM jobs WHERE kind = 'extract' AND status = 'failed' AND updated_at >= ? ORDER BY id LIMIT 200", at - p.extract.retryFailedDays * DAY);
@@ -80,6 +81,9 @@ function retryFailedExtracts(core, at, p) {
       const busy = core.store.get(`SELECT 1 AS ok FROM jobs WHERE kind = 'extract' AND status IN ('queued','running') AND scope_key = ?
           AND ep_from <= ? AND ep_to >= ? LIMIT 1`, j.scope_key, j.ep_to, j.ep_from);
       if (busy) continue;
+      // 搁置着的段（D136）由 encode 按退避重试（切段时到点就排），这里不另外补跑：每晚补一次等于绕过退避
+      const stalled = core.store.get('SELECT 1 AS ok FROM extract_stalled WHERE setting_key = ? AND ep_from <= ? AND ep_to >= ? LIMIT 1', j.scope_key, j.ep_to, j.ep_from);
+      if (stalled) continue;
     }
     const r = enqueueJob(core.store, {
       kind: 'extract', use: j.use ?? 'extract', priority: j.priority, dedupeKey: `${base}${RETRY_TAG}${tries + 1}`,
