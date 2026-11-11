@@ -59,7 +59,9 @@ export const DEFAULTS = deepFreeze({
     emotion: { span: 0.5 },              // w_emo = 1 + span × 强度
     defaultImp: 5,                       // 入库时还不知道重要度
     hearsayConfidenceCap: 0.6,           // 听说只影响可信度，不影响记忆强度（评审:UV-01）
-    fanSMax: 1.5,                        // 扇出项 S_max − ln(fan)
+    // 联想项 S 的上限（§6.5）。D149：S = S_max × 线索的专门程度 ln(N/fan)/ln(N)（N = 记忆单元总数），不再是 S_max − ln(fan)
+    fanSMax: 1.5,
+    fanMinTotal: 100,                    // N 不到它按它算：库还小时，名下几条记忆的人不算「连着一切」
     supersededPenalty: 0.8,              // P_sup
     events: {                            // §6.4 各种「又遇到了一次」的系数
       confirm: 1.2,
@@ -304,14 +306,18 @@ export const DEFAULTS = deepFreeze({
     mmrLambda: 0.7,
     // MMR 里合并几乎一样的文字（同一种记忆、同一批场合，词元 Jaccard ≥ 它）：只留分高的一条，另一条跟在它后面不占名额（§8.3 第 5 步）
     mmrDupJaccard: 0.8,
-    perEntityMax: 3,
+    perEntityMax: 3,                     // 每个实体最多几条（她自己、有意回想问的那个人、在场的人不限，D149）
+    // C 里和线索匹配的几项（稠密、词法、时间）的倍数，按线索有多直接（D149）：有意回想（工具、被判定在问过去）、
+    // 这一轮有一句对她说的话、只是旁听。被直接问到时相关度比「最近」更重要；旁听时她心里正想着什么（基础激活）主导
+    matchWeight: { deliberate: 3.0, directed: 2.5, overheard: 1.0 },
     useRrfForC: true,                    // 调参前 C_i 用各路的 RRF 名次分代替（§6.5）
     cRankDepth: 50,                      // 名次分在这个深度降到 0
     routeReserveMs: 30,                  // 五路之后留给融合、激活、MMR 的时间
     linkDecay: 0.5,                      // 顺着链接带出来的（旧版本、计划的结果、同类的另一次）继承锚点 S / C 的比例
     weights: { dense: 1.0, bm25: 1.0, time: 0.5, context: 0.3, present: 0.5 },   // β_d、β_b、β_t、γ，加上在场者近况路
     contextSim: { sameSetting: 0.5, participants: 0.5 },   // γ 项：编码情境相似度的两部分（§6.5）
-    dense: { memoryTopK: 100, rawTopK: 50, coarseTopK: 200 },
+    // windowWeight（D149）：有焦点那一句（对她说的那句、有意回想的 query）时，窗口那条查询单独查、名次按它打折再融合（1 = 和焦点一样重）
+    dense: { memoryTopK: 100, rawTopK: 50, coarseTopK: 200, windowWeight: 0.3 },
     lexical: {
       topK: 50, maxTerms: 12, commonRowFraction: 0.01, hotMonths: 3,
       commonMinDocs: 20,                 // 「常见词」还要求含它的行数超过这么多：刚装上、库里只有几十行时出现一次就过了 1%（S24、D72）
@@ -321,7 +327,11 @@ export const DEFAULTS = deepFreeze({
       seedFacts: 5,                      // 查询匹配到的前 5 条事实的实体也当种子（§8.2）
       maxHops: 2,                        // 局部 PPR 的邻域
       factWaitShare: 0.4,                // 实体路等词法前 5 条事实最多用掉剩余时间的这么多
-      seedWeights: { name: 1.0, mentioned: 1.0, focus: 1.0, present: 0.5, fact: 0.5 },
+      // 种子的名义权重（D149；有效权重再乘线索的专门程度 ln(N/fan)/ln N，见 activation.fanSMax）：
+      //   name：焦点那一句 / 有意回想的 query 里的名字；nameWindow：只出现在窗口里更早几行的名字；mentioned：@ / 引用 / 回复；
+      //   focus：正在说话的人、present：在场的人——情境不是内容，只当弱种子（话里点到了他按名字算）；
+      //   alone：没有任何内容线索的轮（她自己开口）在场的人就是唯一的线索；fact：词法前几条事实涉及的实体
+      seedWeights: { name: 1.0, nameWindow: 0.5, mentioned: 1.0, focus: 0.5, present: 0.5, alone: 1.0, fact: 0.5 },
     },
     ppr: {                               // §8.2 局部推送式 PPR（评审:FE-14）
       alpha: 0.5, eps: 1e-4, maxPushes: 20_000, maxExpand: 3000, fanCap: 200,

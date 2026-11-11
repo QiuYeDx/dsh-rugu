@@ -56,10 +56,14 @@ test('S3：「等下去拿快递」→ 两小时后「拿到了」→ 60 天后�
   for (const [what, p] of [['拿到了', pOutcome], ['要去拿', pPlan]]) {
     assert.ok(p >= 0.6 && p <= 0.95, `${what}：P = ${p.toFixed(3)}`);
   }
-  // 按回合抽样（种子 = 会话 + 回合）：命中的频率接近 P，同一回合可复现
-  const rate = recallRate(core, a(outcome), ask, S);
-  assert.ok(Math.abs(rate - pOutcome) < 0.07, `抽样 ${rate} vs P ${pOutcome}`);
-  assert.equal(recallRate(core, a(outcome), ask, S, { turns: 50 }), recallRate(core, a(outcome), ask, S, { turns: 50 }));
+  // 被问到时她在用力想（有意回想不带噪声，D149）：想不想得起来只看 A ≥ τ_del（P ≥ 0.5），没把握体现在 P 上（说成「好像」）
+  assert.equal(recallRate(core, a(outcome), ask, S), pOutcome >= 0.5 ? 1 : 0);
+  // 不自主冒出来的照旧按回合抽样（种子 = 会话 + 回合）：命中的频率接近不自主回想的 P，同一回合可复现
+  const [inv] = dyn.activate(core, [{ candidate: { ref: refOf('assertion', outcome), mref: a(outcome), ranks: {}, rrf: 0, signals: {} }, S, C: 0, superseded: false }],
+    { at: ask, mode: 'involuntary', seed: ['t'] });
+  const rate = recallRate(core, a(outcome), ask, S, { mode: 'involuntary' });
+  assert.ok(Math.abs(rate - inv.P) < 0.07, `抽样 ${rate} vs P ${inv.P}`);
+  assert.equal(recallRate(core, a(outcome), ask, S, { turns: 50, mode: 'involuntary' }), recallRate(core, a(outcome), ask, S, { turns: 50, mode: 'involuntary' }));
   // 时态：结案的计划是过去时（「那天晚上说拿到的」）；「拿到了」这件事本身没有 t50，一直成立
   const row = (id) => core.store.get('SELECT valid_from, valid_to_known, t50_h, shape, change_known, recorded_at FROM assertions WHERE id = ?', id);
   assert.equal(dyn.tense(core, dyn.pHold(core, row(plan), ask)), 'past');
@@ -116,15 +120,15 @@ test('S7b：旁听到「我表哥开网约车」，后来群友又提过一次�
   assert.equal(dyn.addTrace(core, n(cousin), { t: wed, w, sourceKey: `p${friend}`, reason: 'mention' }).added, true);
 
   const ask = mon + 30 * D;                  // 一个月后：「我表哥干啥的你还记得吗」
-  // 问题直接认出了表哥（关系路径）：关于他的每条记忆加扇出项 S_max − ln(fan)，档案下 3 条事实
-  const S = 1.0 + dyn.fanTerm(core, 3);
+  // 问题直接认出了表哥（关系路径）：§6.7 的线索强度口径（扩散 1.0 + 档案下 3 条事实的扇出项 S_max − ln 3），和 actr.test.js 的表一致
+  const S = 1.0 + (core.config.get().activation.fanSMax - Math.log(3));
   const pJob = askedP(core, a(job), ask, S);
   assert.ok(pJob > 0.5, `事实：P = ${pJob.toFixed(3)}（多数能答）`);
   assert.ok(pJob < 0.95, '旁听来的事不是必然想得起');
   // 人本身（档案）被直接点名，扩散分取满 S_max，而且有两次提到：比那条事实更容易想起——答不上细节时，知道「好像听你提过」
   const pCousin = askedP(core, n(cousin), ask, core.config.get().activation.fanSMax);
   assert.ok(pCousin > pJob && pCousin > 0.85, `档案：P = ${pCousin.toFixed(3)}`);
-  // 按回合抽样：两样都想不起（会装作没听过）的回合很少
+  // 按回合看：两样都想不起（会装作没听过）的回合很少（有意回想不带噪声，D149：过了 τ_del 的每个回合都想得起）
   let neither = 0;
   let jobHits = 0;
   for (let i = 0; i < 400; i++) {

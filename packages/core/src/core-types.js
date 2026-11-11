@@ -90,7 +90,7 @@ export {};
  * @property {{perceptId: number, speaker: number|null, at: number, text: string}[]} window
  * @property {number[]} present          有共同在场证据的实体（含她自己）
  * @property {number[]} mentioned        只是线索，不算在场
- * @property {{entityId: number, name: string, score: number}[]} names
+ * @property {{entityId: number, name: string, score: number, focus?: boolean}[]} names   focus：出现在焦点那一句或有意回想的 query 里（D149）
  * @property {import('./ports/index.js').TimeWindow[]} timeWindows
  * @property {string[]} queryTexts       1–2 条：窗口一条，最新对她说的那句一条
  * @property {string} lang

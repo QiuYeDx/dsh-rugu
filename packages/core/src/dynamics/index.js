@@ -433,10 +433,12 @@ export function stateFromEvents(events, params) {
 // ── 回想时的激活（§6.5、§6.6） ──────────────────────────────────────────────
 
 /**
- * 给候选打激活分（§6.5）：A = B + S + C + I − P_sup + ε，P = σ((A − τ)/s)。
+ * 给候选打激活分（§6.5）：A = B + S + C + I − P_sup（不含噪声），ε 单独放在 parts.eps，P = σ((A − τ)/s)。
+ * 【D149】噪声只决定「想不想得起来」，不参与排名次：sample 用 A + ε 过门槛，过了门槛的按 A 排、MMR 的相关度也看 A。
+ * 原来 A 里带着 ε（标准差约 0.7，比线索匹配 C 的离散程度大一倍），既当门槛又当排序键，稠密第 4 名的相关事实
+ * 因为 ε 是负的排到第 61。有意回想（mode = 'deliberate'）是她在用力想：不带噪声，ε = 0。
  * ε 是 logistic 噪声，种子 = seededNoise([seed..., ref])，同一会话同一回合同一记忆结果相同（可复现）。
- * P 用不含 ε 的均值算（ACT-R 的回想概率本来就是对 logistic 噪声积分的结果；ε 已经体现在 A 里、由 sample 按阈值抽样，
- * 再进 P 就成了两次随机），渲染措辞看 P，抽样看 A。
+ * P 用不含 ε 的 A 算（ACT-R 的回想概率本来就是对 logistic 噪声积分的结果），渲染措辞看 P。
  * @param {import('../core-types.js').CoreContext} core
  * @param {ActivationInput[]} inputs
  * @param {{at: number, mode: 'involuntary'|'deliberate', seed: string[]}} ctx
@@ -462,16 +464,17 @@ export function activate(core, inputs, ctx) {
     const row = inp?.intention ?? (m?.kind === 'intention' ? rows.get(m.id) : null);
     const I = row ? intentionBias(core, row, { at, cueHit: !!inp?.cueHit }) : 0;
     const Psup = inp?.superseded ? A.supersededPenalty : 0;
-    const eps = A.noise ? noiseOf([...seed, key], A.s) : 0;
+    const eps = A.noise && ctx?.mode !== 'deliberate' ? noiseOf([...seed, key], A.s) : 0;
     const mean = B + S + C + I - Psup;
-    return { ...c, ref: c.ref ?? key, mref: c.mref ?? m, A: mean + eps, P: pRecallOf(mean, tau, A.s), parts: { B, S, C, I, Psup, eps } };
+    return { ...c, ref: c.ref ?? key, mref: c.mref ?? m, A: mean, P: pRecallOf(mean, tau, A.s), parts: { B, S, C, I, Psup, eps } };
   });
 }
 
 /**
  * 不自主回想按 P 抽样（不是固定取前 k，§6.6）；有意回想取 A ≥ τ_del 的全部。抽样只决定「想不想得起」，和安全无关。
- * A 里已经带着种子噪声 ε（activate），所以「A ≥ τ」就是一次概率为 P 的伯努利抽样，而且同一会话同一回合可复现；
- * 没经过 activate 的候选（没有 parts）在这里按同样的种子补一次噪声。结果按 A 降序。
+ * 门槛看 A + ε（activate 放在 parts.eps 里的种子噪声），所以「A + ε ≥ τ」就是一次概率为 P 的伯努利抽样，而且同一会话同一回合可复现；
+ * 没经过 activate 的候选（没有 parts）在这里按同样的种子补一次噪声（有意回想不补）。
+ * 结果按不带噪声的 A 降序（D149：噪声不参与排名次）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../core-types.js').ScoredCandidate[]} scored
  * @param {{mode: 'involuntary'|'deliberate', seed: string[]}} ctx
@@ -484,10 +487,11 @@ export function sample(core, scored, ctx) {
   const out = [];
   for (const c of scored ?? []) {
     if (!c || typeof c.A !== 'number' || Number.isNaN(c.A)) continue;
-    const a = c.parts ? c.A : c.A + (A.noise ? noiseOf([...seed, String(c.ref)], A.s) : 0);
-    if (a >= tau) out.push(c);
+    const eps = c.parts ? (Number.isFinite(c.parts.eps) ? c.parts.eps : 0)
+      : (A.noise && ctx?.mode !== 'deliberate' ? noiseOf([...seed, String(c.ref)], A.s) : 0);
+    if (c.A + eps >= tau) out.push(c);
   }
-  return out.sort((x, y) => y.A - x.A);
+  return out.sort((x, y) => y.A - x.A || (x.ref < y.ref ? -1 : x.ref > y.ref ? 1 : 0));
 }
 
 /**
@@ -512,14 +516,32 @@ export function seededNoise(parts, s) {
 }
 
 /**
- * 【补】扇出项（§6.5）：线索直接认出某个实体时，关于它的每条记忆加 S_max − ln(fan)（不小于 0）。给 retrieve 拼 S 用。
+ * 【D149】一条线索有多专门（0–1）：ln(N / fan) / ln(N)，截到 [0, 1]。fan 是这个实体名下的记忆条数，N 是记忆单元总数
+ * （还成立的事实 + 情节）。这是 ACT-R 扇出效应 S_ji = S − ln(fan_j) 取 S = ln N 后归一的形式：只连着一件事的线索是 1，
+ * 连着库里每一件事的线索是 0——一个连着几百件事的人，对其中每一件都只是弱线索。N 不到 activation.fanMinTotal 时按它算
+ * （刚装上、库里只有几条记忆时，「名下 3 条」不该算成「连着一切」）。纯函数式（只读配置）。
  * @param {import('../core-types.js').CoreContext} core
- * @param {number} fan   这个实体名下的记忆条数
+ * @param {number} fan    这个实体名下的记忆条数
+ * @param {number} total  记忆单元总数
  * @returns {number}
  */
-export function fanTerm(core, fan) {
-  const sMax = core.config.get().activation.fanSMax;
-  return Math.max(0, sMax - Math.log(Math.max(1, Number(fan) || 1)));
+export function fanSpecificity(core, fan, total) {
+  const A = core.config.get().activation;
+  const n = Math.max(2, Number(total) || 0, Number(A.fanMinTotal) || 0);
+  const f = Math.max(1, Number(fan) || 1);
+  return Math.min(1, Math.max(0, Math.log(n / f) / Math.log(n)));
+}
+
+/**
+ * 【补】扇出项（§6.5）：线索直接认出某个实体时，关于它的记忆的联想强度 S_max × 专门程度（fanSpecificity）。给 retrieve 拼 S 用。
+ * 【D149】原来是 S_max − ln(fan)：S_max = 1.5 时名下超过 4 条记忆就是 0，实际上从不起作用。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} fan    这个实体名下的记忆条数
+ * @param {number} total  记忆单元总数
+ * @returns {number}
+ */
+export function fanTerm(core, fan, total) {
+  return core.config.get().activation.fanSMax * fanSpecificity(core, fan, total);
 }
 
 // ── 有效性（§5.4） ────────────────────────────────────────────────────────

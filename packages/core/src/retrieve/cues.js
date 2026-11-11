@@ -18,7 +18,7 @@ const DIRECTED = new Set(['to-her', 'mentions-her']);
  * @param {{settingKey: string, focusPerceptId?: number|null, query?: string|null, about?: string|null, time?: string|null,
  *          extraQueries?: string[]}} s
  * @returns {import('../core-types.js').Cues & {directedText: string|null, focusSpeaker: number|null, aboutEntityIds: number[],
- *          windowText: string, windowPlain: string, rewrites: string[]}}
+ *          windowText: string, windowPlain: string, rewrites: string[], contentCue: boolean, focusDirected: boolean}}
  */
 export function buildCues(core, s) {
   const { recall: rc, x } = params(core);
@@ -68,6 +68,8 @@ export function buildCues(core, s) {
   const focus = focusRow ?? directed ?? latest;
   const directedText = (focusRow && !focusRow.actor_self ? focusRow.text : directed?.text) ?? null;
   const focusSpeaker = focus && !focus.actor_self ? focus.actor_entity_id ?? null : null;
+  // 焦点那一句（别人说的）：她正被问的、正在回应的那句话。D149：它里面的名字是内容线索，窗口里更早几行的名字弱一些
+  const focusLine = focus && !focus.actor_self ? focus : null;
 
   // ── 在场者：成员能列全时是成员；否则最近 30 分钟亲自发过言的人；都加上她自己 ──
   const present = new Set();
@@ -116,8 +118,8 @@ export function buildCues(core, s) {
 
   // ── 正文里的名字（Aho-Corasick，同名的都要）；关系路径：一句话里的「我表哥」挂在这句话的说话人下面（§5.2 第 2 步）──
   const scans = [
-    ...[s.query, s.about, ...(s.extraQueries ?? [])].map((t) => ({ text: t, anchors: [], about: t === s.about })),
-    ...window.map((w) => ({ text: w.text, anchors: w.speaker != null ? [w.speaker] : [], about: false })),
+    ...[s.query, s.about, ...(s.extraQueries ?? [])].map((t) => ({ text: t, anchors: [], about: t === s.about, focus: true })),
+    ...window.map((w) => ({ text: w.text, anchors: w.speaker != null ? [w.speaker] : [], about: false, focus: focusLine != null && w.perceptId === focusLine.id })),
   ].filter((x) => typeof x.text === 'string' && x.text);
   const nameHits = new Map();
   const aboutEntityIds = new Set();
@@ -128,7 +130,9 @@ export function buildCues(core, s) {
       for (const h of Array.isArray(hits) ? hits : []) {
         if (!h || !Number.isInteger(h.entityId)) continue;
         const prev = nameHits.get(h.entityId);
-        if (!prev || h.score > prev.score) nameHits.set(h.entityId, { entityId: h.entityId, name: h.name, score: Number(h.score) || 0 });
+        const focus = !!sc.focus || !!prev?.focus;
+        if (!prev || h.score > prev.score) nameHits.set(h.entityId, { entityId: h.entityId, name: h.name, score: Number(h.score) || 0, focus });
+        else prev.focus = focus;
         if (sc.about) aboutEntityIds.add(h.entityId);
       }
     }
@@ -191,6 +195,10 @@ export function buildCues(core, s) {
     windowText,
     windowPlain: window.map((w) => w.text).join('\n'),   // 不带「名字：」的窗口文字（词法路用：说话人的名字不是话题）
     rewrites: [],
+    // D149：这一轮有没有内容线索（有意回想的 query，或者别人说的焦点那一句）；没有的（她自己开口）在场的人就是唯一的线索
+    contentCue: !!(q || focusLine),
+    // D149：焦点那一句是对她说的（to-her / mentions-her）：被直接问到时，和线索的匹配比「最近」更重要
+    focusDirected: !!(focusLine && DIRECTED.has(focusLine.addressed)),
   };
 }
 
