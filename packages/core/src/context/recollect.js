@@ -80,7 +80,7 @@ export function recollectNote(core, rc, { given, key, at, placeOk }) {
     const rest = segs.map((s, i) => ({ s, i, left: Math.max(0, (s.total ?? 0) - got[i]) }))
       .filter((x) => x.left > 0).sort((a, b) => b.left - a.left || a.i - b.i).slice(0, REST_SEGMENTS)
       .sort((a, b) => a.i - b.i);
-    const said = rest.map((x) => { const l = range(x.s.start, x.s.end, multiDay); return l ? `${l}还有 ${x.left} 条` : ''; }).filter(Boolean);
+    const said = rest.map((x) => { const l = range(x.s.start, x.s.end, multiDay); return l ? `${l}${/\d$/u.test(l) ? ' ' : ''}还有 ${x.left} 条` : ''; }).filter(Boolean);
     if (said.length) text += `；${said.join('，')}没展开`;
   }
   return finish(core, text);

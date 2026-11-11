@@ -18,8 +18,9 @@
 //   2. 开核心：时钟定在那一刻；嵌入端口用本机 Ollama 的真实查询向量（按「空间 + 文本哈希」缓存在 <out>/embed-cache.jsonl）；
 //      模型端口一律拒绝；不配重排；不起 worker 线程；不跑后台任务。冷热分层在那一刻重算一次。Ollama 连不上就退到无嵌入档，报告第一行写明。
 //   3. 回想：trigger 是 message / idle 的走自动的那一块（context.recallAt：按场合键 + 感知 id 进入，和 recall 同一条路）；
-//      tool 的带 query / about / time / include_history 走有意回想（和集成层记忆工具交给核心的参数一样）。会话「本周期已经给过」默认清空（看排序本身）；--sent at-time 按当时的注入记录重建（看她实际会拿到什么）。
-//   4. 渲染：自动的用集成层的 renderBlock，工具的用 renderToolResult，上限照集成层的默认配置（inject / tools）。
+//      tool 的带 query / about / time / where / include_history 走有意回想（和集成层记忆工具交给核心的参数一样）。会话「本周期已经给过」默认清空（看排序本身）；--sent at-time 按当时的注入记录重建（看她实际会拿到什么）。
+//   4. 渲染：和线上同一条路——自动的用集成层的 renderInjectBlock，工具的用 renderRecallResult（D155：被判成回忆的那一轮上限放开、
+//      带「找了哪儿」），上限照集成层的默认配置（inject / tools）。
 //   5. 判定（scripts/replay-eval/judge.mjs）。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -176,13 +177,15 @@ async function runCase(c, env) {
       const s = { settingKey: c.setting, sessionId: c.session ?? null, trigger: Number.isSafeInteger(c.focus) ? 'message' : 'idle',
         ...(Number.isSafeInteger(c.focus) ? { focusPerceptId: c.focus } : {}) };
       const opt = { mode: 'deliberate', query: clip(t.query.trim(), 200), deadlineMs, budgetChars: caps.toolBudgetChars,
-        ...(t.about ? { about: clip(t.about, 80) } : {}), ...(t.time ? { time: clip(t.time, 40) } : {}), ...(t.include_history === true || t.includeHistory === true ? { includeHistory: true } : {}) };
+        ...(t.about ? { about: clip(t.about, 80) } : {}), ...(t.time ? { time: clip(t.time, 40) } : {}), ...(t.where ? { where: clip(t.where, 40) } : {}), ...(t.include_history === true || t.includeHistory === true ? { includeHistory: true } : {}) };
       out = await core.mods.context.recallAt(core, s, opt);
-      rendered = render.renderToolResult(out.items, { style });
+      // 和线上记忆工具同一条渲染（D155：结果里有回忆那一层时上限放开、带「找了哪儿」）
+      rendered = render.renderRecallResult(out, { tools: caps.tools, style });
     } else {
       const s = { settingKey: c.setting, sessionId: c.session ?? null, trigger: c.trigger, ...(Number.isSafeInteger(c.focus) ? { focusPerceptId: c.focus } : {}) };
       out = await core.mods.context.recallAt(core, s, { mode: 'involuntary', deadlineMs, budgetChars: caps.injectBudgetChars });
-      rendered = render.renderBlock(out.items, { maxChars: caps.blockMaxChars, style });
+      // 和线上自动注入同一条渲染（D155：被判成回忆的那一轮整块上限加大）
+      rendered = render.renderInjectBlock(out, { inject: caps.inject, style });
     }
     const tRecall = performance.now() - t1;
     db = new DatabaseSync(path.join(dir, FILES[0]), { readOnly: true });
@@ -262,6 +265,8 @@ export async function runReplay(o) {
     injectBudgetChars: HOST_DEFAULTS.inject?.budgetChars ?? 900,
     blockMaxChars: HOST_DEFAULTS.inject?.blockMaxChars ?? 1400,
     toolBudgetChars: HOST_DEFAULTS.tools?.recallBudgetChars ?? 1200,
+    inject: HOST_DEFAULTS.inject ?? {},
+    tools: HOST_DEFAULTS.tools ?? {},
   };
   const embedMode = o.embed ?? 'ollama';
   let embedding = null;

@@ -125,6 +125,37 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
 }
 
 /**
+ * 自动注入的那一块（D155：和回放评测共用同一条路）：被判成回忆的那一轮（结果里有回忆那一层）整块的上限在 inject.blockMaxChars 上
+ * 加 inject.recollectChars，回忆那一节开头放「找了哪儿」那一行；浮现的轮照旧。recollect：要交回注入记录的意图和范围的摘要（没有给 null）。
+ * @param {import('rugu-core/contract').RecallLayers} layers
+ * @param {{inject?: {blockMaxChars?: number, recollectChars?: number}, style?: 'guided'|'purpose'}} [opt]
+ * @returns {{text: string, used: object[], recollect: object|null}}
+ */
+export function renderInjectBlock(layers, { inject = {}, style = 'guided' } = {}) {
+  const items = Array.isArray(layers?.items) ? layers.items : [];
+  const rcTurn = items.some((it) => it?.layer === 'recollect');
+  const maxChars = (inject.blockMaxChars ?? 1400) + (rcTurn ? Math.max(0, inject.recollectChars ?? 2400) : 0);
+  const r = renderBlock(items, { maxChars, style, note: rcTurn ? String(layers?.recollect?.note ?? '') : '' });
+  return { ...r, recollect: recollectLog(layers, rcTurn) };
+}
+
+/**
+ * 记忆工具的返回（D155：和回放评测共用同一条路）：结果里有回忆那一层时整个结果最多 tools.recollectChars 字、开头带「找了哪儿」那一行；
+ * 没有时照旧 1600 字。recollect 同 renderInjectBlock。
+ * @param {import('rugu-core/contract').RecallLayers} layers
+ * @param {{tools?: {recollectChars?: number}, style?: 'guided'|'purpose'}} [opt]
+ * @returns {{text: string, used: object[], recollect: object|null}}
+ */
+export function renderRecallResult(layers, { tools = {}, style = 'guided' } = {}) {
+  const items = Array.isArray(layers?.items) ? layers.items : [];
+  const rcTurn = items.some((it) => it?.layer === 'recollect');
+  const r = renderToolResult(items, { style, ...(rcTurn ? { maxChars: Math.max(1600, tools.recollectChars ?? 4600), note: String(layers?.recollect?.note ?? '') } : {}) });
+  return { ...r, recollect: recollectLog(layers, rcTurn) };
+}
+const recollectLog = (layers, rcTurn) => (rcTurn && layers?.recollect?.log && typeof layers.recollect.log === 'object' && !Array.isArray(layers.recollect.log)
+  ? layers.recollect.log : null);
+
+/**
  * memory_recall 工具的返回：一条一行，带来源说法和把握（§8.5）。核心的 rendered 已经带着来源说法（RecallItem.rendered：
  * 时态、来源说法、含糊程度都按目标场合渲染好了），provenance 只在 rendered 里没有它时才补在后面，不重复说两遍。
  */

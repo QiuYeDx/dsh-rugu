@@ -110,6 +110,12 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
   const exclude = safe(core, 'inWindow', () => inWindow(core, cues), new Set()) ?? new Set();
   const scopeRefs = scope?.given && scope.refs ? [...scope.refs].filter((r) => !exclude.has(r)) : [];
   const scoped = scopeRefs.length > 0;
+  // 被判成「在问过去」、可那一句没有内容（寒暄、叫她一声，D151）也没圈出范围的一轮：没有要找的东西，不当回忆，照旧走全库流水线
+  // （「看起来在问过去」判别从宽，拿不准也切过来；这种轮按回忆给三四千字只是噪声）
+  if (kind === 'auto' && cues.focusContent === false && !scope?.given) {
+    metric(core, 'retrieve.recollect.noContent');
+    return runRecall(core, s, opt, { cues, queryVectors: entry?.queryVectors ?? null, rewrites: fresh?.rewrites ?? [] });
+  }
   metric(core, scope?.given ? (scoped ? 'retrieve.recollect.scoped' : 'retrieve.recollect.scopeEmpty') : 'retrieve.recollect.unscoped');
 
   // 4 + 5. 范围内检索和全库那一次一起跑：字面马上开始；稠密等全库那一次的查询向量（一嵌入好就交过来）
@@ -164,7 +170,7 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
   let items = global;
   if (inScope.length) {
     try {
-      const span = spanOf(scope.rows, windows);
+      const span = spanOf(scope.rows, windows, core.now());
       segments = span && windows.length ? cut(span, Math.max(1, Math.floor(Number(R.segments) || 6)), scope.rows) : [];
       const ordered = arrange(inScope, { shape: intent?.shape ?? null, segments, n: tier.maxItems });
       const inSet = new Set(ordered.map((c) => c.ref));
@@ -313,8 +319,8 @@ function mergeScoped(core, p, cues, { lexHits, denseHits, scopeRefs, exclude, K,
   return out.filter((c) => c.meta);
 }
 
-/** 范围里有记忆的时间跨度（和时间窗取交）；没有就 null。 */
-function spanOf(rows, windows) {
+/** 范围里有记忆的时间跨度（和时间窗取交，不超过现在）；没有就 null。 */
+function spanOf(rows, windows, now) {
   const ts = (rows ?? []).filter((r) => Number.isFinite(r.tStart));
   if (!ts.length) return null;
   let start = Math.min(...ts.map((r) => r.tStart));
@@ -323,6 +329,7 @@ function spanOf(rows, windows) {
     start = Math.max(start, Math.min(...windows.map((w) => w.start)));
     end = Math.min(end, Math.max(...windows.map((w) => w.end)));
   }
+  if (Number.isFinite(now)) end = Math.min(end, now);
   return end >= start ? { start, end } : null;
 }
 
