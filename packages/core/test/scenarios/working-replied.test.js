@@ -87,8 +87,9 @@ test('D145：主人在群里答了一句「没做」，几分钟后在私聊里�
         assert.ok(!new RegExp(`(^|〕)他：${ASKED}`).test(a.rendered), `不写成「他」（「他」指眼前这个人） ${a.rendered}`);
         assert.ok(!/听.+说的/.test(a.rendered), `不是他转述的：不写「听谁说的」 ${a.rendered}`);
         assert.match(b.rendered, /：没做/);
-        // 「#查询」不是被回的那一句（紧挨在前面的是 ASKED）
-        assert.ok(!wm.some((i) => /#查询/.test(i.rendered)), show(wm));
+        // 群友紧挨在 ASKED 前面连着说的「#查询」一起带（repliedLead），排在它前面、同一段
+        const lead = wm.find((i) => /#查询/.test(i.rendered));
+        assert.ok(lead && lead.group === a.group && ids.indexOf(lead.id) + 1 === ids.indexOf(asked), show(wm));
         // 一条对一次判定：被回的那一句是第一段直接放行的（不是 A4 / A5）
         const row = w.core.store.get('SELECT stage, rule, reason FROM appraisals WHERE id = ?', Number(a.appraisalRef.slice(2)));
         assert.equal(row.stage, 1);
@@ -217,4 +218,42 @@ test('D145：没有回复目标——中间只隔着她的话也算；他连着�
     assert.equal(rt(far), null, `往前 ${w.core.config.get().recall.working.repliedScan} 条以内没有别人的话：不带`);
     assert.ok(ws.replied.some((x) => x.ref === pid(w, asked) && x.by.length >= 2), JSON.stringify(ws.replied));
   } finally { await w.close(); }
+});
+
+test('D145：几个人的话穿插着、没有回复目标——挑词对得上的那一句（不是紧挨在前面的另一件事），被回的人连着说的前一句一起带', async (t) => {
+  for (const seed of SEEDS) {
+    await t.test(`seed ${seed}`, async () => {
+      const w = await world(seed, 'wr-interleave');
+      try {
+        const other = w.fp.people.other.name;
+        w.say('groupX', 'principal', '今天有点忙', { addressed: 'ambient', attention: 'attended' }, 60_000);
+        const cmd = w.say('groupX', 'friend', '#查询', { addressed: 'ambient', attention: 'peripheral' }, 15_000);
+        const asked = w.say('groupX', 'friend', ASKED, { addressed: 'ambient', attention: 'peripheral' }, 10_000);
+        const side = w.say('groupX', 'other', `@${w.fp.people.stranger.name} 往新版更，试过了，没事`, { addressed: 'ambient', attention: 'peripheral' }, 10_000);
+        const answer = w.say('groupX', 'principal', '没做', { addressed: 'ambient', attention: 'attended' }, 10_000);
+        const side2 = w.say('groupX', 'other', '怕就整个备份，出问题回退', { addressed: 'ambient', attention: 'peripheral' }, 10_000);
+        const last = w.say('groupX', 'principal', `@${other} 好吧`, { addressed: 'ambient', attention: 'attended' }, 10_000);
+        w.clock.advance(5 * MINUTE);
+        const ask = w.say('oneOnOne', 'principal', ASK, { addressed: 'to-her', attention: 'attended' });
+        await w.flush();
+        // 认法：「没做」回的是 ASKED（词重合最多），不是紧挨在前面的另一件事；「#查询」跟着一起带
+        const ws = w.core.mods.retrieve.workingSet(w.core, { settingKey: w.keyOf('oneOnOne'), focusPerceptId: w.perceptOf(ask).id },
+          { triggerEntityId: w.perceptOf(answer).actor_entity_id });
+        const line = ws.lines.find((l) => l.ref === pid(w, answer));
+        assert.equal(line?.repliedTo, pid(w, asked), JSON.stringify(line));
+        assert.deepEqual(line.repliedLead, [pid(w, cmd)]);
+        // 都对不上（「好吧」和前面别人的话没有一个共同的字）：取最近的那一句
+        assert.equal(ws.lines.find((l) => l.ref === pid(w, last))?.repliedTo, pid(w, side2));
+        const r = await recallAt(w, 'oneOnOne', ask);
+        const wm = wmOf(r);
+        const ids = wm.map((i) => i.id);
+        const at = (o) => ids.indexOf(pid(w, o));
+        assert.ok(at(cmd) >= 0 && at(asked) >= 0 && at(answer) >= 0, `「#查询」「${ASKED}」「没做」都在 ${show(wm)}`);
+        assert.ok(at(cmd) + 1 === at(asked) && at(asked) + 1 === at(answer), `顺序对、紧挨着 ${show(wm)}`);
+        assert.equal(new Set([cmd, asked, answer].map((o) => wm[at(o)].group)).size, 1, '同一段');
+        assert.ok(!ids.includes(pid(w, side)), `不相干的那一句不带 ${show(wm)}`);
+        assert.equal(metricOf(w, 'wm.continuity.miss'), 0, 'wm.continuity.miss');
+      } finally { await w.close(); }
+    });
+  }
 });

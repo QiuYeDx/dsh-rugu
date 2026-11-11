@@ -17,11 +17,12 @@
 // 她自己开口的一轮（D132）没有「眼前这个人」：context 按「这里的听众」取——recentPartners 给出她最近在别处来往过、又在这里的人
 // （听众名单里的、最近在这里说过话的，或者以前在这里说过话的：成员列不全的群里，半小时没开口的人照样是这里的人），
 // 每个人照样走 workingSet（focusPerceptId 为空：话题只拿他在这里最近的几句算）。
-// 他在回哪一句（D145）：他的一句话是在回别人时，这一行带上被回的那一句（repliedTo；只认结构，不解析文字）——这条消息带着回复 / 引用的
-// 目标（reply_to_key、quote_json）就是它；没有的话，是同一场合里紧挨在他这句前面的、别人亲口说的那一句（往前数 recall.working.repliedScan
-// 条以内，中间只隔着她的话也算；他连着说的几句不算数，共用前面那一句）。对她说的话（to-her / mentions-her）不猜。被回的是她说的、
-// 他自己说的就不另带。被回的那一句不是候选行：不参与 A、排名和切段，只在算他这一行的话题相似度时把它的词并进来（他回的话继承
-// 被回那句的话题）；带不带进她心里由 discretion.admitWorking 按第一段判（replied），怎么摆由 context 定。
+// 他在回哪一句（D145）：他的一句话是在回别人时，这一行带上被回的那一句（repliedTo；只认结构和词的重合，不认关键词）——这条消息带着
+// 回复 / 引用的目标（reply_to_key、quote_json）就是它；没有的话，从同一场合往前 recall.working.repliedScan 条以内别人亲口说的几句里
+// 挑和他这一句词重合最多的（她的话跳过；他连着说的几句不算数，共用前面那几句；都对不上取最近的；群里几个人的话常穿插着）。
+// 对她说的话（to-her / mentions-her）不猜。被回的是她说的、他自己说的就不另带。说那一句的人紧挨在它前面连着说的话（没人插话，
+// 最多 recall.working.repliedRun 句）一起带（repliedLead）。这几句都不是候选行：不参与 A、排名和切段，只在算他这一行的话题相似度时
+// 把它们的词并进来（他回的话继承被回那句的话题）；带不带进她心里由 discretion.admitWorking 逐句按第一段判（replied），怎么摆由 context 定。
 // 闲聊段的 core 另加「和眼前话题最相近的他的那一句」（topicSim ≥ recall.working.onTopicMin，D145）。
 import { safe, selfId, metric } from './util.js';
 
@@ -56,6 +57,7 @@ const REPLIED_READ = 4;
  * @property {string} exchange            同一段一来一回的粗分标识（场合 + 开头那一行的 id）
  * @property {string|null} unitKey        所在的段（WorkingUnit.key）
  * @property {string|null} repliedTo      他这一句在回的那一句别人的话（'p<id>'，D145；她的话、没认出来的是 null）
+ * @property {string[]} repliedLead        说那一句的人紧挨在它前面连着说的、一起带的一两句（新的在前，D145）
  */
 
 /**
@@ -67,6 +69,7 @@ const REPLIED_READ = 4;
  * @property {number|null} actorEntityId   说这一句的人
  * @property {string} text
  * @property {string[]} by                 回它的那几行（他的话的引用）
+ * @property {string|null} leadOf          是一起带的前一两句时：它跟着的那一句被回的话（否则 null）
  */
 
 /**
@@ -179,30 +182,38 @@ export function workingSet(core, q, opt = {}) {
   for (const list of seq.values()) list.sort((x, y) => x.perceptId - y.perceptId);
   out.candidates = lines.size;
 
-  // 3b. 他在回哪一句（D145，只认结构）：被回的那一句不是候选行，只记在回它的那一行上
-  const replied = new Map();   // 被回的那一句的感知 id → RepliedLine（带 row：话题用）
-  for (const l of lines.values()) {
-    l.repliedTo = null;
-    if (l.role !== 'trigger') continue;
-    const t = repliedTarget(core, rows.get(l.perceptId), people, W);
-    if (!t) continue;
-    l.repliedTo = `p${t.id}`;
+  // 3b. 他在回哪一句（D145）：被回的那一句（和说它的人紧挨在前面连着说的一两句）不是候选行，只记在回它的那一行上
+  const herNames = ownNames(core);
+  const replied = new Map();   // 感知 id → RepliedLine（带 row：话题用）
+  const note = (t, l, leadOf) => {
     if (!replied.has(t.id)) {
       replied.set(t.id, { ref: `p${t.id}`, perceptId: t.id, settingKey: t.setting_key, at: t.at, actorEntityId: t.actor_entity_id ?? null,
-        text: String(t.text ?? ''), by: [], row: { id: t.id, text: t.text, addressed: t.addressed, mentions_json: t.mentions_json ?? null } });
+        text: String(t.text ?? ''), by: [], leadOf, row: { id: t.id, text: t.text, addressed: t.addressed, mentions_json: t.mentions_json ?? null } });
     }
     replied.get(t.id).by.push(l.ref);
+  };
+  for (const l of lines.values()) {
+    l.repliedTo = null;
+    l.repliedLead = [];
+    if (l.role !== 'trigger') continue;
+    const t = repliedTarget(core, rows.get(l.perceptId), people, W, herNames);
+    if (!t) continue;
+    l.repliedTo = `p${t.main.id}`;
+    note(t.main, l, null);
+    for (const x of t.lead) { l.repliedLead.push(`p${x.id}`); note(x, l, l.repliedTo); }
   }
 
   // 4. 话题相似度：触发者这一句 + 他在这里最近的几行（按激活加权；别人的话不参与）；另算只拿他这一句的（段的激活用）。
-  //    他回别人的那一行把被回那一句的词并进来（D145：「没做」本身和后来问起的那件事没有共同的词，共同的词在被回的那一句里）
-  const herNames = ownNames(core);
+  //    他回别人的那一行把被回那一句（和一起带的那一两句）的词并进来（D145：「没做」本身和后来问起的那件事没有共同的词，
+  //    共同的词在被回的那一句里）
   const topic = topicTerms(core, here, people, q.focusPerceptId, herNames, W, at);
   const focusOnly = focusTerms(core, here, people, q.focusPerceptId, herNames);
   for (const l of lines.values()) {
-    const rp = l.repliedTo ? replied.get(Number(l.repliedTo.slice(1)))?.row : null;
     const terms = termsOf(core, l.row, herNames);
-    if (rp) for (const w of termsOf(core, rp, herNames)) terms.add(w);
+    for (const r of [l.repliedTo, ...(l.repliedLead ?? [])].filter(Boolean)) {
+      const rp = replied.get(Number(r.slice(1)))?.row;
+      if (rp) for (const w of termsOf(core, rp, herNames)) terms.add(w);
+    }
     l.topicSim = topic.size ? simOfTerms(topic, terms) : 0;
     l.focusSim = focusOnly.size ? simOfTerms(focusOnly, terms) : 0;
   }
@@ -552,14 +563,18 @@ function representative(ms) {
 }
 
 /**
- * 他这一句在回哪一句别人的话（D145，只认结构，不解析文字）。r 是他这一行的感知（带 adapter、reply_to_key、quote_json）。
+ * 他这一句在回哪一句别人的话（D145，只认结构和词的重合，不认任何关键词）。r 是他这一行的感知（带 adapter、reply_to_key、quote_json）。
  *   - 带着回复 / 引用的目标：就是那一条（回复优先，其次引用）；要在同一场合、是别人（不是她、不是他）亲口说的、还在的话，否则不另带。
- *     有目标就只认目标，不再猜「紧挨在前面的那一句」；目标读不到（还没入库、删掉了）也不猜。
- *   - 没有目标、又不是对她说的：同一场合里往前数 recall.working.repliedScan 条以内（她的话算数；他自己连着说的几句不算数，
- *     几句共用前面那一句），第一条别人说的话——是亲口说的、还在的就是它；碰到别的（转来的材料、撤回了的……）就不另带。
- * @returns {object|null}  被回的那一行（percepts 的行）
+ *     有目标就只认目标，不再挑；目标读不到（还没入库、删掉了）也不挑。
+ *   - 没有目标、又不是对她说的：同一场合里往前数 recall.working.repliedScan 条以内（她的话算数、跳过；他自己连着说的几句不算数，
+ *     几句共用前面那几句）别人亲口说的那几句是候选，挑和他这一句「最对得上」的：他这一句的词有多大一部分出现在那一句里
+ *     （termsOf 的词，含单字：两个字的「没做」也能对上「你这没做某某保护啊」，而另一件事的「没事」只沾一个字）；一样多的取近的，
+ *     都是 0（或他这一句没有词）取最近的那一句。群里几个人的话常穿插着，紧挨在前面的常常是另一件事。
+ *   - 被回的那个人紧挨在那一句前面连着说的话（中间没有任何别人、也没有她插话；按条数，最多 recall.working.repliedRun 句）一起带：
+ *     「#指令」+「你这没做某某保护啊」是一个意思的两半。她的话算插话：她插了一句，前后就不再是同一口气说完的。
+ * @returns {{main: object, lead: object[]}|null}  main：被回的那一行；lead：一起带的那几行（新的在前）
  */
-function repliedTarget(core, r, people, W) {
+function repliedTarget(core, r, people, W, own) {
   if (!r) return null;
   const ok = (x) => !!x && x.setting_key === r.setting_key && !x.actor_self && x.actor_entity_id != null && !people.includes(x.actor_entity_id)
     && TRIGGER_KINDS.includes(x.kind) && x.text != null && x.standing !== 'material' && x.visible_to !== 'her-only'
@@ -576,27 +591,52 @@ function repliedTarget(core, r, people, W) {
       else return null;   // 引用了一条，但认不出是哪一条（彻底删除过的）：不猜
     }
   }
+  let main = null;
   if (key || qid != null) {
     const x = safe(core, 'workingRepliedTo', () => (qid != null
       ? core.store.get(`SELECT ${cols} FROM percepts WHERE id = ?`, qid)
       : core.store.get(`SELECT ${cols} FROM percepts WHERE adapter = ? AND ext_key = ?`, r.adapter, key)), null);
-    return ok(x) ? x : null;
+    main = ok(x) ? x : null;
+  } else {
+    if (r.addressed === 'to-her' || r.addressed === 'mentions-her') return null;
+    const scan = Math.max(0, Math.floor(W.repliedScan ?? 4));
+    if (!scan) return null;
+    const before = safe(core, 'workingRepliedNear', () => core.store.all(
+      `SELECT ${cols} FROM percepts WHERE setting_key = ? AND id < ? ORDER BY id DESC LIMIT ?`, r.setting_key, r.id, scan * REPLIED_READ), []) ?? [];
+    const cands = [];   // 近的在前
+    let n = 0;
+    for (const x of before) {
+      if (!x.actor_self && people.includes(x.actor_entity_id)) continue;   // 他自己连着说的几句：共用前面那几句
+      if (n >= scan) break;
+      n += 1;
+      if (ok(x)) cands.push(x);                                              // 她的话、材料、撤回了的：算数，不是候选
+    }
+    if (!cands.length) return null;
+    const mine = termsOf(core, r, own);
+    const score = (x) => {
+      if (!mine.size) return 0;
+      const t = termsOf(core, x, own);
+      let k = 0;
+      for (const w of mine) if (t.has(w)) k += 1;
+      return k / mine.size;
+    };
+    main = cands[0];
+    let best = score(main);
+    for (const x of cands.slice(1)) { const v = score(x); if (v > best) { best = v; main = x; } }
   }
-  if (r.addressed === 'to-her' || r.addressed === 'mentions-her') return null;
-  const scan = Math.max(0, Math.floor(W.repliedScan ?? 4));
-  if (!scan) return null;
-  const before = safe(core, 'workingRepliedNear', () => core.store.all(
-    `SELECT ${cols} FROM percepts WHERE setting_key = ? AND id < ? ORDER BY id DESC LIMIT ?`, r.setting_key, r.id, scan * REPLIED_READ), []) ?? [];
-  let n = 0;
-  for (const x of before) {
-    if (!x.actor_self && people.includes(x.actor_entity_id)) continue;   // 他自己连着说的几句：共用前面那一句
-    if (n >= scan) break;
-    n += 1;
-    if (x.actor_self) continue;                                           // 中间只隔着她的话也算
-    if (x.visible_to === 'her-only' && x.kind === 'content') continue;    // 她私下读到的材料不算
-    return ok(x) ? x : null;
+  if (!main) return null;
+  // 说那一句的人紧挨在它前面连着说的一两句
+  const run = Math.max(0, Math.floor(W.repliedRun ?? 2));
+  const lead = [];
+  if (run) {
+    const prev = safe(core, 'workingRepliedRun', () => core.store.all(
+      `SELECT ${cols} FROM percepts WHERE setting_key = ? AND id < ? ORDER BY id DESC LIMIT ?`, main.setting_key, main.id, run), []) ?? [];
+    for (const x of prev) {
+      if (x.actor_self || x.actor_entity_id !== main.actor_entity_id || !ok(x)) break;
+      lead.push(x);
+    }
   }
-  return null;
+  return { main, lead };
 }
 
 function isHere(core, id, here) {

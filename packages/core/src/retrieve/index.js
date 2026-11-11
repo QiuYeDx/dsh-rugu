@@ -220,10 +220,11 @@ export async function backgroundForExtraction(core, seg, opt) { return backgroun
  * units（D110）：在全部候选上切的段——open（一件开着的意图，成员是它的来源行）、thread（约定的一串：根是他的 asks、照着做的一步经 follows
  * 追到根；第一眼 glance-2 以前的旧行按连续几句宽松 asks 退回切，fallback）、talk（其余），每段带 core、B（成员 B 的最大值 + cueWeight × 他这一句
  * 的话题相似度的最大值）、newerThanHere、latestRoot、replacedRef；有成员 A ≥ tau 的段（和开着的事）才返回，lines 含它们的全部成员。
- * 【D145】他的一句话在回别人时，这一行带 repliedTo（被回的那一句：回复 / 引用的目标，没有的话是同一场合往前 recall.working.repliedScan
- * 条以内、中间只隔着她的话或他自己连着说的几句的第一条别人亲口说的话；对她说的话不猜），replied 列出这几句（原话、时间、说的人、
- * 回它的那几行）。被回的那一句不是候选行，只在算他这一行的话题相似度时把它的词并进来；闲聊段的 core 另加话题相似度 ≥ onTopicMin
- * 的他的那一句（最相近的一句）。
+ * 【D145】他的一句话在回别人时，这一行带 repliedTo（被回的那一句：回复 / 引用的目标；没有的话是同一场合往前 recall.working.repliedScan
+ * 条以内（她的话跳过，他自己连着说的几句不算数）别人亲口说的几句里，他这一句的词出现得最多的那一句，都对不上取最近的；对她说的话
+ * 不猜）和 repliedLead（说那一句的人紧挨在它前面、没人插话连着说的话，最多 recall.working.repliedRun 句，新的在前），replied 列出
+ * 这几句（原话、时间、说的人、回它的那几行、跟着哪一句 leadOf）。它们不是候选行，只在算他这一行的话题相似度时把词并进来；
+ * 闲聊段的 core 另加话题相似度 ≥ onTopicMin 的他的那一句（最相近的一句）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string, focusPerceptId?: number|null}} cues
  * @param {{triggerEntityId: number|null, at?: number}} opt
