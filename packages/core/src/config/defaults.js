@@ -399,7 +399,8 @@ export const DEFAULTS = deepFreeze({
     past: { simMin: 0.72, simWithCue: 0.5, cueMin: 0.5, lenientCueMin: 0.2, deadlineMs: 550 },   // §6.6「看起来在问过去」；L3 从宽
     render: { sureAbove: 0.8, hedgeAbove: 0.4, sourceVagueBelowP: 0.4 },   // §6.6 > 0.8 直接说、0.4–0.8「好像」；§5.3 激活低时来源说得含糊
     fok: { maxItems: 1, margin: 1.0 },   // §6.6 知道感：线索很强、A 只差 margin 没过 τ_del 的
-    rewrite: { timeoutMs: 2000, maxCues: 3, maxTokens: 200 },   // §8.1 预取时改写指代，生成 1–3 条线索（use='rewrite'）
+    // §8.1 预取时改写指代，生成 1–3 条线索（use='rewrite'）；D154 起回一小段 JSON（线索 + 关于谁、时间词、场合、形状），输出上限 200 → 300
+    rewrite: { timeoutMs: 2000, maxCues: 3, maxTokens: 300 },
     background: { known: 12, private: 8, plans: 3 },   // §7.3 提炼背景两组的条数；plans：本段说话人还开着的计划最多几条（和召回带出的合计，S2b）
     prefetchCacheMax: 256,
     // 候选缓存（预取 / 上一次回想算好的那一份）最多沿用多久（D132）：过了就重新回想。这只是缓存的新鲜度，不是记忆的时间窗——

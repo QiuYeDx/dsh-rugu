@@ -29,8 +29,20 @@ import { DEFAULTS } from '../config/defaults.js';
  * @property {(text: string, lang?: string) => number} questionCue
  * @property {(term: string, lang?: string) => ('function'|'word'|null)} termClass   【D150】查询词的词类（分析器不给就是 null）
  * @property {(lang?: string) => string[]} pastQuestionExemplars
+ * @property {(text: string, roles: {speaker?: string|null, self?: string|null}, lang?: string) => PersonView} personView  【D154】人称换成她的视角
+ * @property {(text: string, lang?: string) => PlaceRef} placeRef                         【D154】场合的说法
  * @property {(words: string[]) => void} setUserDictionary                                  转给支持的分析器（jieba）
  * @property {{jieba: boolean, langs: string[]}} info                                       给启动自检看
+ */
+
+/**
+ * 【D154】人称换成她的视角的结果：text 换过的文字；speaker / self 点到了说话人 / 她自己没有。分析器不给这个能力的语言原样返回、都是 false。
+ * @typedef {{text: string, speaker: boolean, self: boolean}} PersonView
+ */
+/**
+ * 【D154】一个场合的说法：kind 'here' 说话的这个地方 / 'private' 和说话人单独的地方 / 'group' 光说「群里」/ null 别的；
+ * names：kind 为 null 时拿去和场合名字比的几种写法（原样在最前）。分析器不给的语言：{kind: null, names: [原样]}。
+ * @typedef {{kind: 'here'|'private'|'group'|null, names: string[]}} PlaceRef
  */
 
 /** 没有 config（单独用分析器）或快照里缺键时的兜底：就是 config/defaults.js 的 lang 段。 */
@@ -191,6 +203,29 @@ export function termClass(core, term, opt) {
 }
 
 /**
+ * 【D154】对她说的一句话换成她的视角：第一人称指说话人，换成他的称呼；第二人称指她，换成她在记忆里的自称（缺省「我」）。
+ * 各语言的分析器自己给（LanguageAnalyzer.personView，可选），没给的语言原样返回。规则克制：拿不准就不换（见 zh.js）。不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} text
+ * @param {{speaker?: string|null, self?: string|null, lang?: string}} [opt]  speaker：说话人在这里的称呼（没有就不换）
+ * @returns {PersonView}
+ */
+export function personView(core, text, opt = {}) {
+  return registry(core).personView(String(text ?? ''), { speaker: opt.speaker ?? null, self: opt.self ?? null }, opt.lang);
+}
+
+/**
+ * 【D154】一个场合的说法（「这里」「私下」「某个群」）：各语言的分析器给（LanguageAnalyzer.placeRef，可选）。不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} text
+ * @param {{lang?: string}} [opt]
+ * @returns {PlaceRef}
+ */
+export function placeRef(core, text, opt) {
+  return registry(core).placeRef(String(text ?? ''), opt?.lang);
+}
+
+/**
  * 区分性的词（§7.3 污点检查、§9.4.2 外发初筛、§5.6 告诉过谁的比对）：数字、高 IDF 的二元组、实体名。
  * idf 不给时只返回数字和 names 里命中的名字。exclude 里的词先去掉（外发初筛要去掉线索里本来就有的词）。
  *   - 数字：两位以上的数字串（电话、日期、金额）；
@@ -272,6 +307,28 @@ function classOf(a, term) {
   if (typeof a?.termClass !== 'function') return null;
   try { const c = a.termClass(String(term ?? '')); return c === 'function' || c === 'word' ? c : null; } catch { return null; }
 }
+/** 分析器给的人称视角；不给、出错、形状不对都原样返回。 */
+function personOf(a, text, roles) {
+  const none = { text: String(text ?? ''), speaker: false, self: false };
+  if (typeof a?.personView !== 'function') return none;
+  try {
+    const r = a.personView(String(text ?? ''), roles ?? {});
+    return r && typeof r.text === 'string' ? { text: r.text, speaker: r.speaker === true, self: r.self === true } : none;
+  } catch { return none; }
+}
+const PLACE_KINDS = new Set(['here', 'private', 'group']);
+/** 分析器给的场合说法；不给、出错都按「一个名字」。 */
+function placeOf(a, text) {
+  const t = String(text ?? '').trim();
+  const none = { kind: null, names: t ? [t] : [] };
+  if (!t || typeof a?.placeRef !== 'function') return none;
+  try {
+    const r = a.placeRef(t);
+    if (!r || typeof r !== 'object') return none;
+    const names = (Array.isArray(r.names) ? r.names : []).filter((x) => typeof x === 'string' && x);
+    return { kind: PLACE_KINDS.has(r.kind) ? r.kind : null, names: PLACE_KINDS.has(r.kind) ? [] : names.length ? names : [t] };
+  } catch { return none; }
+}
 const clamp01 = (x) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
 const validWindow = (w) => w && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start;
 
@@ -336,6 +393,8 @@ function buildRegistry(core, analyzers, meta) {
       try { return clamp01(a.questionCue(String(text ?? ''))); } catch { return 0; }
     },
     termClass(term, lang) { return classOf(pick(term, lang), term); },
+    personView(text, roles, lang) { return personOf(pick(text, lang), text, roles); },
+    placeRef(text, lang) { return placeOf(pick(text, lang), text); },
     pastQuestionExemplars(lang) {
       const a = get(lang ?? core.ports?.selfProfile?.locale);
       try { const r = a.pastQuestionExemplars(); return Array.isArray(r) ? r.filter((x) => typeof x === 'string') : []; } catch { return []; }
@@ -406,6 +465,9 @@ function routedUnd(base, owner) {
       return out;
     },
     termClass(term) { return classOf(owner(term) ?? base, term); },
+    // 人称、场合的说法：整句交给认得其中文字的第一个分析器（混合文字时以它为准），谁都不认就原样
+    personView(text, roles) { return personOf(owners(text)[0] ?? base, text, roles); },
+    placeRef(text) { return placeOf(owners(text)[0] ?? base, text); },
     questionCue(text) {
       let best = 0;
       for (const a of [base, ...owners(text)]) {

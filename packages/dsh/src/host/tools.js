@@ -90,12 +90,14 @@ const DESCRIPTIONS = {
     'evidence_quote 必须是对方刚发给你的消息里的原话（照抄一小段；读消息工具读到的也算）。谁能让你忘掉什么由记忆插件判断：当事人只能管关于自己的事，别人的要求会先交给主人看。一条消息只调用一次。',
   ].join('\n'),
 };
+/** 详细指引里 memory_recall 的 where 那一行（D154）：原来的四行一字不改，补在后面（同 memory_note 的经验那一行）。 */
+export const RECALL_WHERE_GUIDED = 'where 是在哪儿（「这个群」「私聊」或群名，可选）。';
 /** 详细指引里 memory_note 的经验那一行（D124）。 */
 export const NOTE_LESSON_GUIDED = '你自己做事的办法（工具怎么用才成、踩过的坑、主人教你的做法）用 kind: lesson 自己记：text 写以后怎么做，trap 写要避开的坑，tool 写是哪个工具的，here 为 true 表示只在这里适用；主人教的就在 evidence_quote 照抄主人的原话。别人的事、别人的要求用 remember。验证过没有由插件按证据标。';
 const DESCRIPTIONS_PURPOSE = {
   recall: [
     '用心想一想以前的事：别人说过什么、跟你定过什么、某个人怎么样、上次聊到哪儿、你做某件事的经验。你在别的群、私聊里经历过的都记得，眼前的上下文里没有时，它帮你想起来；想不全可以换个问法再想。',
-    'query 写想回忆的事（一句话）；about 关于谁或什么；time 大概的时间（「上周」「10/31」）；include_history 为 true 时连旧的说法和同类的其他几次一起想。',
+    'query 写想回忆的事（一句话）；about 关于谁或什么；time 大概的时间（「上周」「10/31」）；where 在哪儿（「这个群」「私聊」）；include_history 为 true 时连旧的说法和同类的其他几次一起想。',
     '只说这个工具真正返回过的内容；返回里没有的，照实说不记得或不太确定，别编。',
   ].join('\n'),
   note: [
@@ -108,13 +110,13 @@ const DESCRIPTIONS_PURPOSE = {
     'evidence_quote 照抄他刚发给你的消息里的一小段（读消息工具读到的也算）。谁能让你改什么由插件判断：当事人只管关于自己的事，别人的要求先交给主人看。',
   ].join('\n'),
 };
-/** 总字数上限：「只讲目的」不超过 D124 以前三个说明的总字数（806）；「详细指引」是原文另加经验那一行（和换行）。 */
+/** 总字数上限：「只讲目的」不超过 D124 以前三个说明的总字数（806）；「详细指引」是原文另加经验那一行和 where 那一行（D154，各带换行）。 */
 export const DESCRIPTION_BUDGET = 806;
-export const DESCRIPTION_BUDGET_GUIDED = 806 + [...NOTE_LESSON_GUIDED].length + 1;
+export const DESCRIPTION_BUDGET_GUIDED = 806 + [...NOTE_LESSON_GUIDED].length + 1 + [...RECALL_WHERE_GUIDED].length + 1;
 /** 写法 → 三个工具的说明（不认识的按 guided）。 */
 export function descriptionsFor(style) {
   if (style === 'purpose') return DESCRIPTIONS_PURPOSE;
-  return { ...DESCRIPTIONS, note: [DESCRIPTIONS.note, NOTE_LESSON_GUIDED].join('\n') };
+  return { ...DESCRIPTIONS, recall: [DESCRIPTIONS.recall, RECALL_WHERE_GUIDED].join('\n'), note: [DESCRIPTIONS.note, NOTE_LESSON_GUIDED].join('\n') };
 }
 
 /** 工具定义（defineTool 的输入）。style：核心的 context.usageStyle（D125），不给按 guided。 */
@@ -126,6 +128,7 @@ export function memoryToolSpecs(style = 'guided') {
       query: { type: 'string', required: true, description: '想回忆的事（自然的一句话）' },
       about: { type: 'string', description: '关于谁或什么（可选）' },
       time: { type: 'string', description: '大概的时间，例如「上周」「10/31」（可选）' },
+      where: { type: 'string', description: '在哪儿，例如「这个群」「私聊」、某个群的名字（可选）' },
       include_history: { type: 'boolean', description: '连旧的说法和同类的其他几次一起想（可选）' },
     } },
     // 详细指引里 remember / todo 的参数说明照 D124 以前的原文（评审 M6）；evidence_quote 在模式里没法按 kind 写必填，说明里写明
@@ -187,6 +190,7 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     const deadline = tc.recallDeadlineMs ?? 8000;
     const opt = { mode: 'deliberate', query: clip(q, 200), deadlineMs: deadline, budgetChars: tc.recallBudgetChars ?? 1200,
       ...(args?.about ? { about: clip(String(args.about), 80) } : {}), ...(args?.time ? { time: clip(String(args.time), 40) } : {}),
+      ...(args?.where ? { where: clip(String(args.where), 40) } : {}),
       ...(args?.include_history === true ? { includeHistory: true } : {}), ...(exec?.signal ? { signal: exec.signal } : {}) };
     const t0 = Date.now();
     const r = await settleWithin(pm.recall(sit, opt), deadline + 1000);

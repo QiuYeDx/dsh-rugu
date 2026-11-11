@@ -15,7 +15,9 @@ import { runRecall, emptySet } from './pipeline.js';
 import { fuse as fuseImpl, mmr as mmrImpl } from './fuse.js';
 import { render as renderImpl } from './render.js';
 import { looksLikePast as looksLikePastImpl } from './past.js';
-import { onPercepts as onPerceptsImpl, prefetch as prefetchImpl, cached as cachedImpl, cacheEntry, store as storeCache } from './prefetch.js';
+import { onPercepts as onPerceptsImpl, prefetch as prefetchImpl, cached as cachedImpl, cacheEntry, store as storeCache,
+  cachedRewrite as cachedRewriteImpl, parseRewrite as parseRewriteImpl } from './prefetch.js';
+import { buildIntent as buildIntentImpl } from './intent.js';
 import { backgroundForExtraction as backgroundImpl } from './background.js';
 import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, topicSimilarity } from './working.js';
 import { staticLevel, storeOk } from './level.js';
@@ -82,7 +84,7 @@ export function buildCues(core, s) { return buildCuesImpl(core, s); }
  * 降级级别：稠密路可不可用以 worker.health 为准（线程挂了 embedQuery 照样给向量，只有扫描降级，D40）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: string}} s
- * @param {{mode: 'involuntary'|'deliberate', query?: string, about?: string, time?: string, includeHistory?: boolean,
+ * @param {{mode: 'involuntary'|'deliberate', query?: string, about?: string, time?: string, where?: string, includeHistory?: boolean,
  *          deadlineMs: number, signal?: AbortSignal}} opt
  * @returns {Promise<import('../core-types.js').CandidateSet>}
  */
@@ -145,6 +147,35 @@ export async function prefetch(core, settingKey, opt) { return prefetchImpl(core
  * @returns {import('../core-types.js').CandidateSet|null}
  */
 export function cached(core, settingKey) { return cachedImpl(core, settingKey); }
+
+/**
+ * 【D154】读懂问题：把工具参数（query / about / time / where）、预取改写的结构化结果、语言层（人称、时间表达）合并成一份意图——
+ * 关于谁（aboutEntityIds）、时间窗、场合（settingKeys）、形状（point / timeline / roster / profile，只来自改写）、1–3 句线索，
+ * 外加每一项哪来的（from）。先后：工具参数 > 改写 > 语言层，每一项各取第一个算得出的来源。同步、不调模型、不抛错（算不出的项为空）。
+ * 这一版只产出意图，回想的流水线还没用它（D155）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {object|null} cues  buildCues 的结果
+ * @param {{query?: string|null, about?: string|null, time?: string|null, where?: string|null, rewrite?: object|null}} [given]
+ * @returns {import('./intent.js').Intent}
+ */
+export function buildIntent(core, cues, given) { return buildIntentImpl(core, cues, given ?? {}); }
+
+/**
+ * 【D154】这个场合最新一次预取改写的结构化结果（给 buildIntent 的 given.rewrite）；没有、作废了（来了新消息、过了 recall.prefetchTtlMin）给 null。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} settingKey
+ * @returns {import('./prefetch.js').RewriteResult|null}
+ */
+export function cachedRewrite(core, settingKey) { return cachedRewriteImpl(core, settingKey); }
+
+/**
+ * 【D154】宽容地解析改写的输出：JSON 对象（可以包在代码块、多余文字里）取 cues / about / time / where / shape，不合法的项为空；
+ * 不是 JSON 就按行取线索（rewrite-1 的格式）。纯函数，不抛。
+ * @param {string} text
+ * @param {{maxCues?: number}} [opt]
+ * @returns {import('./prefetch.js').RewriteResult}
+ */
+export function parseRewrite(text, opt) { return parseRewriteImpl(text, opt); }
 
 /**
  * RRF（k = recall.rrfK）合并各路，留 ≤ recall.fuseKeep 条。纯函数。
