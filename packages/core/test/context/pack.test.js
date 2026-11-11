@@ -1,12 +1,12 @@
-// 按预算打包（§10.4）：去掉本周期已发过的、按组分配、各层上限、单块 ≤ 900 字、每天和滚动窗口的额度、超了只留「你想着的」和有意回想。
+// 按预算打包（§10.4）：去掉本周期已发过的、按组分配、各层上限、单块 ≤ 900 字、每天和滚动窗口的额度、超了只留「你想着的」、工作记忆和有意回想。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS } from '../../src/config/defaults.js';
+import { DEFAULTS, budgetLimits } from '../../src/config/defaults.js';
 import { validateRecallLayers } from '../../src/contract/index.js';
-import { pack, DISPLAY_ORDER } from '../../src/context/pack.js';
+import { pack, DISPLAY_ORDER, UNMETERED_LAYERS } from '../../src/context/pack.js';
 
 const cfg = DEFAULTS;
-const free = { dayUsed: 0, dayLimit: cfg.context.perSessionPerDay, rollingLeft: Infinity };
+const free = { dayUsed: 0, dayLimit: budgetLimits(cfg).injectPerSessionPerDay, rollingLeft: Infinity };
 let seq = 0;
 /** 一条渲染好的条目。 */
 const E = (ref, layer, { verdict = 'share', chars = 20, group = `${layer}:${ref}`, order = (seq += 1) } = {}) => ({
@@ -130,4 +130,43 @@ test('额度用完时有意回想的整档（想起来的 + 在场者近况）�
     assert.deepEqual(run(entries, { budget, mode: 'deliberate', budgetChars: 1200 }).map((i) => i.id).sort(), ['a1', 'p1']);
     assert.deepEqual(run(entries, { budget }).map((i) => i.id), [], '不自主回想超了照旧什么都不给');
   }
+});
+
+test('D133：pack 的 report——超没超（每天 / 滚动窗口）、多少条没发过的受限条目因为预算没放进去；返回值不变', () => {
+  const entries = [E('a1', 'recalled', { chars: 100 }), E('a2', 'recalled', { chars: 100 }), E('n1', 'people', { group: 'p:1', chars: 50 }),
+    E('t1', 'intentions', { chars: 120 }), E('w1', 'working', { chars: 60 })];
+  const go = (budget, o = {}) => {
+    const report = {};
+    const items = pack(entries, { cfg, mode: o.mode ?? 'involuntary', sent: o.sent ?? new Set(), budgetChars: 900, budget, report });
+    return { ids: items.map((i) => i.id), report };
+  };
+  // 没超、额度够：什么都没丢
+  let r = go(free);
+  assert.deepEqual(r.report, { over: null, budgetDropped: 0 });
+  assert.equal(r.ids.length, 5);
+  // 每天的额度用完：除了「你想着的」和工作记忆整层丢掉；本周期已经发过的那条不算「没放进去」
+  r = go({ dayUsed: 10, dayLimit: 10, rollingLeft: -1 }, { sent: new Set(['a2']) });
+  assert.deepEqual(r.ids.sort(), ['t1', 'w1']);
+  assert.deepEqual(r.report, { over: 'day', budgetDropped: 2 }, '两样都超时记 day；a1、n1 两条');
+  // 滚动窗口用完
+  r = go({ ...free, rollingLeft: 0 });
+  assert.deepEqual(r.report, { over: 'rolling', budgetDropped: 3 });
+  // 有意回想：想起来的那一档也不受限，丢的只有人物卡
+  r = go({ ...free, rollingLeft: 0 }, { mode: 'deliberate' });
+  assert.deepEqual(r.report, { over: 'rolling', budgetDropped: 1 });
+  // 没超但只剩 120 字：放得下一条想起来的（100），另一条和人物卡（50）放不下
+  r = go({ ...free, rollingLeft: 120 });
+  assert.equal(r.report.over, null);
+  assert.equal(r.report.budgetDropped, 2);
+  assert.ok(r.ids.includes('t1') && r.ids.includes('w1'));
+  // 不传 report 照常
+  assert.deepEqual(run(entries).map((i) => i.id).length, 5);
+});
+
+test('D133：pack 的 exempt 和预算记账用同一份不受限的层（「你想着的」、工作记忆）', () => {
+  assert.deepEqual([...UNMETERED_LAYERS].sort(), ['intentions', 'working']);
+  // 额度为 0 时这两层照给
+  const items = run([E('t1', 'intentions', { chars: 50 }), E('w1', 'working', { chars: 50 }), E('a1', 'recalled', { chars: 10 })],
+    { budget: { dayUsed: 0, dayLimit: 0, rollingLeft: Infinity } });
+  assert.deepEqual(items.map((i) => i.id).sort(), ['t1', 'w1']);
 });

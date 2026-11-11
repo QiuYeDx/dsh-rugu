@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ContractError } from '../../src/contract/index.js';
 import { budgetState, loadSession, sentTags } from '../../src/context/ledger.js';
+import { budgetLimits } from '../../src/config/defaults.js';
 import { withWorld, percept, entity, GROUP, DM, ADAPTER, M } from './world.js';
 
 /** 给一批记忆写判定记录（就像 discretion.gate 做的那样），返回能注入的条目。 */
@@ -298,10 +299,11 @@ test('按轮污点 → 「需要你知道」（打开 context.taint.notify 时�
   }, { mods, config: NOTIFY_ON });
 });
 
-test('滚动预算：每会话每天的字数从注入日志算（确认过的 + 正在等确认的）；满 50 步以后，注入 ≤ 同期上下文增量的 5%', () => withWorld(async ({ core, clock }) => {
+test('滚动预算：每会话每天的字数从注入日志算（确认过的 + 正在等确认的）；满 50 步以后，注入 ≤ 同期上下文增量 × 档位的比例（D133）', () => withWorld(async ({ core, clock }) => {
   const ctx = core.mods.context;
   ctx.bindSession(core, { sessionId: 's1', settingId: GROUP, adapterId: ADAPTER, confidence: 'specific' });
   const N = core.config.get().context.rolling.steps;
+  const L = budgetLimits(core.config.get());
   // 还不满 50 步：不按滚动窗口限（会话刚开始，上下文增量还很小）
   for (let i = 0; i < N; i++) ctx.recordStep(core, 's1', { contextTokens: 10_000 + i * 400, at: core.now() + i });
   assert.equal(budgetState(core, loadSession(core, 's1'), core.now()).rollingLeft, Infinity);
@@ -313,19 +315,95 @@ test('滚动预算：每会话每天的字数从注入日志算（确认过的 +
   inject(core, 's1', 'n-3', gated(core, [['a3']]), { chars: 999, mode: 'shadow' });
   let b = budgetState(core, loadSession(core, 's1'), core.now());
   assert.equal(b.dayUsed, 500);
-  assert.equal(b.dayLimit, core.config.get().context.perSessionPerDay);
-  const share = core.config.get().context.rolling.maxShare;
-  assert.equal(b.rollingLeft, share * N * 400 - 300, '最近 50 步：增量 × 5% − 已确认注入的');
+  assert.equal(b.dayLimit, L.injectPerSessionPerDay, '每天的上限从档位来（默认宽松）');
+  assert.equal(L.injectShare, 0.25);
+  assert.equal(b.rollingLeft, L.injectShare * N * 400 - 300, '最近 50 步：增量 × 比例 − 已确认注入的');
+  assert.equal(b.rollingUsed, 300);
+  assert.equal(b.rollingLimit, L.injectShare * N * 400);
   ctx.recordStep(core, 's1', { contextTokens: 10_000 + (N + 1) * 400, at: core.now() });
   b = budgetState(core, loadSession(core, 's1'), core.now());
   assert.equal(loadSession(core, 's1').window.steps.length, N + 1, '只留最近 N + 1 步');
   const steps = loadSession(core, 's1').window.steps;
-  assert.equal(b.rollingLeft, share * (steps.at(-1).tokens - steps[0].tokens) - 300);
+  assert.equal(b.rollingLeft, L.injectShare * (steps.at(-1).tokens - steps[0].tokens) - 300);
   // 第二天：每天的额度重新算
   clock.days(1);
   assert.equal(budgetState(core, loadSession(core, 's1'), core.now()).dayUsed, 0);
   ctx.recordStep(core, 's1', { contextTokens: NaN, at: core.now() });   // 坏数据：计数，不抛错
 }));
+
+test('D133：压缩让上下文变小不再把滚动额度清零（窗口里相邻两步的正增量之和）', () => withWorld(async ({ core }) => {
+  const ctx = core.mods.context;
+  ctx.bindSession(core, { sessionId: 's1', settingId: GROUP, adapterId: ADAPTER, confidence: 'specific' });
+  const N = core.config.get().context.rolling.steps;
+  const share = budgetLimits(core.config.get()).injectShare;
+  // 前一半每步涨 1000，然后压缩（从 7.5 万掉到 9000），后一半每步再涨 1000：首尾相减是负数
+  const half = Math.floor(N / 2);
+  const tokens = [];
+  for (let i = 0; i <= N; i++) tokens.push(i <= half ? 50_000 + i * 1000 : 8_000 + (i - half) * 1000);
+  tokens.forEach((t, i) => ctx.recordStep(core, 's1', { contextTokens: t, at: core.now() + i }));
+  assert.ok(tokens.at(-1) < tokens[0], '首尾相减是负数（原来的算法额度是 0）');
+  const b = budgetState(core, loadSession(core, 's1'), core.now() + N);
+  assert.equal(b.rollingLimit, share * (N - 1) * 1000, '压缩那一步算 0，其余每步的增量照算');
+  assert.ok(b.rollingLeft > 0);
+}));
+
+test('D133：只把受限的层算进「已注入」——「你想着的」和工作记忆不记账；旧的行（条目上没有字数）按整块算', () => withWorld(async ({ core }) => {
+  const ctx = core.mods.context;
+  ctx.bindSession(core, { sessionId: 's1', settingId: GROUP, adapterId: ADAPTER, confidence: 'specific' });
+  const N = core.config.get().context.rolling.steps;
+  for (let i = 0; i <= N; i++) ctx.recordStep(core, 's1', { contextTokens: 10_000 + i * 1000, at: core.now() - 10 * (N - i) - 1 });
+  // 新的行：每条带自己的字数
+  const [a1, t2, p3] = gated(core, [['a1'], ['t2', 'share', 'intentions'], ['p3', 'share', 'working']]);
+  inject(core, 's1', 'n-1', [{ ...a1, chars: 120 }, { ...t2, chars: 80 }, { ...p3, chars: 400 }], { chars: 700 });
+  ctx.confirmInjection(core, 's1', 'n-1');
+  const row = core.store.get(`SELECT items_json FROM injections WHERE nonce = 'n-1'`);
+  assert.deepEqual(JSON.parse(row.items_json).map((it) => it.chars), [120, 80, 400], '每条的字数原样记下');
+  let b = budgetState(core, loadSession(core, 's1'), core.now());
+  assert.equal(b.dayUsed, 120, '只算想起来的那条（块头、意图、工作记忆不算）');
+  assert.equal(b.rollingUsed, 120);
+  // 只有工作记忆的块：一个字都不记
+  const [p4] = gated(core, [['p4', 'share', 'working']]);
+  inject(core, 's1', 'n-2', [{ ...p4, chars: 500 }], { chars: 520 });
+  ctx.confirmInjection(core, 's1', 'n-2');
+  assert.equal(budgetState(core, loadSession(core, 's1'), core.now()).dayUsed, 120);
+  // 旧的行：条目上没有字数 → 按整块的 chars
+  inject(core, 's1', 'n-3', gated(core, [['a5'], ['p6', 'share', 'working']]), { chars: 333 });
+  ctx.confirmInjection(core, 's1', 'n-3');
+  // 有的条目带字数、有的没带：也按整块算（保守）
+  const [a7, a8] = gated(core, [['a7'], ['a8']]);
+  inject(core, 's1', 'n-4', [{ ...a7, chars: 10 }, a8], { chars: 50 });
+  ctx.confirmInjection(core, 's1', 'n-4');
+  b = budgetState(core, loadSession(core, 's1'), core.now());
+  assert.equal(b.dayUsed, 120 + 333 + 50);
+  assert.equal(b.rollingUsed, 120 + 333 + 50);
+  // 条目上的字数要是非负整数
+  assert.throws(() => inject(core, 's1', 'n-5', [{ ...gated(core, [['a9']])[0], chars: -1 }]), ContractError);
+  assert.throws(() => inject(core, 's1', 'n-5', [{ ...gated(core, [['a9']])[0], chars: 1.5 }]), ContractError);
+}));
+
+test('D133：上限跟着花费档位——节省是 5% / 8000 字，不设上限两项都不限（null → Infinity），自定义的覆盖档位', async () => {
+  const run = (budget, context) => withWorld(async ({ core }) => {
+    const ctx = core.mods.context;
+    ctx.bindSession(core, { sessionId: 's1', settingId: GROUP, adapterId: ADAPTER, confidence: 'specific' });
+    const N = core.config.get().context.rolling.steps;
+    for (let i = 0; i <= N; i++) ctx.recordStep(core, 's1', { contextTokens: 10_000 + i * 100, at: core.now() - 10 * (N - i) - 1 });
+    inject(core, 's1', 'n-1', gated(core, [['a1']]), { chars: 100 });
+    ctx.confirmInjection(core, 's1', 'n-1');
+    const b = budgetState(core, loadSession(core, 's1'), core.now());
+    return { dayLimit: b.dayLimit, rollingLimit: b.rollingLimit, rollingLeft: b.rollingLeft, rollingUsed: b.rollingUsed, N };
+  }, { config: { budget, ...(context ? { context } : {}) } });
+  let r = await run({ preset: 'saving' });
+  assert.equal(r.dayLimit, 8000);
+  assert.equal(r.rollingLimit, 0.05 * r.N * 100);
+  assert.equal(r.rollingLeft, 0.05 * r.N * 100 - 100);
+  r = await run({ preset: 'unlimited' });
+  assert.deepEqual([r.dayLimit, r.rollingLimit, r.rollingLeft, r.rollingUsed], [Infinity, Infinity, Infinity, 100], '不限：额度是 Infinity，已用照样算（给诊断看）');
+  r = await run({ preset: 'saving', overrides: { injectShare: null, injectPerSessionPerDay: 12_345 } });
+  assert.deepEqual([r.dayLimit, r.rollingLimit], [12_345, Infinity]);
+  // 旧配置里写的 context.rolling.maxShare / perSessionPerDay（已弃用）读到了也忽略，照档位来
+  r = await run({ preset: 'loose' }, { rolling: { maxShare: 0.01 }, perSessionPerDay: 10 });
+  assert.deepEqual([r.dayLimit, r.rollingLimit], [40_000, 0.25 * r.N * 100]);
+});
 
 test('日志里只有类型和计数，没有内容和场合原 id', () => withWorld(async ({ core, logger }) => {
   const ctx = core.mods.context;
@@ -337,3 +415,25 @@ test('日志里只有类型和计数，没有内容和场合原 id', () => withW
   logger.assertNoText('秘密内容', GROUP);
 }));
 
+test('D133：诊断看得到注入预算——每天超了几轮、因为预算丢了几条；各活跃会话今天已用 / 上限、滚动窗口已用 / 上限', () => withWorld(async ({ core }) => {
+  const ctx = core.mods.context;
+  ctx.bindSession(core, { sessionId: 'sess-aaaa-1111', settingId: GROUP, adapterId: ADAPTER, confidence: 'specific' });
+  ctx.bindSession(core, { sessionId: 'sess-bbbb-2222', settingId: DM, adapterId: ADAPTER, confidence: 'specific' });
+  const N = core.config.get().context.rolling.steps;
+  for (let i = 0; i <= N; i++) ctx.recordStep(core, 'sess-aaaa-1111', { contextTokens: 10_000 + i * 100, at: core.now() - 10 * (N - i) - 1 });
+  inject(core, 'sess-aaaa-1111', 'n-1', gated(core, [['a1']]), { chars: 200 });
+  ctx.confirmInjection(core, 'sess-aaaa-1111', 'n-1');
+  const day = new Date(core.now()).toISOString().slice(0, 10);
+  for (const [name, v] of [['context.pack.over.day', 2], ['context.pack.over.rolling', 1], ['context.pack.budgetDropped', 7]]) {
+    core.store.run('INSERT INTO metrics(day, name, value) VALUES (?, ?, ?)', day, name, v);
+  }
+  const h = ctx.recallHealth(core);
+  assert.deepEqual(h.days[0].inject, { overDay: 2, overRolling: 1, budgetDropped: 7 });
+  const a = h.injectBudget.find((s) => s.session === 'sess-aaa');
+  assert.deepEqual(a, { session: 'sess-aaa', adapter: ADAPTER, dayUsed: 200, dayLimit: 40_000, rollingUsed: 200, rollingLimit: Math.round(0.25 * N * 100), steps: N + 1 });
+  const b = h.injectBudget.find((s) => s.session === 'sess-bbb');
+  assert.equal(b.rollingLimit, null, '窗口还没满：不限（JSON 里是 null）');
+  assert.equal(h.injectBudget.length, 2);
+  assert.ok(!JSON.stringify(h.injectBudget).includes('sess-aaaa-1111'), '会话 id 只给前几位');
+  assert.deepEqual(ctx.recallHealth(core, { sessions: 0 }).injectBudget, [], '启动自检不用看各会话');
+}));

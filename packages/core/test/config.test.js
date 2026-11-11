@@ -218,7 +218,8 @@ test('预算（D121）：「不设上限」档不设次数、token、比例上�
 });
 
 test('预算（D121）：budget.overrides 只认那几个键、每个按自己的规则查；写错的那一项忽略并给 warning，其余照用', () => {
-  assert.deepEqual(BUDGET_OVERRIDE_KEYS, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth']);
+  assert.deepEqual(BUDGET_OVERRIDE_KEYS, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
+    'injectShare', 'injectPerSessionPerDay']);
   const { config, warnings } = mergeConfig(DEFAULTS, { budget: { overrides: {
     dailyCalls: 0, dailyUncachedTokens: null, dailyOutputTokens: 1.5, perSourceShare: 0, mainChatRatioCap: null, balanceProtectDays: 400,
     stage2Scope: 'direct', prefetchRewrite: 'no', rerank: false, sleepDepth: 'deep', egressReservePerDay: 3 } } });
@@ -228,4 +229,28 @@ test('预算（D121）：budget.overrides 只认那几个键、每个按自己�
   assert.equal(checkBudgetOverride('perSourceShare', 1), null);
   assert.match(checkBudgetOverride('nope', 1), /不认识/);
   assert.match(mergeConfig(DEFAULTS, { budget: { overrides: [] } }).warnings[0], /应为对象/);
+});
+
+test('注入预算跟着花费档位（D133）：宽松 25% / 4 万字，节省 5% / 8000 字（原来的数），不设上限都是 null（不限）', () => {
+  const at = (preset) => budgetLimits(mergeConfig(DEFAULTS, { budget: { preset } }).config);
+  assert.deepEqual([at('loose').injectShare, at('loose').injectPerSessionPerDay], [0.25, 40_000]);
+  assert.deepEqual([at('saving').injectShare, at('saving').injectPerSessionPerDay], [0.05, 8000]);
+  assert.deepEqual([at('unlimited').injectShare, at('unlimited').injectPerSessionPerDay], [null, null]);
+  assert.deepEqual([budgetLimits(DEFAULTS).injectShare, budgetLimits(DEFAULTS).injectPerSessionPerDay], [0.25, 40_000], '默认宽松');
+  // 自定义：单独改、单独设成不限
+  const o = budgetLimits(mergeConfig(DEFAULTS, { budget: { preset: 'saving', overrides: { injectShare: 0.1, injectPerSessionPerDay: null } } }).config);
+  assert.deepEqual([o.injectShare, o.injectPerSessionPerDay, o.sleepDepth], [0.1, null, 'essential']);
+  // 校验：比例要 (0, 1] 或 null；每天的字数要非负整数或 null
+  for (const ok of [null, 0.01, 0.5, 1]) assert.equal(checkBudgetOverride('injectShare', ok), null, String(ok));
+  for (const bad of [0, -0.1, 1.5, '0.2', Infinity, true]) assert.match(checkBudgetOverride('injectShare', bad), /不超过 1/, String(bad));
+  for (const ok of [null, 0, 8000]) assert.equal(checkBudgetOverride('injectPerSessionPerDay', ok), null, String(ok));
+  for (const bad of [-1, 1.5, '8000', false]) assert.match(checkBudgetOverride('injectPerSessionPerDay', bad), /整数/, String(bad));
+  const { config, warnings } = mergeConfig(DEFAULTS, { budget: { overrides: { injectShare: 2, injectPerSessionPerDay: 12_000 } } });
+  assert.deepEqual(config.budget.overrides, { injectPerSessionPerDay: 12_000 });
+  assert.deepEqual(warnings.map((w) => w.split('：')[0]), ['budget.overrides.injectShare']);
+  // 旧的键（已弃用，D133）还在 DEFAULTS 里：旧配置写了不报未知字段，只是不再起作用
+  const old = mergeConfig(DEFAULTS, { context: { rolling: { steps: 30, maxShare: 0.01 }, perSessionPerDay: 100 } });
+  assert.deepEqual(old.warnings, []);
+  assert.equal(old.config.context.rolling.steps, 30, '滚动窗口的步数照旧有效');
+  assert.equal(budgetLimits(old.config).injectPerSessionPerDay, 40_000);
 });

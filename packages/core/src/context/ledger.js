@@ -7,6 +7,8 @@
 import { bumpMetric, parseRef } from '../store/index.js';
 import { ContractError, LAYERS, ITEM_VERDICTS, SPEAK_LEVELS, WORKING_UNITS, isOpaqueId } from '../contract/index.js';
 import { safeJson, dayStart } from './text.js';
+import { UNMETERED_LAYERS } from './pack.js';
+import { budgetLimits } from '../config/defaults.js';
 
 const CONTENT = new Set(['share', 'share_vague']);
 const AWARE_TAG = '~aware';
@@ -96,11 +98,13 @@ export function recordInjection(core, inj) {
     else if (it.speak !== undefined && !SPEAK_LEVELS.includes(it.speak)) errors.push({ path: `${p}.speak`, message: '应为 free / careful / not-here' });
     else if (it.unit !== undefined && !WORKING_UNITS.includes(it.unit)) errors.push({ path: `${p}.unit`, message: '应为 thread / talk / open' });
     else if (it.unitKey !== undefined && (typeof it.unitKey !== 'string' || !it.unitKey || it.unitKey.length > 40)) errors.push({ path: `${p}.unitKey`, message: '应为 ≤ 40 字的字符串' });
-    // 只记这几项，不记正文（§12.3）；工作记忆的条目另记所在的段（D110，排查用）。speak（D101 的说出口档位）已弃用（D113）：
+    else if (it.chars !== undefined && (!Number.isInteger(it.chars) || it.chars < 0 || it.chars > 1_000_000)) errors.push({ path: `${p}.chars`, message: '应为非负整数' });
+    // 只记这几项，不记正文（§12.3）；工作记忆的条目另记所在的段（D110，排查用）；chars：这一条自己的字数（可选，D133：
+    // 预算按条目的层记账，「你想着的」和工作记忆不算）。speak（D101 的说出口档位）已弃用（D113）：
     // 旧宿主交来的照样校验、不再记下；旧行里的照样读得出来
     else {
       items.push({ id: it.id, layer: it.layer, verdict: it.verdict, appraisalRef: it.appraisalRef,
-        ...(it.unit ? { unit: it.unit } : {}), ...(it.unitKey ? { unitKey: it.unitKey } : {}) });
+        ...(it.unit ? { unit: it.unit } : {}), ...(it.unitKey ? { unitKey: it.unitKey } : {}), ...(it.chars !== undefined ? { chars: it.chars } : {}) });
     }
   });
   if (errors.length) throw new ContractError('Injection', errors);
@@ -396,29 +400,55 @@ export function pendingLayers(core, s) {
   return out;
 }
 
-/** 这个会话的预算状态（§10.4）：今天已注入的字数、滚动窗口里还能注入多少（窗口没满 50 步之前不限）。 */
+const UNMETERED = new Set(UNMETERED_LAYERS);
+/**
+ * 一行注入日志里受限的字数（D133）：「你想着的」和工作记忆（UNMETERED_LAYERS）不受限，也不记账。
+ * 集成层给每条带了它自己的字数（items[].chars）时按条目的层求和；旧的行（条目上没有字数）、没有条目的行按整块的 chars 算。
+ */
+function meteredChars(row) {
+  const items = safeJson(row.items_json, []);
+  if (!Array.isArray(items) || !items.length || !items.every((it) => Number.isInteger(it?.chars) && it.chars >= 0)) return Number(row.chars) || 0;
+  let n = 0;
+  for (const it of items) if (!UNMETERED.has(it.layer)) n += it.chars;
+  return n;
+}
+
+/**
+ * 这个会话的预算状态（§10.4，D133）：今天已注入的受限字数、滚动窗口里还能注入多少（窗口没满 context.rolling.steps 步之前不限）。
+ * 上限从花费档位来（budgetLimits：injectPerSessionPerDay、injectShare；null = 不限，对应的额度是 Infinity）。
+ * 滚动窗口的上下文增量 = 窗口里相邻两步的正增量之和：压缩让上下文变小那一步算 0，不再把整个窗口的增量抵成 0。
+ * rollingUsed / rollingLimit 给诊断看（窗口没满、不限时 rollingLimit 是 Infinity）。
+ * @returns {{dayUsed: number, dayLimit: number, rollingLeft: number, rollingUsed: number, rollingLimit: number}}
+ */
 export function budgetState(core, s, at) {
   const cfg = core.config.get();
-  const out = { dayUsed: 0, dayLimit: cfg.context.perSessionPerDay, rollingLeft: Infinity };
+  const L = budgetLimits(cfg);
+  const share = typeof L.injectShare === 'number' && Number.isFinite(L.injectShare) ? L.injectShare : null;
+  const perDay = Number.isFinite(L.injectPerSessionPerDay) ? L.injectPerSessionPerDay : Infinity;
+  const out = { dayUsed: 0, dayLimit: perDay, rollingLeft: Infinity, rollingUsed: 0, rollingLimit: Infinity };
   if (!s) return out;
+  const sum = (rows) => rows.reduce((n, r) => n + meteredChars(r), 0);
   const start = dayStart(at, cfg.time.tzOffsetMin);
-  out.dayUsed = core.store.get(`SELECT COALESCE(SUM(chars), 0) AS n FROM injections WHERE session_id = ? AND mode = 'live' AND seen = 1 AND ts >= ?`,
-    s.session_id, start).n;
+  out.dayUsed = sum(core.store.all(`SELECT chars, items_json FROM injections WHERE session_id = ? AND mode = 'live' AND seen = 1 AND ts >= ?`,
+    s.session_id, start));
   const live = livePending(core, s);
   if (live.length) {
-    out.dayUsed += core.store.get(`SELECT COALESCE(SUM(chars), 0) AS n FROM injections WHERE nonce IN (${live.map(() => '?').join(',')}) AND ts >= ?`,
-      ...live, start).n;
+    out.dayUsed += sum(core.store.all(`SELECT chars, items_json FROM injections WHERE nonce IN (${live.map(() => '?').join(',')}) AND ts >= ?`,
+      ...live, start));
   }
   const N = cfg.context.rolling.steps;
   const steps = Array.isArray(s.window.steps) ? s.window.steps : [];
   if (steps.length > N) {
-    const base = steps[steps.length - 1 - N];
-    const last = steps[steps.length - 1];
-    const delta = Math.max(0, last.tokens - base.tokens);
+    const win = steps.slice(-(N + 1));
+    let delta = 0;
+    for (let i = 1; i < win.length; i++) delta += Math.max(0, (Number(win[i].tokens) || 0) - (Number(win[i - 1].tokens) || 0));
     // 注入的 token 按字数估（中文约一字一个 token，偏保守）
-    const injected = core.store.get(`SELECT COALESCE(SUM(chars), 0) AS n FROM injections WHERE session_id = ? AND mode = 'live' AND seen = 1 AND seen_at >= ?`,
-      s.session_id, base.at).n;
-    out.rollingLeft = cfg.context.rolling.maxShare * delta - injected;
+    out.rollingUsed = sum(core.store.all(`SELECT chars, items_json FROM injections WHERE session_id = ? AND mode = 'live' AND seen = 1 AND seen_at >= ?`,
+      s.session_id, win[0].at));
+    if (share != null) {
+      out.rollingLimit = share * delta;
+      out.rollingLeft = out.rollingLimit - out.rollingUsed;
+    }
   }
   return out;
 }

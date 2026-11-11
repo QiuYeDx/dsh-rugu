@@ -36,11 +36,14 @@ test('记忆开着（live）+ 真实新消息：当场入库 → 召回 → 记�
   assert.equal(opt.mode, 'involuntary');
   assert.equal(opt.deadlineMs, 1500, 'D117：不自主回想的截止 800 → 1500');
   assert.equal(opt.budgetChars, 900);
-  // 待确认：只记 id / layer / verdict / appraisalRef
+  // 待确认：只记 id / layer / verdict / appraisalRef，加这一条自己的字数（D133：核心按条目的层记注入预算），不记正文
   const inj = pm.named('injected')[0].args[0];
   assert.equal(inj.mode, 'live');
   assert.equal(inj.sessionId, 's-live');
-  assert.deepEqual(inj.items, [{ id: 'a1', layer: 'recalled', verdict: 'share', appraisalRef: 'ap1' }]);
+  assert.deepEqual(inj.items.map(({ chars, ...rest }) => rest), [{ id: 'a1', layer: 'recalled', verdict: 'share', appraisalRef: 'ap1' }]);
+  assert.ok(Number.isInteger(inj.items[0].chars) && inj.items[0].chars > 0 && inj.items[0].chars < inj.chars, '一条的字数比整块（带块头）少');
+  assert.equal(inj.items[0].chars, Array.from('前天这里聊到团建去哪，还没定').length);
+  assert.ok(!JSON.stringify(inj.items).includes('团建'), '不记正文');
   assert.ok(inj.chars > 10);
   // 插在最后一条 claimed 后面，运行时上下文之前
   assert.equal(d.messages.length, 3);

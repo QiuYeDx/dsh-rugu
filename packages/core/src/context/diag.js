@@ -13,6 +13,7 @@ export const FAULT = 'context.recall.fault';
 /** D117 之前的旧计数（每次整轮丢掉记一次，没有明细）：只读。 */
 export const LEGACY_ERROR = 'context.recall.error';
 import { bumpMetric, readMetrics, getMetaJson, setMetaJson, utcDay } from '../store/index.js';
+import { budgetState, loadSession } from './ledger.js';
 
 const RING_KEY = 'context.recallErrors';
 // 宿主报来的等超时 / 报错另记一份（同样的上限）：冷加载时一阵超时不会把核心各步的出错（步骤、代码位置）挤出去（D117 评审）
@@ -167,8 +168,14 @@ export function recallHealth(core, opt = {}) {
         query: m.get('embed.query') ?? 0, failed: m.get('embed.query.failed') ?? 0, timeout: m.get('embed.query.timeout') ?? 0,
         late: m.get('embed.query.late') ?? 0, retry: m.get('embed.query.retry') ?? 0, retryOk: m.get('embed.query.retryOk') ?? 0,
       },
+      // 注入预算（D133）：前台回想超了每天 / 滚动窗口额度的轮数、因为预算没放进去的条数
+      inject: {
+        overDay: m.get('context.pack.over.day') ?? 0, overRolling: m.get('context.pack.over.rolling') ?? 0,
+        budgetDropped: m.get('context.pack.budgetDropped') ?? 0,
+      },
     });
   }
+  out.injectBudget = injectBudgetOf(core, now, opt.sessions);
   try {
     const n = Math.max(1, Math.min(50, Math.floor(opt.recent ?? 20)));
     const read = (k) => { const l = getMetaJson(core.store, k, []); return Array.isArray(l) ? l : []; };
@@ -178,4 +185,24 @@ export function recallHealth(core, opt = {}) {
     out.recent = all.slice(0, n).map((x) => x.e);
   } catch { out.recent = []; }
   return out;
+}
+
+/**
+ * 各活跃会话的注入预算（D133，诊断用）：最近一天动过的、还在用的会话（最新的在前，最多 limit 个），今天已用 / 上限、
+ * 滚动窗口已用 / 上限（不限、窗口还没满时上限是 null）。会话只给 id 的前 8 位和适配器，没有场合、没有内容。
+ */
+function injectBudgetOf(core, now, limit = 8) {
+  const n = Math.max(0, Math.min(20, Math.floor(Number.isFinite(limit) ? limit : 8)));
+  if (!n) return [];
+  try {
+    const rows = core.store.all(`SELECT session_id FROM sessions WHERE status = 'active' AND updated_at >= ? ORDER BY updated_at DESC LIMIT ?`, now - DAY_MS, n);
+    const fin = (v) => (Number.isFinite(v) ? Math.round(v) : null);
+    return rows.map((r) => {
+      const s = loadSession(core, r.session_id);
+      const b = budgetState(core, s, now);
+      const steps = Array.isArray(s?.window?.steps) ? s.window.steps.length : 0;
+      return { session: String(r.session_id).slice(0, 8), adapter: s?.adapter ?? null, dayUsed: fin(b.dayUsed), dayLimit: fin(b.dayLimit),
+        rollingUsed: fin(b.rollingUsed), rollingLimit: fin(b.rollingLimit), steps };
+    });
+  } catch { return []; }
 }

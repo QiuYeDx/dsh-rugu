@@ -182,7 +182,7 @@ export async function runSelfCheck(d) {
   // 回想的稳定性（D117）：今天（UTC 日）回想了几次、出错几处（按步骤）、整轮什么都没给几次、宿主等超时几次；最近一次出错在哪一步、什么错。
   // 只有数字和代码位置。有出错就提醒（聊天照常：出错的那一步只少那一层）
   try {
-    const rh = pm?.admin?.recallHealth?.({ days: 2, recent: 1 }) ?? null;
+    const rh = pm?.admin?.recallHealth?.({ days: 2, recent: 1, sessions: 0 }) ?? null;
     if (rh && Array.isArray(rh.days) && rh.days.length) {
       const t = rh.days[0] ?? {};
       const y = rh.days[1] ?? {};

@@ -127,9 +127,11 @@ export function prepareAfterPrefetch(core, settingKey) {
  * 【D117】回想的健康（管理页的诊断、启动自检）：今天和前几天（UTC 日）的回想次数、出错处数（按步骤 / 错误类型）、partial / lost、
  * 前台回想的耗时分布、宿主等回想的结果（等到 / 超时 / 出错 / 退回缓存给了）、查询嵌入的重试；加最近的出错（新的在前，
  * 每条只有时刻、步骤、错误类型、代码位置、触发、降级级别）。只有数字和代码事实，没有内容。不抛错。
+ * 【D133】每天另有注入预算的计数（days[].inject：超了每天 / 滚动窗口额度的轮数、因为预算没放进去的条数）；injectBudget：
+ * 最近一天动过的活跃会话（最多 opt.sessions 个，默认 8；0 = 不看）今天已用 / 上限、滚动窗口已用 / 上限（null = 不限或窗口还没满）。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{days?: number, recent?: number}} [opt]
- * @returns {{days: object[], recent: object[], buckets: string[]}}
+ * @param {{days?: number, recent?: number, sessions?: number}} [opt]
+ * @returns {{days: object[], recent: object[], buckets: string[], injectBudget?: object[]}}
  */
 export function recallHealth(core, opt) {
   try { return diag.recallHealth(core, opt ?? {}); } catch { return { days: [], recent: [], buckets: [] }; }
@@ -161,8 +163,9 @@ export function bindSession(core, b) {
 /**
  * 记一个准备注入的块（集成层插入消息之前调用）：injections 一行（seen=0）+ sessions.pending_json。
  * items 只记 id / layer / verdict / appraisalRef（speak 已弃用，D113：交来的照样校验、不再记下），不记正文（§12.3）。同一个 nonce 重复记返回同一个 id。
+ * items[].chars（可选，D133）：这一条自己的字数，原样记下；注入预算按条目的层记账（「你想着的」和工作记忆不算），没带就按整块的 chars 算。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{sessionId: string, nonce: string, layer: string, items: {id: string, layer: string, verdict: string, appraisalRef: string, speak?: 'free'|'careful'|'not-here'}[],
+ * @param {{sessionId: string, nonce: string, layer: string, items: {id: string, layer: string, verdict: string, appraisalRef: string, speak?: 'free'|'careful'|'not-here', chars?: number}[],
  *          chars: number, degradeLevel?: number, routeMs?: Record<string, number>, mode: 'live'|'shadow'}} inj   mode 只有 'live'（'shadow' 只为旧版本的集成层留着：照常记，但不算进上下文）
  * @returns {number} 注入 id
  */

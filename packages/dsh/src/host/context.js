@@ -68,9 +68,11 @@ function abortable(p, signal) {
       (e) => { signal.removeEventListener('abort', onAbort); reject(e); });
   });
 }
-// 注入日志只记这几项（不记正文）；工作记忆的条目另带所在的段（D110，排查用）。speak（说出口的档位）D113 起核心不再给，旧版核心给了也只是照记
+// 注入日志只记这几项（不记正文）；工作记忆的条目另带所在的段（D110，排查用）。speak（说出口的档位）D113 起核心不再给，旧版核心给了也只是照记。
+// chars：这一条自己的字数（D133）：核心的注入预算按条目的层记账，「你想着的」和工作记忆不算（块头、小标题不算进任何一条）
 const pick4 = (it) => ({ id: it.id, layer: it.layer, verdict: it.verdict, appraisalRef: it.appraisalRef, ...(typeof it.speak === 'string' ? { speak: it.speak } : {}),
-  ...(typeof it.unit === 'string' ? { unit: it.unit } : {}), ...(typeof it.unitKey === 'string' ? { unitKey: it.unitKey } : {}) });
+  ...(typeof it.unit === 'string' ? { unit: it.unit } : {}), ...(typeof it.unitKey === 'string' ? { unitKey: it.unitKey } : {}),
+  ...(typeof it.rendered === 'string' ? { chars: charLen(it.rendered) } : {}) });
 /** assistant/message 的 usage → 数字（没有 usage 返回 null）。 */
 const usageOf = (u) => {
   if (!u || typeof u !== 'object') return null;
