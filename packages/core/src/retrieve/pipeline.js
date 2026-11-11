@@ -147,8 +147,10 @@ export async function runRecall(core, s, opt, internal = {}) {
   list = attachVersions(anchorCtx, list, deep);
   if (mode === 'deliberate' || opt.includeHistory) list = attachOutcomes(anchorCtx, list);
   list = orderOccurrences(anchorCtx, list);
-  // 在场的人是情境不是话题（D149）：一对一时大部分记忆都关于对方，按「每人 3 条」会把相关的挤掉；他们不占这个上限
-  list = capPerEntity(list, p.recall.perEntityMax, new Set([me, ...cues.aboutEntityIds, ...presentOthers].filter((x) => x != null)));
+  // 她正在对着说话的人是情境不是话题（D149）：一对一时大部分记忆都关于对方，按「每人 3 条」会把相关的挤掉。不占这个上限的是
+  // 正在对她说话的人、一对一的对方（在场的只有他一个）；成员能列全的群里几十上百人都「在场」，全放开等于没有上限，所以不放
+  const audience = [cues.focusSpeaker, ...(presentOthers.size === 1 ? presentOthers : [])];
+  list = capPerEntity(list, p.recall.perEntityMax, new Set([me, ...cues.aboutEntityIds, ...audience].filter((x) => x != null)));
   for (const f of fok) if (!list.some((c) => c.ref === f.ref)) list.push(f);
   markBelief(core, list, direct);
   // 补不回的空白（§12.4.5 第 8 步）：有意回想碰到整体恢复后没补回来的那段时间，像人记不清一样说「好像有点印象」。
@@ -807,7 +809,7 @@ function orderOccurrences(ac, list) {
   return out;
 }
 
-/** 每个实体最多 n 条（v1:791）：按「关于谁」数（她自己、这次有意回想问的那个人、在场的人不限）；顺着链接带出来的跟着锚点走。 */
+/** 每个实体最多 n 条（v1:791）：按「关于谁」数（她自己、这次有意回想问的那个人、正在对她说话的人、一对一的对方不限）；顺着链接带出来的跟着锚点走。 */
 function capPerEntity(list, n, exempt) {
   const count = new Map();
   const kept = new Set();
