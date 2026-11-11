@@ -173,6 +173,9 @@ export const DEFAULTS = deepFreeze({
     maxBackground: 12,                   // 提示词里每组背景最多几条（§7.3）
     maxCandidates: 15,                   // §5.2 第 4 步的候选档案（照 Graphiti 最多 15 个）
     maxTokens: 4000,                     // 提炼输出的 token 上限
+    // D141：端口没给停止原因时，最后一行不是一条完整的 JSONL、而且输出量到了上限的这个比例，就按「被上限截断」算（拆小重做）；
+    // 输出远没到上限的坏行是模型自己写坏的，照旧只跳过那一行
+    truncationNearRatio: 0.9,
     stableMinT50H: 24,                   // §7.4 第 5 条：偏好 / 身份 / 关系的 t50 短于它 → 改判为状态
     timeSanityDays: 400,                 // §7.4 第 5 条：时间离消息超过这么多天 → 标待复核
     // 模型没给 confidence 时按代码核定的 certainty 给（听说的取 activation.hearsayConfidenceCap）：照实记下的 > recall.render.sureAbove，

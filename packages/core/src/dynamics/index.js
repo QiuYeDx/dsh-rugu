@@ -1,6 +1,6 @@
 // dynamics 模块（§6、§5.4 成立概率、§5.7 心境）：两条互不相干的曲线。
 //   - 可及性：A = B + S + C + I − P_sup + ε，P(想起) = σ((A − τ)/s)。B 是 ACT-R 基础激活（幂律衰减、每条痕迹自己的衰减率）。
-//   - 有效性：p_hold(t) = 2^(−((t − valid_from)/t50)^shape)，超过 valid_to_known 为 0；change_known 再乘系数。
+//   - 有效性：p_hold(t) = 2^(−((t − t0)/t50)^shape)，t0 = max(valid_from, confirmed_at)（D142：确认把衰减重新算起），超过 valid_to_known 为 0；change_known 再乘系数。
 //   - 听说不进编码强度（评审:UV-01）；只被召回、注入、对同一批人复述、导入都**不加痕迹**（§6.4）。
 //   - 每个函数的数值都从 core.config.get().activation / validity / intention / mood 取（热加载）。
 // 拥有的表：traces、activation、mood。
@@ -527,8 +527,10 @@ export function fanTerm(core, fan) {
 /**
  * 现在还成立的概率（§5.4）。没有 t50 的（稳定类）按 1；超过 valid_to_known 为 0；change_known 乘 validity.changeKnownFactor。
  * 还没开始的（at 早于 valid_from）也按 1：还没开始衰减，将来时由渲染看 valid_from。和可及性互不影响（§6.1）。
+ * 【D142】从 valid_from 和 confirmed_at（最近一次被本人确认还成立）里较晚的那个开始衰减；行里没带 confirmed_at 就只看 valid_from。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{valid_from: number|null, valid_to_known: number|null, t50_h: number|null, shape: number|null, change_known: number, recorded_at: number}} a
+ * @param {{valid_from: number|null, valid_to_known: number|null, t50_h: number|null, shape: number|null, change_known: number, recorded_at: number,
+ *          confirmed_at?: number|null}} a
  * @param {number} at
  * @returns {number}
  */

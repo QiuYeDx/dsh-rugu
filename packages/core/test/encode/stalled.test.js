@@ -54,7 +54,7 @@ test('稳定失败的段不挡后面的；不替它编任何东西；退避到�
     let [s] = stalledRows(w.core);
     assert.deepEqual([s.setting_key, s.ep_from, s.ep_to, s.reason, s.rounds, s.last_error], [g.key, bad[0], bad[2], 'rejected', 1, 'BAD_OUTPUT']);
     assert.equal(metric(w.core, 'encode.extract.stalled.rejected'), 1);
-    assert.deepEqual(w.core.mods.encode.stalledSummary(w.core), { segments: 1, transient: 0, rejected: 1, maxRounds: 1, oldestAt: s.first_at, nextAt: s.next_at });
+    assert.deepEqual(w.core.mods.encode.stalledSummary(w.core), { segments: 1, transient: 0, rejected: 1, maxRounds: 1, oldestAt: s.first_at, nextAt: s.next_at, truncated: 0, splits: 0 });
     // 没到点：不排
     w.clock.minutes((s.next_at - MINUTE - w.clock.now()) / MINUTE);
     w.core.mods.encode.segment(w.core, {});
@@ -115,7 +115,7 @@ test('一时的错误和稳定被拒的间隔不一样；都翻倍、都有上�
     const u2 = markStalled(core, { settingKey: 'S', from: 7, to: 8, code: 'HTTP_400', at });
     assert.deepEqual([u1.reason, u2.reason], ['transient', 'rejected']);
     assert.equal(u2.nextAt - at, 2 * st.rejectedMs);
-    assert.deepEqual(core.mods.encode.stalledSummary(core), { segments: 3, transient: 1, rejected: 2, maxRounds: 2, oldestAt: at, nextAt: at + 2 * st.transientMs });
+    assert.deepEqual(core.mods.encode.stalledSummary(core), { segments: 3, transient: 1, rejected: 2, maxRounds: 2, oldestAt: at, nextAt: at + 2 * st.transientMs, truncated: 0, splits: 0 });
     assert.equal(core.store.get("SELECT COUNT(*) AS n FROM metrics WHERE name LIKE 'encode.extract.stalled.%'").n, 2, '按原因分开计数');
   } finally { await w.cleanup(); }
 });

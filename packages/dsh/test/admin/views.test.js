@@ -98,6 +98,8 @@ test('诊断：自检统一成 {status, area}；结果缓存一分钟，「重�
   assert.equal(d.store.sleep.generalize.skippedAsked, 4);
   // 【D136】提炼一直不成的段：只给数字
   assert.deepEqual([d.store.extract.segments, d.store.extract.transient, d.store.extract.rejected, d.store.extract.maxRounds], [2, 1, 1, 3]);
+  // 【D141】最近 7 天的截断次数、拆了几次：也只是数字
+  assert.deepEqual([d.store.extract.truncated, d.store.extract.splits], [4, 3]);
   assert.equal(s.hostCallsOf('selfCheck').length, 1);
   await s.view('diagnostics');
   assert.equal(s.hostCallsOf('selfCheck').length, 1, '一分钟内用缓存');

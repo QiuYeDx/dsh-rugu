@@ -185,14 +185,16 @@ export function seededNoise(parts, s) {
 
 /**
  * 成立概率（§5.4）：超过 valid_to_known 为 0；没有 t50（稳定类）为 1；还没开始（at < valid_from）也按 1
- * （还没开始衰减，「将来时」由渲染看 valid_from 决定）；否则 2^(−((t − valid_from)/t50)^shape)，change_known 再乘系数。
+ * （还没开始衰减，「将来时」由渲染看 valid_from 决定）；否则 2^(−((t − t0)/t50)^shape)，change_known 再乘系数。
+ * t0 = valid_from 和 confirmed_at（最近一次被本人确认还成立，D142）里较晚的那个：确认把衰减重新算起，但不改「什么时候成立的」。
  */
 export function pHoldOf(a, at, changeKnownFactor) {
   if (a.valid_to_known != null && at >= a.valid_to_known) return 0;
   let p = 1;
   const t50 = Number(a.t50_h);
   if (a.t50_h != null && Number.isFinite(t50) && t50 > 0) {
-    const t0 = a.valid_from ?? a.recorded_at;
+    const from = a.valid_from ?? a.recorded_at;
+    const t0 = Number.isFinite(a.confirmed_at) && (from == null || a.confirmed_at > from) ? a.confirmed_at : from;
     if (t0 != null && at > t0) {
       const shape = Number.isFinite(Number(a.shape)) && Number(a.shape) > 0 ? Number(a.shape) : 1;
       p = Math.pow(2, -Math.pow((at - t0) / (t50 * HOUR_MS), shape));

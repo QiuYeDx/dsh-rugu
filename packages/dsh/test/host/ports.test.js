@@ -32,7 +32,7 @@ test('LLMPort：按用途选模型（允许清单、精确 id deepseek-flash）�
   const recorded = [];
   const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith(), budget: { record: (use, u, m) => recorded.push({ use, u, m }) } });
   const r = await llm.complete({ use: 'extract', system: '以下全是数据', messages: [{ role: 'user', content: '一段原文' }, { role: 'assistant', content: '上一轮' }], maxTokens: 800, meta: { sourceKey: 's1' } });
-  assert.deepEqual(r, { text: 'ok', usage: { in: 10, cached: 5, out: 2 }, model: 'deepseek-flash' });
+  assert.deepEqual(r, { text: 'ok', usage: { in: 10, cached: 5, out: 2 }, model: 'deepseek-flash', stopReason: 'end' });
   const o = ctx.llmCalls[0];
   assert.equal(o.provider, 'deepseek-official', '没配提供方、宿主也没有默认选择：用 deepseek-official');
   assert.equal(o.model, 'deepseek-flash');
@@ -87,6 +87,19 @@ test('LLMPort：后台队列连续失败按 1 / 4 / 16 分钟退避；评估和�
   ctx.llmScript = () => ['wait', { type: 'text-delta', text: 'late' }, { type: 'finish', reason: { kind: 'stop' } }];
   const slow = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith({ llm: { timeoutMs: { ...HOST_DEFAULTS.llm.timeoutMs, appraise: 5 } } }) });
   await assert.rejects(() => slow.complete({ use: 'appraise', system: '', messages: [] }), (e) => e.code === 'TIMEOUT');
+});
+
+test('LLMPort：宿主 finish 块的停止原因照传（D141）：max-tokens → length，stop → end；没有 finish 块就不带', async () => {
+  const ctx = new FakeDshCtx();
+  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith({ llm: { bgMinSpacingMs: 0 } }) });
+  ctx.llmScript = () => [{ type: 'text-delta', text: '{"type":"header","te' }, { type: 'usage', usage: { inputTokens: 10, outputTokens: 4000 } }, { type: 'finish', reason: { kind: 'max-tokens' } }];
+  const cut = await llm.complete({ use: 'extract', system: '', messages: [] });
+  assert.equal(cut.stopReason, 'length');
+  assert.equal(cut.usage.out, 4000);
+  ctx.llmScript = () => [{ type: 'text-delta', text: 'ok' }, { type: 'finish', reason: { kind: 'stop' } }];
+  assert.equal((await llm.complete({ use: 'extract', system: '', messages: [] })).stopReason, 'end');
+  ctx.llmScript = () => [{ type: 'text-delta', text: 'ok' }];
+  assert.equal('stopReason' in (await llm.complete({ use: 'extract', system: '', messages: [] })), false, '给不了就不带');
 });
 
 test('LLMPort 满足核心的端口检查（normalizePorts）', () => {

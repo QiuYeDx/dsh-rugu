@@ -472,6 +472,15 @@ export function addSource(core, owner, source, trace) {
   });
 }
 
+/**
+ * 记下一条事实被本人或有权限的人确认了（D142）：confirmed_at 取较晚的那次。不动 valid_from——确认是「到这时还成立」，
+ * 不是「从这时才成立」；状态类事实的成立概率从两者里较晚的那个开始衰减（dynamics.pHold）。
+ */
+export function noteConfirmed(core, id, at) {
+  if (!isNum(at)) return;
+  core.store.run('UPDATE assertions SET confirmed_at = MAX(COALESCE(confirmed_at, ?), ?), updated_at = ? WHERE id = ?', at, at, core.now(), id);
+}
+
 /** 实现 encode.supersede（§5.4 第 2 条）：两条都保留；新版本至少继承旧版本的激活（第 7 条）。 */
 export function supersede(core, oldId, newId, ctx) {
   if (!oldId || !newId || oldId === newId) return;
@@ -504,6 +513,9 @@ export function mergeDuplicate(core, dupId, keepId, ctx) {
     addEntityRoles(core, keepId, { mention: roles.subject ?? [], speaker: roles.speaker ?? [], asserter: roles.asserter ?? [] });
     core.store.run('UPDATE assertions SET expired_at = COALESCE(expired_at, ?), superseded_by = ?, needs_review = 0, needs_reconcile = 0, updated_at = ? WHERE id = ?',
       at, keepId, core.now(), dupId);
+    // 被合并掉的那条确认过（D142）：同一件事，保留的那条也算确认过（取较晚的）
+    const dupConfirmed = core.store.get('SELECT confirmed_at FROM assertions WHERE id = ?', dupId)?.confirmed_at;
+    if (dupConfirmed != null) noteConfirmed(core, keepId, dupConfirmed);
     repointIntentions(core, dupId, keepId);   // 同一件事：开着的意图跟着保留的那条（D122 评审：线上两条意图还挂在被合并掉的那条上）
     core.mods.dynamics.inheritActivation(core, mref('assertion', dupId), mref('assertion', keepId), { at });
   });
@@ -553,6 +565,8 @@ function copyAssertion(core, id, patch) {
     norm, noTrace: true, extractVer: patch.extractVer ?? old.extract_ver, model: patch.model ?? old.model, jobId: null,
   });
   if (old.change_known && patch.changeKnown !== false) core.store.run('UPDATE assertions SET change_known = 1 WHERE id = ?', nid);
+  // 确认过的照旧带上（D142）：新版本说的还是同一件事，「到那时还成立」不因为改了别的字段就丢
+  if (old.confirmed_at != null) core.store.run('UPDATE assertions SET confirmed_at = ? WHERE id = ?', old.confirmed_at, nid);
   return nid;
 }
 

@@ -144,9 +144,10 @@ export function segment(core, opt) { return seg.segment(core, opt); }
 
 /**
  * 【D136】提炼一直不成、搁置着的段（管理页诊断，只有数字）：几段、一时的 / 稳定被拒的各几段、最多失败了几轮、
- * 最早的从什么时候起、下一次什么时候再试。
+ * 最早的从什么时候起、下一次什么时候再试。【D141】最近 7 天提炼的输出被上限截断了几次（truncated）、为此拆了几次（splits）。
  * @param {import('../core-types.js').CoreContext} core
- * @returns {{segments: number, transient: number, rejected: number, maxRounds: number, oldestAt: number|null, nextAt: number|null}}
+ * @returns {{segments: number, transient: number, rejected: number, maxRounds: number, oldestAt: number|null, nextAt: number|null,
+ *            truncated: number, splits: number}}
  */
 export function stalledSummary(core) { return st.stalledSummary(core); }
 
@@ -154,10 +155,12 @@ export function stalledSummary(core) { return st.stalledSummary(core); }
  * 跑一个提炼任务（maintenance.runJobs 调用，kind='extract'）：取背景（retrieve.backgroundForExtraction，分两组）→
  * 拼提示词（静态前缀在前）→ LLMPort.complete({use:'extract'}) → parseJsonl → verify → taintCheck → 实体解析 → 对账 →
  * 在 store.completeJob 的一个事务里写完全部输出。预算不允许（budget.allow=false）时不调 LLM，任务推迟。
+ * 【D141】输出被 maxTokens 截断（端口的 stopReason='length'；没给停止原因时，最后一行不完整且输出量接近上限）：这一次什么都不写，
+ * 这一段按消息数对半拆成两段各排一个任务（status 'split'）；一条消息还截断的，失败并搁置（TRUNCATED）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../store/jobs.js').JobRow} job
  * @param {{signal?: AbortSignal}} [opt]
- * @returns {Promise<{status: 'written'|'skipped'|'deferred'|'failed', reason?: string}>}
+ * @returns {Promise<{status: 'written'|'skipped'|'deferred'|'failed'|'split', reason?: string}>}
  */
 export async function runExtract(core, job, opt) { return ext.runExtract(core, job, opt); }
 

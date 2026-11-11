@@ -130,6 +130,30 @@ function retryStalled(core, settingKey, opt) {
   return n;
 }
 
+/**
+ * 一段对半拆成两段的位置（D141：提炼的输出被上限截断了，拆小了重做）。按消息数对半，拆的位置尽量落在切段本来就认的确定边界上：
+ * 在中间那一半（1/4 到 3/4）里挑回填和实时的交界，没有就挑前后两条隔得最久的那一处；一样的取离正中最近的。
+ * @param {{at: number, historical?: number}[]} rows  按 id 排好的感知
+ * @returns {number|null}  后一段第一条的下标（1..n−1）；不到两条拆不了，null
+ */
+export function splitPoint(rows) {
+  const n = rows.length;
+  if (n < 2) return null;
+  const mid = n / 2;
+  const lo = Math.max(1, Math.floor(n / 4));
+  const hi = Math.min(n - 1, Math.ceil((3 * n) / 4));
+  let best = -1;
+  let bestScore = -Infinity;
+  for (let i = lo; i <= hi; i++) {
+    const a = rows[i - 1];
+    const b = rows[i];
+    // 交界排在任何间隔前面；间隔按毫秒比
+    const score = (a.historical !== b.historical ? Number.MAX_SAFE_INTEGER / 2 : 0) + Math.max(0, (b.at ?? 0) - (a.at ?? 0));
+    if (score > bestScore || (score === bestScore && Math.abs(i - mid) < Math.abs(best - mid))) { best = i; bestScore = score; }
+  }
+  return best;
+}
+
 const speakerKey = (r) => (r.actor_self ? 'self' : r.actor_entity_id ? `e${r.actor_entity_id}` : `a:${r.actor_json ?? ''}`);
 
 /** 参与者大换：前后各 k 条的说话人集合几乎不重叠（两边都至少 2 个人）。 */

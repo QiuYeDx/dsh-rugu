@@ -12,6 +12,8 @@ import { anySignal, abortError } from '../host/util.js';
 // perceive（D116：她看过的媒体摘一句）和第一眼一样又小又快，排在第一眼那条队列里
 const QUEUE_OF = { extract: 'bg', sleep: 'bg', summary: 'bg', appraise: 'appraise', rewrite: 'appraise', review: 'review', glance: 'glance', perceive: 'glance' };
 const LOW_EFFORTS = ['off', 'none', 'minimal', 'low'];
+/** 宿主 finish.reason.kind → 端口的 stopReason（D141）。 */
+const STOP_OF = { stop: 'end', 'max-tokens': 'length', 'tool-calls': 'other' };
 
 const llmError = (code, message = code) => Object.assign(new Error(message), { code });
 /** @deepseek-ai/dsh-llm 的 QUOTA_EXCEEDED_CODE 和 ACCOUNT_QUOTA_EXCEEDED_CODE。 */
@@ -120,13 +122,16 @@ export function createLlmPort({ getLlm, getDefaultSelection = () => null, hostCo
     const u = usageOf(usage);
     // 宿主没报用量：按字数估（约 1.5 字一个 token），预算里单独记成 estimated
     if (!usage) { u.in = Math.round((String(req.system ?? '').length + JSON.stringify(req.messages ?? []).length) / 1.5); u.out = Math.round(text.length / 1.5); }
-    return { text, usage: u, model: target.model, estimated: !usage };
+    // 为什么停下（D141）：宿主的 finish 块给 stop / max-tokens / tool-calls（各家供应商的 length、max_tokens 都翻成 max-tokens）；
+    // 没有 finish 块、或者是不认识的，就不带（核心有退路）
+    const stopReason = STOP_OF[kind];
+    return { text, usage: u, model: target.model, estimated: !usage, ...(stopReason ? { stopReason } : {}) };
   }
 
   return {
     /**
      * @param {{use: string, system: string, messages: {role: string, content: string}[], maxTokens?: number, signal?: AbortSignal, meta?: {sourceKey?: string}}} req
-     * @returns {Promise<{text: string, usage: {in: number, cached: number, out: number}, model: string}>}
+     * @returns {Promise<{text: string, usage: {in: number, cached: number, out: number}, model: string, stopReason?: 'end'|'length'|'other'}>}
      */
     async complete(req) {
       if (closed) throw llmError('CLOSED');

@@ -37,7 +37,7 @@ export function hydrate(core, refs) {
   const a = byKind.get('assertion') ?? [];
   if (a.length) {
     const rows = rowsByIds(st, `SELECT id, text, kind_hint, predicate, certainty, confidence, imp, event_start, event_end, valid_from,
-      valid_to_known, change_known, t50_h, shape, recorded_at, expired_at, supersedes, superseded_by, plan_agent, plan_status,
+      valid_to_known, change_known, t50_h, shape, confirmed_at, recorded_at, expired_at, supersedes, superseded_by, plan_agent, plan_status,
       plan_outcome_ref, occurrence_key, planned_time_json FROM assertions WHERE id IN (?*)`, a);
     const ents = groupBy(rowsByIds(st, 'SELECT assertion_id AS id, entity_id AS e, role FROM assertion_entities WHERE assertion_id IN (?*)', a));
     const srcs = groupBy(rowsByIds(st, "SELECT owner_id AS id, perceived_in, speaker, percept_id, at FROM sources WHERE owner_kind = 'assertion' AND owner_id IN (?*)", a));
