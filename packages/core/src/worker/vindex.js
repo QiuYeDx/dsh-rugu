@@ -99,9 +99,10 @@ export class VectorLayer {
    * @param {number} k
    * @param {Set<number>|null} exclude ownerKey
    * @param {number} deadlineAt 墙钟毫秒（performance.timeOrigin + now）
+   * @param {Set<number>|null} [include] 【D153】只看这些记忆（ownerKey）；不给 = 全部
    * @returns {{slots: number[], timedOut: boolean, scanned: number}}
    */
-  coarse(qbins, k, exclude, deadlineAt) {
+  coarse(qbins, k, exclude, deadlineAt, include = null) {
     const all = this.size <= k * 2;
     const heaps = all ? null : qbins.map(() => new MaxHeap(k));
     const slots = [];
@@ -113,6 +114,7 @@ export class VectorLayer {
       const i = slot % this.C;
       if (!c.alive[i]) continue;
       if (exclude && exclude.has(ownerKey(c.kinds[i], c.owners[i]))) continue;
+      if (include && !include.has(ownerKey(c.kinds[i], c.owners[i]))) continue;
       scanned++;
       if (all) { slots.push(slot); continue; }
       const off = i * this.words;
@@ -123,6 +125,28 @@ export class VectorLayer {
       for (const h of heaps) for (const s of h.values()) if (!seen.has(s)) { seen.add(s); slots.push(s); }
     }
     return { slots, timedOut, scanned };
+  }
+
+  /**
+   * 【D153】这些记忆（ownerKey）的全部槽位，不粗排（「只看这些」、条数不大时逐条精确比）。
+   * @param {Set<number>} include
+   * @param {Set<number>|null} exclude
+   * @param {number} deadlineAt
+   * @returns {{slots: number[], timedOut: boolean, scanned: number}}
+   */
+  select(include, exclude, deadlineAt) {
+    const slots = [];
+    let timedOut = false;
+    for (let slot = 0; slot < this.used; slot++) {
+      if ((slot & 4095) === 4095 && wallNow() > deadlineAt) { timedOut = true; break; }
+      const c = this.#chunk(slot);
+      const i = slot % this.C;
+      if (!c.alive[i]) continue;
+      const key = ownerKey(c.kinds[i], c.owners[i]);
+      if (!include.has(key) || (exclude && exclude.has(key))) continue;
+      slots.push(slot);
+    }
+    return { slots, timedOut, scanned: slots.length };
   }
 
   /** 槽位上的元数据。 */

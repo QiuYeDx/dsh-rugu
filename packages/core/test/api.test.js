@@ -38,7 +38,7 @@ const MODULE_EXPORTS = {
     'baseActivation', 'perceptActivation', 'activate', 'sample', 'pRecall', 'seededNoise', 'pHold', 'tense', 'intentionBias', 'retier',
     'currentMood', 'pushMood'],
   retrieve: ['init', 'dispose', 'buildCues', 'recall', 'onPercepts', 'prefetch', 'cached', 'fuse', 'mmr', 'render', 'looksLikePast',
-    'backgroundForExtraction', 'degradeLevel', 'workingSet'],
+    'backgroundForExtraction', 'degradeLevel', 'workingSet', 'scopeOf'],
   discretion: ['init', 'dispose', 'recordPresence', 'recordKnowledge', 'knownCircle', 'audienceOf', 'writeNorm', 'normOf', 'tightenNorm',
     'inheritNorm', 'applyNormUpdate', 'writeSettingRule', 'settingRules', 'stage1', 'stage2', 'gate', 'targetFor', 'appraise', 'outcome',
     'holdDecision', 'onSelfUtterance', 'logDecision', 'decideSettingRule', 'admitWorking', 'explicitLimit', 'relaxLimit'],
