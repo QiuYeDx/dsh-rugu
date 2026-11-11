@@ -104,6 +104,19 @@ export async function recall(core, s, opt) {
 }
 
 /**
+ * 【D152】回放评测的入口：和 recall 同一条路，场合按场合键、焦点按感知 id 给（回放给不出适配器的原始消息 id）。
+ * 焦点找不到（不在这个场合）时和 recall 里交进来的消息 id 找不到一样退回。不登记 SettingId。
+ * 只在库副本上用：它和 recall 一样会写会话账本、关口①的判定和计数。现有的调用方都不经过它。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{settingKey: string, focusPerceptId?: number|null, sessionId?: string|null, trigger: 'message'|'idle'|'reminder', tools?: string[]}} s
+ * @param {import('../contract/types.js').RecallOptions} opt
+ * @returns {Promise<import('../contract/types.js').RecallLayers>}
+ */
+export async function recallAt(core, s, opt) {
+  return rc.recallAt(core, s, opt);
+}
+
+/**
  * recallCached()（同步）：只读预取缓存里已经过完关口①的结果；没有就返回空的 RecallLayers（degradeLevel 照实填）。
  * 预取缓存里有新候选、最新一条又是对她说的，就在后台过一遍关口①，下一次调用就有结果。
  * @param {import('../core-types.js').CoreContext} core
