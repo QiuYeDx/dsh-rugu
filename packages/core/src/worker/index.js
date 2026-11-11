@@ -66,6 +66,7 @@ function params(core) {
     dense: r.dense,
     lexical: r.lexical,
     ppr: r.ppr,
+    scope: r.scope ?? { exactMax: 5000 },
     maxHops: r.entity.maxHops,         // 调用方没给 maxHops / limit / deadlineMs 时（热路径的默认）
     pprLimit: r.fuseKeep,              // 图扩散的命中多于融合留下的条数也没用
     deadlineMs: r.involuntary.deadlineMs,
@@ -1425,9 +1426,12 @@ async function coverageOf(core, spaceId) {
  * 稠密扫描。vectors 是查询向量（1–2 条，每条记忆取较大相似度，§8.1）；只和 spaceId 相同的空间比。超时返回已有结果并标 timedOut。
  * spaceId 不给时用活动空间（伪查询向量来自 storedVectors，它们就在活动空间里）；可疑、退役、不认识的空间一律不查。
  * 记忆层热温层常驻内存，includeCold 时再从磁盘扫冷层；原文层二值常驻、int8 从磁盘取来精排。exclude 是预过滤（记忆引用）。
+ * 【D153】only（记忆引用的集合，比如 retrieve.scopeOf 的 refs）：只在这些记忆里比；条数 ≤ recall.scope.exactMax 时不走二值粗排、
+ * 逐条用存的 int8 精确比，多了照常粗排但只在 only 里；topK、layers、exclude、includeCold 照旧。给了空集合就没有命中。
+ * 线程和主线程本地引擎一样（传给线程的是数组）；降级时稠密路照旧是空的。没给 only 和原来一样。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{vectors: Float32Array[], spaceId: string, layers: ('memory'|'raw')[], topK: {memory: number, raw: number},
- *          includeCold: boolean, exclude?: Set<string>}} q
+ *          includeCold: boolean, exclude?: Set<string>, only?: Iterable<string>}} q
  * @param {{deadlineMs: number, signal?: AbortSignal}} opt
  * @returns {Promise<{hits: Hit[], timedOut: boolean}>}
  */
@@ -1451,6 +1455,7 @@ export async function denseSearch(core, q, opt = { deadlineMs: 800 }) {
       exclude: q.exclude ? [...q.exclude] : [],
       coarseTopK: p.dense.coarseTopK,
     };
+    if (q.only != null) { args.only = [...q.only]; args.exactMax = p.scope.exactMax; }
     const r = await call(core, 'search', 'dense', args, { deadlineMs: opt?.deadlineMs ?? p.deadlineMs, signal: opt?.signal });
     if (r.error) { log(core, 'warn', 'worker.dense.error', { error: r.error.code }); return empty; }
     const hits = r.result ? r.result.hits : r.partials.flatMap((x) => x.hits ?? []);
@@ -1469,8 +1474,10 @@ export async function denseSearch(core, q, opt = { deadlineMs: 800 }) {
  * 也可以写别名 HOT_SHARDS（'percepts_fts'，最近 recall.lexical.hotMonths 个月的分表）/ ALL_SHARDS（'percepts_fts_all'，全部）。
  * 不认识的表名直接丢掉。命中的 ref：情节 'e'、事实 'a'、原文感知 'p'；score = −bm25。
  * 降级（线程起不来）时在主线程查，词数、条数、分表数都按 recall.lexical.fallback 收小。
+ * 【D153】only（记忆引用的集合）：各表只看这些行——情节 e…、事实 a…、原文感知 p…；原文窗口 w… 按它的成员感知算（命中照旧是 p…）。
+ * 给了空集合就没有命中。没给 only 和原来一样。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{terms: string[], weights?: number[], tables: string[], limit: number}} q
+ * @param {{terms: string[], weights?: number[], tables: string[], limit: number, only?: Iterable<string>}} q
  * @param {{deadlineMs: number, signal?: AbortSignal}} opt
  * @returns {Promise<{hits: Hit[], timedOut: boolean}>}
  */
@@ -1495,6 +1502,7 @@ export async function lexicalSearch(core, q, opt = { deadlineMs: 800 }) {
       hotMonths: fb ? p.lexical.fallback.hotMonths : p.lexical.hotMonths,
       maxShards: fb ? p.lexical.fallback.hotMonths : null,
     };
+    if (q.only != null) args.only = [...q.only];
     const r = await call(core, 'db', 'lexical', args, { deadlineMs: opt?.deadlineMs ?? p.deadlineMs, signal: opt?.signal });
     if (r.error) { log(core, 'warn', 'worker.lexical.error', { error: r.error.code }); return empty; }
     if (r.result) return { hits: r.result.hits.map(({ ref, score }) => ({ ref, score })), timedOut: !!r.result.timedOut };

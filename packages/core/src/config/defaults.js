@@ -355,6 +355,9 @@ export const DEFAULTS = deepFreeze({
       },
     },
     time: { topK: 50 },
+    // 范围（D153，retrieve.scopeOf）：maxRefs 范围里最多几条记忆（超了留最近的、标 clipped）；
+    // exactMax 稠密检索「只看这些」时条数不超过它就不走二值粗排、直接用存的 int8 向量逐条精确比
+    scope: { maxRefs: 5000, exactMax: 5000 },
     // 在场者近况：相关度之外，这条记忆现在有多活跃（基础激活 B，对数尺度）占的分量（评审:SC-07、实测问题 #5）；
     // maxItems 也是召回结果里这一路自己的名额（不和别的几路抢不自主回想的那 15 条）
     // 没有「最近 N 小时」的时间窗（D103）：基础激活 B 低于 floorB 的不算近况（编码强度 1、衰减 0.3 时约 12 小时，强的记得更久、

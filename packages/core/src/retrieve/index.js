@@ -19,6 +19,7 @@ import { onPercepts as onPerceptsImpl, prefetch as prefetchImpl, cached as cache
 import { backgroundForExtraction as backgroundImpl } from './background.js';
 import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, topicSimilarity } from './working.js';
 import { staticLevel, storeOk } from './level.js';
+import { scopeOf as scopeOfImpl } from './scope.js';
 import { errKind, latestPerceptAnywhere, latestPerceptOf, log, metric, safe } from './util.js';
 
 /**
@@ -282,3 +283,16 @@ export function workingSimilarity(core, q, texts) {
 export function degradeLevel(core) {
   try { return staticLevel(core); } catch { return 4; }
 }
+
+/**
+ * 【D153】范围（「回忆」的圈范围）：时间窗 / 关于谁 / 场合里的全部记忆（情节 e…、事实 a…、原文窗口 w…）。只读、同步、只走索引，不过关口；
+ * 被取代或过时的事实、原文到期的窗口、隐藏 / 忘掉 / 删掉的不在里面。几样条件取交集，同一样里几个值取并集；一样都没给 given = false、
+ * refs = null（不圈）。超过 maxRefs（默认 recall.scope.maxRefs）留最近的、clipped = true；opt.at 之后才记下的不算。
+ * 口径细节见 retrieve/scope.js。查隐藏出错时 refs 是空集合、failed = 'suppression'（fail closed）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{timeWindows?: {start: number, end: number}[], aboutEntityIds?: number[], settingKeys?: string[]}} spec
+ * @param {{at?: number, maxRefs?: number}} [opt]
+ * @returns {{given: boolean, refs: Set<string>|null, rows: {ref: string, tStart: number, tEnd: number, settingKey: string|null}[],
+ *            counts: {episodes: number, assertions: number, windows: number}, clipped: boolean, failed?: string}}
+ */
+export function scopeOf(core, spec, opt) { return scopeOfImpl(core, spec, opt ?? {}); }

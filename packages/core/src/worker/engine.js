@@ -33,6 +33,37 @@ export function wrapDatabase(db) {
   };
 }
 
+/** 【D153】记忆引用 → ownerKey 的集合（认不出的丢掉）。 */
+function ownerKeys(refs) {
+  const out = new Set();
+  for (const ref of refs) {
+    const m = parseRef(ref);
+    const k = m ? KIND_INDEX[m.kind] : undefined;
+    if (k !== undefined) out.add(ownerKey(k, m.id));
+  }
+  return out;
+}
+
+/**
+ * 【D153】一组 rowid 切成几段区间（按最大的几个空隙切，最多 maxRanges 段；空隙不到总跨度的 1/maxRanges 不切）。
+ * FTS5 的「MATCH + rowid IN (很多值)」很慢（每个值一次查找，1400 个值约 75 ms），按区间查再在 JS 里按集合筛只要零点几毫秒。
+ * @param {number[]} sorted 升序
+ * @returns {[number, number][]}
+ */
+export function rowRanges(sorted, maxRanges = 4) {
+  if (!sorted.length) return [];
+  const lo = sorted[0];
+  const hi = sorted.at(-1);
+  const gaps = [];
+  for (let i = 1; i < sorted.length; i++) gaps.push([sorted[i] - sorted[i - 1], i]);
+  const minGap = (hi - lo) / maxRanges;
+  const cuts = gaps.filter(([g]) => g > minGap && g > 1).sort((x, y) => y[0] - x[0]).slice(0, maxRanges - 1).map(([, i]) => i).sort((x, y) => x - y);
+  const out = [];
+  let start = 0;
+  for (const c of [...cuts, sorted.length]) { out.push([sorted[start], sorted[c - 1]]); start = c; }
+  return out;
+}
+
 export class Engine {
   /**
    * @param {{main: DbHandle, vec: DbHandle|null, chunkRows?: number, loadBatch?: number}} opt
@@ -183,8 +214,10 @@ export class Engine {
 
   /**
    * 稠密扫描（§8.7）：每层二值粗排前 coarseTopK → int8 精排；每条记忆取各查询向量、各块里的最高分。
+   * 【D153】only（记忆引用的数组）：只在这些记忆里比；条数 ≤ exactMax 时不走二值粗排，逐条用存的 int8 精确比
+   * （记忆层常驻内存的 int8、原文层从磁盘取的 int8、冷层同样从磁盘取），多了照常粗排但只在 only 里。没给 only 和原来一样。
    * @param {{spaceId: string, vectors: Float32Array[], layers: string[], topK: {memory?: number, raw?: number}, includeCold?: boolean,
-   *          exclude?: string[], coarseTopK?: number, deadlineAt: number}} a
+   *          exclude?: string[], coarseTopK?: number, only?: string[], exactMax?: number, deadlineAt: number}} a
    * @param {(partial: {layer: string, hits: object[]}) => void} [onPartial]
    */
   dense(a, onPartial) {
@@ -202,6 +235,9 @@ export class Engine {
     const exclude = new Set();
     for (const ref of a.exclude ?? []) { const m = parseRef(ref); if (m) exclude.add(ownerKey(KIND_INDEX[m.kind], m.id)); }
     const k = Math.max(1, a.coarseTopK ?? DEFAULTS.recall.dense.coarseTopK);
+    const only = Array.isArray(a.only) ? ownerKeys(a.only) : null;
+    if (only && !only.size) return { hits: [], timedOut: false, scanned: 0 };
+    const exact = !!only && only.size <= Math.max(0, a.exactMax ?? DEFAULTS.recall.scope.exactMax);
     const hits = [];
     let timedOut = false;
     let scanned = 0;
@@ -211,7 +247,9 @@ export class Engine {
       const topK = Math.max(0, a.topK?.[layer] ?? (layer === 'memory' ? DEFAULTS.recall.dense.memoryTopK : DEFAULTS.recall.dense.rawTopK));
       if (!topK) continue;
       const L = sp[layer];
-      const c = L.coarse(queries.map((x) => x.b), k, exclude.size ? exclude : null, a.deadlineAt);
+      const c = exact
+        ? L.select(only, exclude.size ? exclude : null, a.deadlineAt)
+        : L.coarse(queries.map((x) => x.b), k, exclude.size ? exclude : null, a.deadlineAt, only);
       scanned += c.scanned;
       if (c.timedOut) timedOut = true;
       const best = new Map();   // ownerKey → {score, chunkNo}
@@ -225,7 +263,7 @@ export class Engine {
           offer(ownerKey(m.kindIdx, m.ownerId), L.scoreQ8(slot, queries), m.chunkNo);
         }
         if (a.includeCold && sp.cold.size && !timedOut) {
-          const r = this.#scanCold(a.spaceId, sp, queries, exclude, a.deadlineAt, offer);
+          const r = this.#scanCold(a.spaceId, sp, queries, exclude, a.deadlineAt, offer, only);
           scanned += r.scanned;
           if (r.timedOut) timedOut = true;
         }
@@ -256,8 +294,8 @@ export class Engine {
   }
 
   /** 冷层从磁盘扫（只在有意回想时）：直接 int8 精排。 */
-  #scanCold(spaceId, sp, queries, exclude, deadlineAt, offer) {
-    const ids = [...sp.cold.keys()];
+  #scanCold(spaceId, sp, queries, exclude, deadlineAt, offer, only = null) {
+    const ids = only ? [...sp.cold].filter(([, c]) => only.has(c.key)).map(([id]) => id) : [...sp.cold.keys()];
     let scanned = 0;
     for (let i = 0; i < ids.length; i += 500) {
       if (wallNow() > deadlineAt) return { scanned, timedOut: true };
@@ -328,7 +366,10 @@ export class Engine {
    * BM25 词法查询（§8.2）：逐词加引号再 OR（store.matchQuery），每张表取前 limit，按 −bm25 合并。
    * 【D150】weights（和 terms 一一对应，缺省都是 1）：同一个权重的词一起查一次，各组的 −bm25 乘上权重再按行加起来
    * （焦点的词权重 1、对话其余部分的词轻一些）。FTS5 的 bm25 给不了逐词的权重，分组查是最直接的办法。
-   * @param {{terms: string[], weights?: number[], tables: string[], limit: number, maxTerms?: number, hotMonths?: number, maxShards?: number|null, deadlineAt: number}} a
+   * 【D153】only（记忆引用的数组）：各表只看这些行——情节表看 e…、事实表看 a…、原文分表看 p…；原文窗口 w… 换成它的成员感知
+   * （词法路上原文是按一条条感知查的，命中照旧是 p…）。按 rowid 区间查、再按集合筛（不用 rowid IN，见 rowRanges）。没给 only 和原来一样。
+   * @param {{terms: string[], weights?: number[], tables: string[], limit: number, maxTerms?: number, hotMonths?: number, maxShards?: number|null,
+   *          only?: string[], deadlineAt: number}} a
    * @param {(partial: {table: string, hits: object[]}) => void} [onPartial]
    */
   lexical(a, onPartial) {
@@ -343,15 +384,26 @@ export class Engine {
     const queries = [...groups].map(([w, ts]) => ({ w, q: matchQuery(ts, max) })).filter((g) => g.q);
     if (!queries.length) return { hits: [], timedOut: false };
     const limit = Math.max(1, a.limit ?? DEFAULTS.recall.lexical.topK);
+    const only = Array.isArray(a.only) ? this.#onlyRows(a.only) : null;
     const all = [];
     let timedOut = false;
     for (const [t, prefix] of this.resolveTables(a.tables, a.hotMonths, a.maxShards ?? null)) {
       if (wallNow() > a.deadlineAt) { timedOut = true; break; }
+      const want = only ? only[prefix] : null;
+      if (only && !want?.ids.size) continue;
       const score = new Map();
       for (const { w, q } of queries) {
         let rows = [];
         try {
-          rows = this.main.all(`SELECT rowid AS id, bm25(${t}) AS s FROM ${t} WHERE ${t} MATCH ? ORDER BY s LIMIT ?`, q, limit);
+          if (!want) rows = this.main.all(`SELECT rowid AS id, bm25(${t}) AS s FROM ${t} WHERE ${t} MATCH ? ORDER BY s LIMIT ?`, q, limit);
+          else {
+            for (const [lo, hi] of want.ranges) {
+              for (const r of this.main.all(`SELECT rowid AS id, bm25(${t}) AS s FROM ${t} WHERE ${t} MATCH ? AND rowid >= ? AND rowid <= ?`, q, lo, hi)) {
+                if (want.ids.has(r.id)) rows.push(r);
+              }
+            }
+            rows = rows.sort((x, y) => x.s - y.s || x.id - y.id).slice(0, limit);
+          }
         } catch { rows = []; }   // 某张表坏了只丢这一张
         for (const r of rows) score.set(r.id, (score.get(r.id) ?? 0) - w * r.s);
       }
@@ -363,6 +415,37 @@ export class Engine {
     for (const h of all) { const o = best.get(h.ref); if (!o || h.score > o.score) best.set(h.ref, h); }
     const hits = [...best.values()].sort((x, y) => y.score - x.score || (x.ref < y.ref ? -1 : 1)).slice(0, limit);
     return { hits, timedOut };
+  }
+
+  /**
+   * 【D153】only → 各前缀（e / a / p）要看的 rowid 集合和区间。原文窗口 w… 换成成员感知（members_json）。
+   * @param {string[]} refs
+   * @returns {Record<'e'|'a'|'p', {ids: Set<number>, ranges: [number, number][]}>}
+   */
+  #onlyRows(refs) {
+    const ids = { e: new Set(), a: new Set(), p: new Set() };
+    const wins = [];
+    for (const ref of refs) {
+      const m = parseRef(ref);
+      if (!m) continue;
+      if (m.kind === 'episode') ids.e.add(m.id);
+      else if (m.kind === 'assertion') ids.a.add(m.id);
+      else if (m.kind === 'percept') ids.p.add(m.id);
+      else if (m.kind === 'window') wins.push(m.id);
+    }
+    for (let i = 0; i < wins.length; i += 500) {
+      const part = wins.slice(i, i + 500);
+      let rows = [];
+      try { rows = this.main.all(`SELECT members_json AS m FROM raw_windows WHERE id IN (${part.map(() => '?').join(',')})`, ...part); } catch { rows = []; }
+      for (const r of rows) {
+        let members = [];
+        try { members = JSON.parse(r.m); } catch { members = []; }
+        for (const x of Array.isArray(members) ? members : []) if (Number.isSafeInteger(x) && x > 0) ids.p.add(x);
+      }
+    }
+    const out = {};
+    for (const [k, set] of Object.entries(ids)) out[k] = { ids: set, ranges: rowRanges([...set].sort((x, y) => x - y)) };
+    return out;
   }
 
   /**
