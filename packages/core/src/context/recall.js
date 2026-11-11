@@ -375,7 +375,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
       const budgetMs = retrieveBudget();
       cset = await bounded(core.mods.retrieve.recall(core,
         { settingKey: key, focusPerceptId: focus?.id ?? null, sessionId: s.sessionId ?? null, trigger: s.trigger },
-        { mode, query: opt.query, about: opt.about, time: opt.time, includeHistory: opt.includeHistory, deadlineMs: budgetMs, signal: opt.signal }), budgetMs + graceMs, opt.signal);
+        { mode, query: opt.query, about: opt.about, time: opt.time, where: opt.where, includeHistory: opt.includeHistory, deadlineMs: budgetMs, signal: opt.signal }), budgetMs + graceMs, opt.signal);
       if (attempt) { try { bumpMetric(core.store, 'context.retrieve.retryOk'); } catch { /* 只是计数 */ } }
       break;
     } catch (e) {

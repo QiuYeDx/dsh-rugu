@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createFakePm, fakeAgent, userMessage } from '../fakes/index.js';
 import { makeHost } from './helpers.js';
 import crypto from 'node:crypto';
-import { memoryToolSpecs, DESCRIPTION_BUDGET, DESCRIPTION_BUDGET_GUIDED, NOTE_LESSON_GUIDED } from '../../src/host/tools.js';
+import { memoryToolSpecs, DESCRIPTION_BUDGET, DESCRIPTION_BUDGET_GUIDED, NOTE_LESSON_GUIDED, RECALL_WHERE_GUIDED } from '../../src/host/tools.js';
 import { renderBlock, renderToolResult, BLOCK_HEAD, TOOL_HEAD, BLOCK_HEAD_PURPOSE, TOOL_HEAD_PURPOSE, WORKING_TITLES } from '../../src/host/render.js';
 
 const len = (s) => [...String(s)].length;
@@ -23,7 +23,9 @@ test('用法说明的两种写法（D125）：默认「详细指引」和以前�
   const g = memoryToolSpecs();
   assert.deepEqual(memoryToolSpecs('guided'), g);
   // D124 以前的原文（哈希锁住）
-  assert.equal(h(g.recall.description), 'c73105058e31851c');
+  const rl = g.recall.description.split('\n');
+  assert.equal(h(rl.slice(0, 4).join('\n')), 'c73105058e31851c', 'memory_recall 原来的四行一字不改');
+  assert.equal(rl[4], RECALL_WHERE_GUIDED, 'D154：where 那一行补在后面');
   assert.equal(h(g.fix.description), '0e7b54b31044181c');
   const lines = g.note.description.split('\n');
   assert.equal(h(lines.slice(0, 3).join('\n')), 'b35569e0d3aa867b', 'memory_note 原来的三行一字不改');

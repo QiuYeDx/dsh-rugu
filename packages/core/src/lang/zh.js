@@ -4,6 +4,7 @@
 //   - 时间：中文时间表达的通用语法（昨天、上周六、10 月 31 号、晚上八点、三天前、那天……），见 time.js 的框架。
 //   - 问句线索：句末语气词、「X 不 X」、疑问代词、问号——汉语问句的通用语法，不是按入口写的规则（§6.6）。
 //   - 虚词：代词、疑问词、语气词、助词、语法副词、连词、介词这些封闭词类，词法路不拿它们当查询词（D150）。
+//   - 人称：对她说的话里「我」是说话人、「你」是她，换成她的视角；场合的说法（这里 / 私下 / 某个群的名字）（D154）。
 // 这里列出的时间词、语气词、虚词都是语言知识（封闭的语法类），不是用来判断「该不该说」的词表（§2.2）。
 import { prep, segmentRuns, wordTokens, cjkTokens, uniq, DictMatcher, scriptCounts } from './text.js';
 import {
@@ -368,6 +369,150 @@ export function zhFunctionWord(term) {
   return chars.length === 2 && ZH_FUNCTION_WORDS.has(chars[0]) && ZH_FUNCTION_WORDS.has(chars[1]);
 }
 
+// ── 人称（D154）──────────────────────────────────────────────────────────
+// 对她说的一句话里，第一人称「我」指说话的人，第二人称「你 / 您」指她。换成她的视角（她在记忆里自称「我」）：
+// 说话人的「我」→ 他的称呼，对她说的「你」→「我」。这是汉语人称代词的规律（和时间词、虚词一样是语言知识），不是按话题写的规则。
+// 克制、宁可不换：
+//   - 只换单用的「我 / 你 / 您」（「我的」「你的」跟着换成「阿明的」「我的」）；「我们 / 你们 / 咱们 / 我俩 / 你我」不换（指谁不确定）；
+//   - 「自我」「忘我」这类词里的「我」、用户词典里的整词（名字里带「我」「你」的）不换；
+//   - 引号、书名号里的话不换；说话动词后面跟冒号的（「他说：我饿了」）直接引语一直到句末都不换；
+//   - 第三方当主语的转述（「小明说我胖」「他问你……」）：这一句从说话动词起都不换（「问 / 告诉 / 骂……」紧跟的宾语「我」「你」除外，
+//     它指的就是说话人和她）——没有冒号的直接引语和间接引语分不清，拿不准就不换；
+//   - 句首的「你说 / 你看 / 你猜 / 你知道」后面是个问句时，是在引出问题（话语标记），不换。
+const QUOTE_PAIRS = Object.freeze({ '「': '」', '『': '』', '“': '”', '‘': '’', '《': '》', '"': '"' });
+const SENTENCE_END_CH = new Set(['。', '！', '!', '？', '?', '\n', '；', ';', '…']);
+const CLAUSE_END_CH = new Set(['，', ',', '、', '：', ':']);
+/** 说话动词：[词, 紧跟的代词是不是宾语（问他 / 告诉他）]。「说 / 讲 / 答」后面紧跟的代词可能是引语的主语，不算宾语。 */
+const SPEECH_VERBS = Object.freeze([['写道', false], ['回答', false], ['告诉', true], ['说', false], ['讲', false], ['答', false],
+  ['问', true], ['喊', true], ['骂', true], ['嚷', false], ['吼', true], ['夸', true]]);
+/** 说话动词在这些字前后时是别的词（小说、听说、问题、顾问、答案、夸张……）。 */
+const SPEECH_NOT_BEFORE = Object.freeze({ 说: '小听据虽解传学劝游演胡', 讲: '演', 问: '学顾疑访询请提审', 答: '解问报应', 夸: '' });
+const SPEECH_NOT_AFTER = Object.freeze({ 说: '明法服', 讲: '座究', 问: '题号候', 答: '案应复', 夸: '张' });
+/** 「我」在这些字后面是词的一部分（自我、忘我、唯我、本我、超我、无我）。 */
+const WO_NOT_AFTER = '自忘唯本超无';
+const DISCOURSE_YOU = /^(?:你|您)(?:说|看|猜|知道)/u;
+const QUESTION_HINT = /[？?吗呢啥谁哪几]|什么|怎么|多少/u;
+
+/**
+ * 换成她的视角（见上）。不抛错：说话人的称呼没给时原样返回（「我」换成什么不知道，「你」也不换，免得两个人都成了「我」）。
+ * @param {string} text
+ * @param {{speaker?: string|null, self?: string|null}} roles  speaker：说话人在这里的称呼；self：她在记忆里的自称（缺省「我」）
+ * @param {{has: (w: string) => boolean, scan: (t: string) => {pos: number, word: string}[]}|null} [dict]  用户词典（名字里带「我」「你」的不换）
+ * @returns {{text: string, speaker: boolean, self: boolean}}
+ */
+export function zhPersonView(text, roles, dict) {
+  const src = String(text ?? '');
+  const speakerName = typeof roles?.speaker === 'string' ? roles.speaker.trim() : '';
+  const selfName = typeof roles?.self === 'string' && roles.self.trim() ? roles.self.trim() : '我';
+  const none = { text: src, speaker: false, self: false };
+  if (!src || !speakerName || !/[我你您]/u.test(src)) return none;
+  // 用户词典里的整词（名字）盖住的位置
+  const inName = new Uint8Array(src.length);
+  try {
+    const p = dict ? prep(src) : '';
+    if (dict && p.length === src.length) for (const h of dict.scan(p)) inName.fill(1, h.pos, h.pos + h.word.length);
+  } catch { /* 词典出错就不看 */ }
+  const ch = (i) => src[i] ?? '\u0000';
+  let out = '';
+  let refSpeaker = false;
+  let refSelf = false;
+  let quote = null;          // 正在等的右引号
+  let skip = false;          // 直接引语、第三方转述：到句末都不换
+  let objectAt = -1;         // 第三方转述时，说话动词紧跟的宾语位置（这一个照换）
+  let sentenceStart = 0;
+  let clauseStart = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (quote) { out += c; if (c === quote) quote = null; continue; }
+    if (QUOTE_PAIRS[c]) { quote = QUOTE_PAIRS[c]; out += c; continue; }
+    if (SENTENCE_END_CH.has(c)) { skip = false; objectAt = -1; sentenceStart = clauseStart = i + 1; out += c; continue; }
+    if (CLAUSE_END_CH.has(c)) {
+      // 说话动词后面的冒号：直接引语，到句末都不换
+      if ((c === '：' || c === ':') && speechVerbIn(src, clauseStart, i)) skip = true;
+      clauseStart = i + 1;
+      out += c;
+      continue;
+    }
+    if (!skip) {
+      const v = speechVerbAt(src, i);
+      if (v) {
+        const prefix = src.slice(clauseStart, i);
+        if (thirdParty(prefix)) { skip = true; objectAt = v.object ? i + v.word.length : -1; }
+        out += v.word;
+        i += v.word.length - 1;
+        continue;
+      }
+    }
+    if (c !== '我' && c !== '你' && c !== '您') { out += c; continue; }
+    if (skip && i !== objectAt) { out += c; continue; }
+    const prev = ch(i - 1);
+    const next = ch(i + 1);
+    const keep = next === '们' || next === '俩'
+      || (c === '我' && (WO_NOT_AFTER.includes(prev) || prev === '你' || prev === '您'))
+      || (c !== '我' && next === '我')
+      || inName[i] === 1
+      || (c !== '我' && i === firstLetter(src, clauseStart) && DISCOURSE_YOU.test(src.slice(i)) && QUESTION_HINT.test(src.slice(i + 2, sentenceEnd(src, i))));
+    if (keep) { out += c; continue; }
+    if (c === '我') { out += speakerName; refSpeaker = true; } else { out += selfName; refSelf = true; }
+  }
+  return { text: out, speaker: refSpeaker, self: refSelf };
+}
+
+/** 从 i 开始是不是一个说话动词（排除小说、问题这类词）。 */
+function speechVerbAt(src, i) {
+  for (const [word, object] of SPEECH_VERBS) {
+    if (!src.startsWith(word, i)) continue;
+    if (word.length === 1) {
+      if ((SPEECH_NOT_BEFORE[word] ?? '').includes(src[i - 1] ?? '\u0000')) return null;
+      if ((SPEECH_NOT_AFTER[word] ?? '').includes(src[i + 1] ?? '\u0000')) return null;
+    }
+    return { word, object };
+  }
+  return null;
+}
+function speechVerbIn(src, a, b) {
+  for (let i = a; i < b; i++) if (speechVerbAt(src, i)) return true;
+  return false;
+}
+/** 说话动词前面的主语是第三方：有字，而且带着他 / 她 / 它，或者一个「我 / 你 / 您 / 咱」都没有（「我们说」不算第三方）。主语省略（前面没有字）的是说话人自己。 */
+function thirdParty(prefix) {
+  if (!/[\p{L}\p{N}]/u.test(prefix)) return false;
+  return /[他她它]/u.test(prefix) || !/[我你您咱]/u.test(prefix);
+}
+function firstLetter(src, from) {
+  for (let i = from; i < src.length; i++) if (/[\p{L}\p{N}]/u.test(src[i])) return i;
+  return -1;
+}
+function sentenceEnd(src, from) {
+  for (let i = from; i < src.length; i++) if (SENTENCE_END_CH.has(src[i])) return i + 1;
+  return src.length;
+}
+
+// ── 场合的说法（D154）─────────────────────────────────────────────────────
+// 「这里 / 这个群」是说话的这个地方；「私下 / 私聊」是两个人单独的地方；光说「群里」是「某个群」（在群里说就是这个群）。
+// 其余的当一个场合的名字：去掉方位词「里 / 上 / 中」，再去掉「群」，给几种写法去和场合的名字比。
+const PLACE_HERE = /^(?:这里|这儿|这边|此处|这个群|这群|本群|咱们群|咱群|我们群|这个地方|这地方)(?:里|里面|上|中)?$/u;
+const PLACE_PRIVATE = /^(?:私下|私底下|私聊|私信|单聊|小窗|悄悄|单独|一对一|两个人)(?:里|中|时|的时候|聊|说)?$/u;
+const PLACE_GROUP = /^(?:群|群里|群里面|群上|群聊|群聊里)$/u;
+
+/**
+ * @param {string} text  一个场合的说法（工具的 where、改写的 where）
+ * @returns {{kind: 'here'|'private'|'group'|null, names: string[]}}
+ */
+export function zhPlaceRef(text) {
+  const t = String(text ?? '').normalize('NFKC').replace(/\s+/gu, '').replace(/^(?:在|于)/u, '');
+  if (!t) return { kind: null, names: [] };
+  if (PLACE_HERE.test(t)) return { kind: 'here', names: [] };
+  if (PLACE_PRIVATE.test(t)) return { kind: 'private', names: [] };
+  if (PLACE_GROUP.test(t)) return { kind: 'group', names: [] };
+  const names = [t];
+  const bare = t.replace(/(?:里面|里|上|中)$/u, '');
+  if (bare && !names.includes(bare)) names.push(bare);
+  const noGroup = bare.replace(/(?:群聊|群)$/u, '').replace(/^(?:那个|这个)/u, '');
+  if ([...noGroup].length >= 2 && !names.includes(noGroup)) names.push(noGroup);
+  return { kind: null, names };
+}
+
 // ── 分析器 ────────────────────────────────────────────────────────────────
 /**
  * jieba 的几种形态都接：v2 的实例（有 cutForSearch 方法）、v2 的模块（Jieba 类）、v1 的模块（load + cutForSearch）。
@@ -458,6 +603,9 @@ export function buildZhAnalyzer(opt = {}) {
       if (dict.has(t)) return 'word';
       return zhFunctionWord(t) ? 'function' : null;
     },
+    // D154：人称换成她的视角；场合的说法
+    personView: (text, roles) => zhPersonView(text, roles, dict),
+    placeRef: zhPlaceRef,
     setUserDictionary(words) {
       const list = (Array.isArray(words) ? words : []).filter((w) => typeof w === 'string');
       dict.set(list);

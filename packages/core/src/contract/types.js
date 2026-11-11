@@ -234,6 +234,7 @@ export {};
  * @property {string} [query]
  * @property {string} [about]                      【补】memory_recall 工具的 about（关于谁 / 什么，§8.5）
  * @property {string} [time]                       【补】memory_recall 工具的 time（「上周」「10/31」）
+ * @property {string} [where]                      【补，D154】memory_recall 工具的 where（「这个群」「私聊」、某个群的叫法）；原样往下传给 retrieve，读懂问题用
  * @property {boolean} [includeHistory]            【补】带上被取代的旧版本和同类的其他几次
  * @property {number} deadlineMs
  * @property {number} budgetChars

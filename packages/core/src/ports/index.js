@@ -109,6 +109,11 @@
  * @property {(words: string[]) => void} [setUserDictionary]     jieba 用户词典（实体别名，§8.2）
  * @property {(term: string) => ('function'|'word'|null)} [termClass]  【D150】查询词的词类：'function' 虚词（代词、疑问词、语气词、助词……
  *                                                                这门语言的封闭词类，不当词法查询词）；'word' 认得的整词（用户词典）；null 不知道
+ * @property {(text: string, roles: {speaker?: string|null, self?: string|null}) => {text: string, speaker: boolean, self: boolean}} [personView]
+ *                                                                【D154】对她说的一句话换成她的视角：第一人称（说话人）换成 speaker，第二人称（她）换成 self；
+ *                                                                拿不准就不换；speaker / self 说点到了谁
+ * @property {(text: string) => {kind: 'here'|'private'|'group'|null, names: string[]}} [placeRef]
+ *                                                                【D154】一个场合的说法：这里 / 私下 / 光说「群里」/ 名字（names 是拿去比的几种写法）
  */
 
 /**

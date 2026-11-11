@@ -458,6 +458,7 @@ export function validateRecallOptions(v) {
     query: str(c, o.query, 'query'),
     about: str(c, o.about, 'about', { max: LIMITS.labelMax }),
     time: str(c, o.time, 'time', { max: LIMITS.labelMax }),
+    where: str(c, o.where, 'where', { max: LIMITS.labelMax }),
     includeHistory: bool(c, o.includeHistory, 'includeHistory'),
     deadlineMs: num(c, o.deadlineMs, 'deadlineMs', { required: true, min: 0, max: LIMITS.deadlineMaxMs }),
     budgetChars: num(c, o.budgetChars, 'budgetChars', { required: true, int: true, min: 0, max: 100_000 }),
