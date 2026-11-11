@@ -179,7 +179,7 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     if (!pm || !claim) { bump('unavailable'); return TOOL_TEXT.unavailable; }
     const tc = hostConfig().tools ?? {};
     const st = states.get(claim.sessionId);
-    // 她自己开启、还没读到新消息的一轮（D115）：按 idle 想，核心不把这里最后一个对她说话的人当成在问她的人
+    // 她自己开启（空闲唤醒、定时提醒到点，D144）、还没读到新消息的一轮（D115）：按 idle 想，核心不把这里最后一个对她说话的人当成在问她的人
     const sit = { settingId: claim.settingId, sessionId: claim.sessionId, trigger: !st.trigger?.obsId && st.selfTurn ? 'idle' : 'message', homeSettingId: claim.settingId,
       ...(st.trigger?.obsId ? { focusObsId: st.trigger.obsId } : {}) };
     const q = String(args?.query ?? '').trim();

@@ -266,7 +266,7 @@ export async function expireInjections(core, opt) {
  * @param {import('../core-types.js').CoreContext} core
  * @param {string} sessionId
  * triggerEntityIds / focusPerceptId：这个会话这一轮回想时认出的触发者（主触发者在前）和焦点那条感知（D107，只在内存里；没回想过、重启了是 [] / null）。
- * selfTurn：这一轮是她自己开启的（按 idle 回想、没有触发者，D115）；turnAt：这一轮回想记下的时刻（没记过是 null）。
+ * selfTurn：这一轮是她自己开启的（按 idle 或定时提醒到点回想、没有触发者，D115、D144）；turnAt：这一轮回想记下的时刻（没记过是 null）。
  * @returns {{sessionId: string, settingKey: string|null, adapter: string|null, cycle: number, turnTainted: boolean, warmPending: boolean,
  *            triggerEntityIds: number[], focusPerceptId: number|null, selfTurn: boolean, turnAt: number|null}|null}
  */

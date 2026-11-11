@@ -219,14 +219,20 @@ test('会话事件：她每一步之后的上下文 token 进滚动窗口；主�
   await cleanup();
 });
 
-test('定时任务唤醒：trigger 是 reminder，这一轮没有触发消息（memory_note 做不了）', async () => {
-  const { ctx, pm, cleanup } = await makeHost({ name: 'ctx-reminder' });
+test('定时任务唤醒：trigger 是 reminder，这一轮没有触发消息（memory_note 做不了）；她这一轮自己想（memory_recall）也按她自己开启的轮（idle，D144）', async () => {
+  const { ctx, pm, host, cleanup } = await makeHost({ name: 'ctx-reminder' });
   const agent = fakeAgent({ id: 's-rem', preset: 'zz-chat' });
   await ctx.preStep(agent, [userMessage('提醒：喝水', { kind: 'schedule' })]);
   assert.equal(pm.named('recall')[0].args[0].trigger, 'reminder');
+  assert.equal(host.assembler.turnState('s-rem').selfTurn, true);
   const note = agent.ctx.tools.registered.find((t) => t.name === 'memory_note');
   const out = await note.execute({ text: 'x', evidence_quote: 'x' }, { agent, callId: 'n1' });
   assert.match(out, /还没看到别人对你说的话/);
+  const recall = agent.ctx.tools.registered.find((t) => t.name === 'memory_recall');
+  await recall.execute({ query: '喝水' }, { agent, callId: 'r1' });
+  const sit = pm.named('recall').at(-1).args[0];
+  assert.equal(sit.trigger, 'idle', '不按 message 想：核心不会退回这里最后一个对她说话的人');
+  assert.equal(sit.focusObsId, undefined);
   await cleanup();
 });
 

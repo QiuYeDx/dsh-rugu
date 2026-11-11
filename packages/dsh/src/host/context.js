@@ -297,7 +297,8 @@ export function createContextAssembler({ getPm, claims, states, guard, hostConfi
       let foci = [];
       let cands = [];
       if (reminder) {
-        // 定时提醒开启的轮（照旧）：没有触发消息，焦点按原来的规矩
+        // 定时提醒开启的轮：没有触发消息（一批里全是定时任务；夹着一条真实的新消息就走下面 message 的路）。
+        // 交给核心的焦点是提醒那一条（适配器映射出来的话）；核心按她自己开启的一轮算（D144），不退回最后一个对她说话的人
         trig = pickFocus(obs, focus, { fallbackLast: false });
         focusId = trig?.id ?? focus ?? null;
         foci = trig ? pickFoci(obs, focus, { fallbackLast: false, max: maxT }).map((o) => o.id) : [];
@@ -319,7 +320,8 @@ export function createContextAssembler({ getPm, claims, states, guard, hostConfi
       const keep = selfTurn && Number(ev.step) > 1 && st.trigger?.obsId != null;
       if (keep) focusId = st.trigger.obsId;
       else {
-        st.selfTurn = selfTurn;
+        // 定时提醒开启的轮也是她自己开启的（D144）：之后的记忆工具回想、读到的随口一句，都和空闲唤醒的轮一样，不当成有人在问她
+        st.selfTurn = selfTurn || reminder;
         st.trigger = reminder || selfTurn ? null : { obsId: focusId, actor: trig?.actor ?? null, at: turnAt, msgAt: Number.isFinite(trig?.at) ? trig.at : null };
         // 这一轮她看到的、别人对她说的（D114）：从触发这一轮的那条（和同样新的）重新记起；快照里的旧上下文不算（集成复核）；定时提醒开启的轮没有
         st.turnAt = turnAt;

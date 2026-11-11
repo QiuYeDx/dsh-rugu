@@ -9,8 +9,9 @@
 //   - intentions：encode.dueIntentions → 按激活排序 → 浮上来前 encode.recheckIntention（评审:SC-08）→ 意图和它指向的事实都过关口①；
 //   - working（工作记忆，§8.10，D100）：第一步就同步算好（working.js），眼前这个人刚在别处跟她说过、她回过他的话确定地在她心里，
 //     写进 recallCached 的缓存（整个回想超时了也拿得到）；放进来的从普通回想的候选里去掉。
-//     她自己开口的一轮（空闲唤醒，D132）没有「眼前这个人」，按「她要对谁说」取（addresseesFor：一对一就是对方，
-//     群里是她最近在别处来往过、又在这里的人）；这些人也算在场（人物卡、在场者近况、对着他的意图），「今天到目前为止」也给。
+//     她自己开口的一轮（空闲唤醒，D132；定时提醒到点，D144）没有「眼前这个人」，按「她要对谁说」取（addresseesFor：一对一就是对方，
+//     群里是她最近在别处来往过、又在这里的人；提醒对得上对象、他又在这里时他在最前）；这些人也算在场（人物卡、在场者近况、
+//     对着他的意图），「今天到目前为止」也给。
 // 「看起来在问过去」（§6.6、§8.5）：对她说的话看起来在问过去，就把这一轮切到有意回想（τ_del、可以等到 3 秒）。
 // 重新开始（§10.5、§17 Q6）：只给常驻区和长期记忆，不给「这里最近在聊什么」（暖启动、时间间隔、重新开始前不久的原文），
 // 等下一次压缩结束再恢复。
@@ -272,8 +273,9 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
     return r;
   };
   // 空闲唤醒（idle，D115）：这一轮没有人在对她说话（主动冒泡、回复检查、潜水到点……），焦点就是这里最近的对话（最后一条），
-  // 不退回这里最后一个对她说话的人——那常常是几个小时前的一句，拿它当「眼前这个人」，工作记忆、外发守护的「被回答的人」就都错了
-  const selfTurn = s.trigger === 'idle';
+  // 不退回这里最后一个对她说话的人——那常常是几个小时前的一句，拿它当「眼前这个人」，工作记忆、外发守护的「被回答的人」就都错了。
+  // 定时提醒到点（reminder，D144）是同一类：也没有人在问她，是她自己要开口。一批里只要有一条真实的新消息，宿主就按 message 开启这一轮
+  const selfTurn = s.trigger === 'idle' || s.trigger === 'reminder';
   let focus = s.focusObsId ? guard('focus', () => findObs(s.focusObsId), null) : null;
   if (!focus) {
     if (s.focusObsId) { try { bumpMetric(core.store, 'context.focus.fallback'); } catch { /* 只是计数 */ } }
@@ -308,7 +310,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   //（集成层本来就按这个时间等，见 dsh/src/host/context.js 的 recallWaitMs），不留到下一轮——人被直接叫到时也会停一下想一想（§9.3.5）。
   // 只延长等第二段的那一段，召回、渲染照不自主回想的时间算；第二段的条数、每小时次数、预算照旧
   // 她自己开口的一轮也等（D132）：没有人对她说话，这个场合就没有预取替它先判过第二段；不等的话，别处刚发生、还没评估过的事
-  // 这一轮判不完，要到下一轮才给——她自己开口的下一轮可能是几个小时以后
+  // 这一轮判不完，要到下一轮才给——她自己开口的下一轮可能是几个小时以后。定时提醒到点的一轮也一样（D144：提醒那一条挂在她名下，不预取）
   const directTurn = mode === 'involuntary' && !background && ((s.trigger === 'message' && !!focus && isToHer(focus)) || selfTurn);
   // 预取时替这一轮先判的在后台：等第二段自己的超时（不到点就记「判不完、待定」，那是这一轮的事，不该算到预取头上）
   const gateWait = directTurn ? () => Math.max(left(), cfg.recall.deliberate.deadlineMs - (performance.now() - t0))
@@ -347,8 +349,10 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
   const cacheKey = cacheKeyOf(key, s.sessionId);
 
   // 0a. 她自己开口的一轮（D132）：没有人在问她，但她要对这里的人说话——工作记忆按「她要对谁说」取，每个人各算一份。
-  //     不记成触发者（noteTurn 记的是 triggers）：外发守护的「被回答的人」照旧是空的
-  const addressees = selfTurn && !prefetch ? guard('addressees', () => addresseesFor(core, target, { key, selfId, cfg }), []) : [];
+  //     不记成触发者（noteTurn 记的是 triggers）：外发守护的「被回答的人」照旧是空的。
+  //     定时提醒到点的一轮（D144）：提醒对得上对象、他又在这里，排在最前
+  const addressees = selfTurn && !prefetch
+    ? guard('addressees', () => addresseesFor(core, target, { key, selfId, cfg, at, reminder: s.trigger === 'reminder' }), []) : [];
   if (addressees.length) { try { bumpMetric(core.store, 'wm.selfTurn'); } catch { /* 只是计数 */ } }
   const wmTriggers = selfTurn ? addressees.map((id) => ({ entityId: id, focus: null })) : triggers;
 
@@ -433,7 +437,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, di
     }
   });
 
-  // 她自己开口的一轮也给「今天到目前为止」（D132）：开口之前先知道今天在别处过得怎么样
+  // 她自己开口的一轮也给「今天到目前为止」（D132）：开口之前先知道今天在别处过得怎么样（提醒到点的一轮也是她自己开口，D144）
   if (mode === 'deliberate' || selfTurn) {
     for (const e of guard('today', () => todayFor(core, key, at, tz, cset?.cues?.timeWindows ?? [], cfg), [])) addExtra({ ref: e, layer: 'todaySoFar', role: 'today', group: `d:${e}` });
   }
@@ -673,15 +677,39 @@ function presentOf(core, cset, key, at, selfId, lead, cfg) {
  * 她自己开口的一轮要对谁说（D132）：一对一就是对方；别的场合是她最近在别处来往过、又在这里的人（retrieve.recentPartners：
  * 在这里 = 听众名单里的、最近在这里说过话的，或者以前在这里说过话的；按最近一次来往从新到旧，没有时间窗，最多 recall.working.maxTriggers 个）。
  * 公开的、不认识的场合没有（工作记忆本来就不进这些场合）。只决定工作记忆替谁算、谁算在场；能不能进来照旧由 discretion.admitWorking 判。
+ * 定时提醒到点的一轮（reminder，D144）：这次提醒对得上对象、他又在这里（remindedOf），他排在最前，其余照上面取，一共最多 maxTriggers 个。
  * @returns {number[]}
  */
-function addresseesFor(core, target, { key, selfId, cfg }) {
+function addresseesFor(core, target, { key, selfId, cfg, at, reminder = false }) {
   const a = target?.audience;
   if (!a?.known || a.publicLike) return [];
   const people = [...new Set([...(a.members ?? []), ...(a.recentSpeakers ?? [])])].filter((x) => Number.isSafeInteger(x) && x !== selfId);
   if (a.oneOnOne) return people.length === 1 ? people : [];
   const max = Math.max(1, Math.floor(cfg.recall.working?.maxTriggers ?? 3));
-  return (core.mods.retrieve.recentPartners?.(core, { settingKey: key }, { among: people, max }) ?? []).filter((x) => Number.isSafeInteger(x) && x !== selfId);
+  // 对不上（或者找的时候出错）就只按她最近在别处来往过的人取
+  let first = [];
+  if (reminder) { try { first = remindedOf(core, { key, at, people, selfId }); } catch { first = []; } }
+  const rest = core.mods.retrieve.recentPartners?.(core, { settingKey: key }, { among: people, max }) ?? [];
+  return [...new Set([...first, ...rest])].filter((x) => Number.isSafeInteger(x) && x !== selfId).slice(0, max);
+}
+
+/**
+ * 定时提醒到点的这一轮提醒的是谁（D144）：到点的意图（encode.dueIntentions）里带时间窗、现在正在窗里的那几条的对象，
+ * 而且他在这里（听众名单里、最近在这里说过话的，或者以前亲自在这里说过话）。时间窗开始得晚的在前（最像刚到点的这一次）。
+ * 只看意图的结构（对象、时间窗），不解析提醒的文字；dueIntentions 自己的规矩（场合属性线索、对同一个人的冷却）照旧。对不上返回空的。
+ * @returns {number[]}
+ */
+function remindedOf(core, { key, at, people, selfId }) {
+  const open = core.store.all(`SELECT DISTINCT target_entity_id AS e FROM intentions WHERE state IN ('armed','formed') AND target_entity_id IS NOT NULL
+                               AND window_start IS NOT NULL AND window_start <= ? AND (window_end IS NULL OR window_end >= ?)`, at, at)
+    .map((r) => r.e).filter((e) => Number.isSafeInteger(e) && e !== selfId);
+  const here = open.filter((e) => people.includes(e)
+    || !!core.store.get('SELECT 1 AS x FROM percepts WHERE setting_key = ? AND actor_entity_id = ? AND actor_self = 0 LIMIT 1', key, e));
+  if (!here.length) return [];
+  const due = (core.mods.encode.dueIntentions(core, { presentEntityIds: here, settingKey: key, at }) ?? [])
+    .filter((r) => here.includes(r?.target_entity_id) && Number.isFinite(r.window_start) && r.window_start <= at && !(Number.isFinite(r.window_end) && r.window_end < at))
+    .sort((x, y) => y.window_start - x.window_start);
+  return [...new Set(due.map((r) => r.target_entity_id))];
 }
 
 function personsFor(present, triggerEntityId, selfId, sent, cfg) {
@@ -1100,7 +1128,7 @@ function noteTurn(core, sessionId, key, triggers, focus, at, { self = false } = 
   st.turns ??= new Map();
   const ids = triggers.map((t) => t.entityId);
   const prev = st.turns.get(sessionId);
-  // 她自己开启的一轮（idle）：没有被回答的人，也不接上一轮的（D115）
+  // 她自己开启的一轮（idle；定时提醒到点，D144）：没有被回答的人，也不接上一轮的（D115）
   if (!self && prev && prev.settingKey === key && Number.isSafeInteger(prev.focusPerceptId)) {
     const spoke = core.store.get('SELECT 1 AS x FROM percepts WHERE setting_key = ? AND id > ? AND actor_self = 1 LIMIT 1', key, prev.focusPerceptId);
     if (!spoke) for (const e of prev.triggerEntityIds ?? []) if (!ids.includes(e)) ids.push(e);
