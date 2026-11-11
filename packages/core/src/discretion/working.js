@@ -16,6 +16,8 @@
 //     第一眼「是别人的事」、正文点了别人的名字都不再挡（改成标签「讲到了X」）；没有清晰度（gist）这一说。
 // 每条放进来的都对得上一行 appraisals（stage = 1，rule A4 / A5 / A1… / 第一段的规则，verdict share；reason 'working:<rule>:<origin>[:l]'），
 // 满足 §9.3.6「每条都对得上一次判定」；同样的情形沿用上一行，不每一轮都写一行新的。
+// 被回的那一句（D145，refs 里 replied: true）：他在回的那一句别人的话，另走一条更严的路（admitReplied）——第一段直接放行的才带，
+// 别的一律不带、也不算「挡在她心外」（不记分寸日志）。
 import { refOf, parseRef } from '../store/index.js';
 import { logRetentionDays } from '../config/defaults.js';
 
@@ -140,10 +142,11 @@ function workingRule(core, m, ev, trigEq, memo, matcher) {
 
 /**
  * 工作记忆的准入（discretion.admitWorking 的实现）。
- * refs 的每一项：ref、topicSim（和眼前这句话的话题相似度：只给 B1 豁免的「他就在这里提起了它」用）、open（他还开着的意图的来源行）。
+ * refs 的每一项：ref、topicSim（和眼前这句话的话题相似度：只给 B1 豁免的「他就在这里提起了它」用）、open（他还开着的意图的来源行）、
+ * replied（D145：这是他在回的那一句别人的话，见 admitReplied；返回的那一项也带 replied: true）。
  * 返回的每一项带 label（见文件头）、glance（done / pending / failed / none）、restricted（有叮嘱）、quote、tellerId、replaces。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{ref: string, topicSim?: number, open?: boolean}[]} refs
+ * @param {{ref: string, topicSim?: number, open?: boolean, replied?: boolean}[]} refs
  * @param {import('../core-types.js').DisclosureTarget} target
  * @returns {{items: object[], excluded: {ref: string, rule: string}[]}}
  */
@@ -198,6 +201,12 @@ export function admitWorking(core, refs, target) {
         ev = { decision: 'block', rule: 'error', notes: [] };
       }
       const w = ev.rule === 'missing' || ev.rule === 'error' ? null : workingRule(core, m, ev, trigEq, memo, matcher);
+      if (r.replied) {
+        const it = admitReplied(core, m, r, ev, w, g, target, tc, trigEq, memo);
+        if (it.item) out.items.push(it.item);
+        else { out.excluded.push({ ref: r.ref, rule: it.rule, replied: true, unassessed: !!ev?.norm?.unassessed }); metric(core, 'wm.excluded.replied'); }
+        continue;
+      }
       let rule;
       let limit = null;
       if (ev.decision === 'block') {
@@ -254,6 +263,52 @@ export function admitWorking(core, refs, target) {
   const fresh = logs.filter((lg) => onceLogged(core, target, lg));
   if (fresh.length && !core.store.closed) soft(core, 'wm.log', () => core.store.tx(() => { for (const { version, ...lg } of fresh) logDecision(core, lg); }), null);
   return out;
+}
+
+/**
+ * 被回的那一句（D145，refs 里 replied: true 的一项）：他在回的那一句别人的话。它不是他的话，A4 / A5 和 B1 豁免都不适用；
+ * 能不能带进来只看关口①第一段对这个目标的结论——第一段直接放行（pass）的才带；要第二段判、要降成说个大概（cap）、被挡（block）的
+ * 都不带（工作记忆不等模型），给第三方的敏感私事（sensitiveOther）、叮嘱里被点名的人的关系人在这里（namedDeny）、有叮嘱
+ * （explicitLimit）、她自己的猜测 / 私下读到的、转来的材料也不带。不带的只回 excluded（rule 'replied:<原因>'），不记分寸日志：
+ * 这句话不是被挡在她心外，只是没跟着他那一句进工作记忆（普通回想照常可能想起它）。
+ * 带进来的写一行 stage 1 的判定（rule 是第一段放行的那条，reason 'working:replied:<rule>:<origin>'，同样的情形沿用上一行），
+ * label 照 labelTags 那一套：tellerId 是说这一句的人（渲染时写成「甲：……」），没有 hearsay（不是他转述的）。
+ * @returns {{item?: object, rule?: string}}
+ */
+function admitReplied(core, m, r, ev, w, g, target, tc, trigEq, memo) {
+  if (m.kind !== 'percept') return { rule: 'replied:not-percept' };
+  if (ev.decision !== 'pass') return { rule: `replied:${ev.decision ?? 'block'}` };
+  if (ev.sensitiveOther) return { rule: 'replied:sensitive-other' };
+  if (ev.namedDeny) return { rule: 'replied:named-deny' };
+  if (!w || w.why === 'missing') return { rule: 'replied:missing' };
+  if (w.selfOnly) return { rule: 'replied:self-only' };
+  if (w.material) return { rule: 'replied:material' };
+  if (w.rule) return { rule: `replied:${w.rule}` };   // 其实是他（或她回他）的话：不该作为被回的一句另带
+  if (explicitLimit(core, m, g, memo)) return { rule: 'replied:limit' };
+  const a = target.audience;
+  const n = ev.norm ?? {};
+  const p = (ev.facts ?? memoryFacts(core, m, memo))?.percept ?? null;
+  if (!p || p.actor_self || p.actor_entity_id == null || trigEq.has(p.actor_entity_id)) return { rule: 'replied:not-other' };
+  const one = (n.originExposure?.exposureRank ?? 0) <= 0;
+  const origin = one ? 'one-on-one' : 'group';
+  const label = {
+    origin, place: p.setting_key ?? null, at: p.at ?? null, tellerId: p.actor_entity_id, limit: null, ownerVague: false,
+    mentions: (w.mentions ?? []).slice(0, 3), selfOnly: null, hearsay: null, open: false, replied: true,
+  };
+  const row = {
+    stage: 1, rule: ev.rule, memoryKind: m.kind, memoryId: m.id, settingKey: a.settingKey, normVersion: n.version ?? null,
+    snapshotId: a.snapshotId, taint: target.taint, triggerClass: tc, verdict: 'share', reason: `working:replied:${ev.rule}:${origin}`,
+  };
+  const id = reuseAppraisal(core, row) ?? writeAppraisal(core, row);
+  metric(core, 'wm.replied.admitted');
+  return {
+    item: {
+      ref: refOf(m.kind, m.id), verdict: 'share', vagueText: null, hintOk: false, appraisalRef: `ap${id}`, stage: 1, rule: ev.rule,
+      unassessed: !!n.unassessed, newKnowers: ev.N?.empty ? 0 : (Number.isFinite(ev.N?.count) ? ev.N.count : -1),
+      glance: glanceState(g), restricted: false, tellerId: p.actor_entity_id, originRank: n.originExposure?.exposureRank ?? 0,
+      quote: null, replaces: null, label, replied: true,
+    },
+  };
 }
 
 /**

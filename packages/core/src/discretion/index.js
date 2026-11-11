@@ -325,8 +325,11 @@ export async function gate(core, candidates, target, opt) {
  * 每条放进来的对得上一行 appraisals（stage 1、verdict share；reason 'working:<rule>:<origin>[:l]'，同样的情形沿用上一行），
  * 返回的 appraisalRef 指向它（§9.3.6）；被挡下的记 discretion_log（reason 'wm-excluded:<rule>'；同一条同一个原因每个会话只记一次）。
  * 还 pending 而这个进程里没有在看的第一眼顺手重新排上。只读库：什么都不放（写不了判定记录）。
+ * 【D145】refs 里 replied: true 的一项是他在回的那一句别人的话：不走 A4 / A5、没有 B1 豁免，第一段直接放行（pass）而且没有
+ * sensitiveOther / namedDeny / 叮嘱、不是她的猜测或材料的才带进来（label.tellerId 是说这一句的人，没有 hearsay；判定行 reason
+ * 'working:replied:<rule>:<origin>'，返回项带 replied: true）；其余只回 excluded（rule 'replied:<原因>'），不记分寸日志。
  * @param {import('../core-types.js').CoreContext} core
- * @param {{ref: string, topicSim?: number, open?: boolean}[]} refs
+ * @param {{ref: string, topicSim?: number, open?: boolean, replied?: boolean}[]} refs
  * @param {import('../core-types.js').DisclosureTarget} target
  * @returns {{items: import('../core-types.js').GatedItem[], excluded: {ref: string, rule: string, unassessed?: boolean}[]}}
  */

@@ -8,7 +8,7 @@
 // min(1, exp(B − B_焦点))（D110：一小时前的提醒带不偏话题，这不是时间窗）。
 // 段（units，D110）：在全部候选上按内容和结构切——开着的事（一件意图一段，成员是它的来源行）、约定的一串（thread：他定的玩法 / 约定是根，
 // 照着它做的一步经第一眼的 follows 追到根；第一眼 glance-2 以前的旧行、还在看的，按「接着的几句宽松 asks」逐句退回切，一句不算约定的话就断开）、
-// 其余的闲聊（talk）。每段带 core（根、她接下来的一两句、最后一步和她的回答；闲聊是最新的一两句）、段的激活 B_unit、两件代码比出来的事实：
+// 其余的闲聊（talk）。每段带 core（根、她接下来的一两句、最后一步和她的回答；闲聊是最新的一两句，加上切题的他的那一句，D145）、段的激活 B_unit、两件代码比出来的事实：
 // newerThanHere（这一段比他在这里跟你说过的都晚）、latestRoot（他最近一次跟你定的就是这一段的根：有自己后续的最新的根，后来的话题相似的
 // 一句才拿得走）。不认任何词。每段另带 hereAt（他在这里这一句之前最后一句话的时间，D113：context 按显示出来的行算「比他在这里说过的都晚」）。
 // 话题词里方括号的占位（［图片］［视频］［表情包:…］）不算（D113：媒体占位不是话题，原来两张图片「同一个话题」）；有看过的媒体的说明时
@@ -17,15 +17,23 @@
 // 她自己开口的一轮（D132）没有「眼前这个人」：context 按「这里的听众」取——recentPartners 给出她最近在别处来往过、又在这里的人
 // （听众名单里的、最近在这里说过话的，或者以前在这里说过话的：成员列不全的群里，半小时没开口的人照样是这里的人），
 // 每个人照样走 workingSet（focusPerceptId 为空：话题只拿他在这里最近的几句算）。
+// 他在回哪一句（D145）：他的一句话是在回别人时，这一行带上被回的那一句（repliedTo；只认结构，不解析文字）——这条消息带着回复 / 引用的
+// 目标（reply_to_key、quote_json）就是它；没有的话，是同一场合里紧挨在他这句前面的、别人亲口说的那一句（往前数 recall.working.repliedScan
+// 条以内，中间只隔着她的话也算；他连着说的几句不算数，共用前面那一句）。对她说的话（to-her / mentions-her）不猜。被回的是她说的、
+// 他自己说的就不另带。被回的那一句不是候选行：不参与 A、排名和切段，只在算他这一行的话题相似度时把它的词并进来（他回的话继承
+// 被回那句的话题）；带不带进她心里由 discretion.admitWorking 按第一段判（replied），怎么摆由 context 定。
+// 闲聊段的 core 另加「和眼前话题最相近的他的那一句」（topicSim ≥ recall.working.onTopicMin，D145）。
 import { safe, selfId, metric } from './util.js';
 
-const COLS = 'id, setting_key, at, actor_entity_id, actor_self, kind, text, w_enc, visible_to, addressed, mentions_json, media_json';
+const COLS = 'id, adapter, setting_key, at, actor_entity_id, actor_self, kind, text, w_enc, visible_to, addressed, mentions_json, media_json, reply_to_key, quote_json';
 const TRIGGER_KINDS = ['utterance', 'action'];
 const SELF_KINDS = ['self-utterance', 'self-action'];
 // 编码强度为 0（没有痕迹）的那一行的 B：排在有痕迹的后面，但仍是可比较的数（和 routes.js 的 STRENGTH_FLOOR 同一个哨兵值，不是可调的参数）
 const STRENGTH_FLOOR = -10;
 // 沿 follows 往回追最多几跳（防环；不是可调的参数）
 const MAX_HOPS = 8;
+// 找被回的那一句时一次往前读几倍 repliedScan 条（他连着说的几句不算数，要多读一些；只是一次查询的上限，不是可调的参数）
+const REPLIED_READ = 4;
 
 /**
  * @typedef {object} WorkingLine
@@ -47,6 +55,18 @@ const MAX_HOPS = 8;
  * @property {boolean} anchor             是某一段的 core
  * @property {string} exchange            同一段一来一回的粗分标识（场合 + 开头那一行的 id）
  * @property {string|null} unitKey        所在的段（WorkingUnit.key）
+ * @property {string|null} repliedTo      他这一句在回的那一句别人的话（'p<id>'，D145；她的话、没认出来的是 null）
+ */
+
+/**
+ * @typedef {object} RepliedLine           被回的那一句（D145；不是候选行，只跟着回它的那几行走）
+ * @property {string} ref
+ * @property {number} perceptId
+ * @property {string} settingKey
+ * @property {number} at
+ * @property {number|null} actorEntityId   说这一句的人
+ * @property {string} text
+ * @property {string[]} by                 回它的那几行（他的话的引用）
  */
 
 /**
@@ -78,14 +98,15 @@ const MAX_HOPS = 8;
  * @param {{settingKey: string, focusPerceptId?: number|null}} q
  * @param {{triggerEntityId: number|null, at?: number}} opt
  * @returns {{triggerEntityId: number|null, people: number[], lines: WorkingLine[], units: WorkingUnit[], candidates: number, aboveTau: number,
- *   lastHereAt: number|null}}  lastHereAt：他在这里（这一句之前）最后一句话的时间（D113）
+ *   lastHereAt: number|null, replied: RepliedLine[]}}  lastHereAt：他在这里（这一句之前）最后一句话的时间（D113）；
+ *   replied：lines 里他的话在回的那几句别人的话（D145）
  */
 export function workingSet(core, q, opt = {}) {
   const cfg = core.config.get();
   const W = cfg.recall.working;
   const at = Number.isFinite(opt.at) ? opt.at : core.now();
   const trig = Number.isSafeInteger(opt.triggerEntityId) ? opt.triggerEntityId : null;
-  const out = { triggerEntityId: trig, people: [], lines: [], units: [], candidates: 0, aboveTau: 0, lastHereAt: null };
+  const out = { triggerEntityId: trig, people: [], lines: [], units: [], candidates: 0, aboveTau: 0, lastHereAt: null, replied: [] };
   if (!W?.enabled || trig == null || typeof q?.settingKey !== 'string' || !q.settingKey) return out;
   const me = selfId(core);
   if (trig === me) return out;
@@ -158,13 +179,32 @@ export function workingSet(core, q, opt = {}) {
   for (const list of seq.values()) list.sort((x, y) => x.perceptId - y.perceptId);
   out.candidates = lines.size;
 
-  // 4. 话题相似度：触发者这一句 + 他在这里最近的几行（按激活加权；别人的话不参与）；另算只拿他这一句的（段的激活用）
+  // 3b. 他在回哪一句（D145，只认结构）：被回的那一句不是候选行，只记在回它的那一行上
+  const replied = new Map();   // 被回的那一句的感知 id → RepliedLine（带 row：话题用）
+  for (const l of lines.values()) {
+    l.repliedTo = null;
+    if (l.role !== 'trigger') continue;
+    const t = repliedTarget(core, rows.get(l.perceptId), people, W);
+    if (!t) continue;
+    l.repliedTo = `p${t.id}`;
+    if (!replied.has(t.id)) {
+      replied.set(t.id, { ref: `p${t.id}`, perceptId: t.id, settingKey: t.setting_key, at: t.at, actorEntityId: t.actor_entity_id ?? null,
+        text: String(t.text ?? ''), by: [], row: { id: t.id, text: t.text, addressed: t.addressed, mentions_json: t.mentions_json ?? null } });
+    }
+    replied.get(t.id).by.push(l.ref);
+  }
+
+  // 4. 话题相似度：触发者这一句 + 他在这里最近的几行（按激活加权；别人的话不参与）；另算只拿他这一句的（段的激活用）。
+  //    他回别人的那一行把被回那一句的词并进来（D145：「没做」本身和后来问起的那件事没有共同的词，共同的词在被回的那一句里）
   const herNames = ownNames(core);
   const topic = topicTerms(core, here, people, q.focusPerceptId, herNames, W, at);
   const focusOnly = focusTerms(core, here, people, q.focusPerceptId, herNames);
   for (const l of lines.values()) {
-    l.topicSim = topic.size ? similarity(core, topic, l.row, herNames) : 0;
-    l.focusSim = focusOnly.size ? similarity(core, focusOnly, l.row, herNames) : 0;
+    const rp = l.repliedTo ? replied.get(Number(l.repliedTo.slice(1)))?.row : null;
+    const terms = termsOf(core, l.row, herNames);
+    if (rp) for (const w of termsOf(core, rp, herNames)) terms.add(w);
+    l.topicSim = topic.size ? simOfTerms(topic, terms) : 0;
+    l.focusSim = focusOnly.size ? simOfTerms(focusOnly, terms) : 0;
   }
 
   // 5. 活跃度：基础激活 B + 各项（确定的，不抽样）。openBoost 只给意图的来源行（D110：她回他的那一句不再沾光——一小时前的提醒
@@ -241,6 +281,10 @@ export function workingSet(core, q, opt = {}) {
   }
   out.units = kept;
   out.lines = [...pick.values()].map(({ row, ...l }) => ({ ...l, context: l.context ?? [], primary: !!l.primary, anchor: !!l.anchor, unitKey: l.unitKey ?? null }));
+  // 被回的那几句：只给出现在 lines 里的行在回的
+  const shown = new Set(out.lines.map((l) => l.ref));
+  out.replied = [...replied.values()].map(({ row, by, ...r }) => ({ ...r, by: by.filter((x) => shown.has(x)) })).filter((r) => r.by.length);
+  if (out.replied.length) metric(core, 'retrieve.working.replied', out.replied.length);
   if (kept.some((u) => u.fallback)) metric(core, 'retrieve.working.unitFallback');
   metric(core, 'retrieve.working.sets');
   return out;
@@ -431,7 +475,12 @@ function buildUnits(core, { lines, exchanges, openIntents, overdueOf, gl, W, her
       const first = ls.find((l) => l.role === 'trigger') ?? ls[0];
       const lastHis = [...ls].reverse().find((l) => l.role === 'trigger') ?? ls.at(-1);
       u.root = first.role === 'trigger' ? first.ref : null;
-      u.core = [...new Set([lastHis.ref, ls.at(-1).ref])];
+      // 加上和眼前话题最相近的他的那一句（D145）：几十句的闲聊里切题的那一句不是最新的，只留最新的一两句它就被省掉了。
+      // 相似度过了 onTopicMin 才加（和 B1 豁免「他就在这里提起了它」同一个口径），没过就和原来一样
+      const onTopicMin = Number.isFinite(W.onTopicMin) ? W.onTopicMin : 0.35;
+      const onTopic = ls.filter((l) => l.role === 'trigger' && (l.topicSim ?? 0) >= onTopicMin)
+        .sort((x, y) => y.topicSim - x.topicSim || y.perceptId - x.perceptId)[0] ?? null;
+      u.core = [...new Set([lastHis.ref, ls.at(-1).ref, ...(onTopic ? [onTopic.ref] : [])])];
       continue;
     }
     // thread：根；根之后她的前 acceptLines 句；最后一步和她紧接着的回答；根改掉了的那一句（准入了才出现，见 context）
@@ -500,6 +549,54 @@ function representative(ms) {
   const list = his.length ? his : ms;
   const score = (l) => String(l.text ?? '').replace(PLACEHOLDER, '').trim().length;
   return [...list].sort((x, y) => score(y) - score(x) || y.perceptId - x.perceptId)[0];
+}
+
+/**
+ * 他这一句在回哪一句别人的话（D145，只认结构，不解析文字）。r 是他这一行的感知（带 adapter、reply_to_key、quote_json）。
+ *   - 带着回复 / 引用的目标：就是那一条（回复优先，其次引用）；要在同一场合、是别人（不是她、不是他）亲口说的、还在的话，否则不另带。
+ *     有目标就只认目标，不再猜「紧挨在前面的那一句」；目标读不到（还没入库、删掉了）也不猜。
+ *   - 没有目标、又不是对她说的：同一场合里往前数 recall.working.repliedScan 条以内（她的话算数；他自己连着说的几句不算数，
+ *     几句共用前面那一句），第一条别人说的话——是亲口说的、还在的就是它；碰到别的（转来的材料、撤回了的……）就不另带。
+ * @returns {object|null}  被回的那一行（percepts 的行）
+ */
+function repliedTarget(core, r, people, W) {
+  if (!r) return null;
+  const ok = (x) => !!x && x.setting_key === r.setting_key && !x.actor_self && x.actor_entity_id != null && !people.includes(x.actor_entity_id)
+    && TRIGGER_KINDS.includes(x.kind) && x.text != null && x.standing !== 'material' && x.visible_to !== 'her-only'
+    && !['retracted', 'expired'].includes(x.text_state);
+  const cols = `${COLS}, standing, text_state`;
+  let key = r.reply_to_key ?? null;
+  let qid = null;
+  if (!key && r.quote_json) {
+    let qj = null;
+    try { qj = JSON.parse(r.quote_json); } catch { qj = null; }
+    if (qj && typeof qj === 'object') {
+      if (Number.isSafeInteger(qj.perceptId)) qid = qj.perceptId;
+      else if (typeof qj.obsKey === 'string') key = qj.obsKey;
+      else return null;   // 引用了一条，但认不出是哪一条（彻底删除过的）：不猜
+    }
+  }
+  if (key || qid != null) {
+    const x = safe(core, 'workingRepliedTo', () => (qid != null
+      ? core.store.get(`SELECT ${cols} FROM percepts WHERE id = ?`, qid)
+      : core.store.get(`SELECT ${cols} FROM percepts WHERE adapter = ? AND ext_key = ?`, r.adapter, key)), null);
+    return ok(x) ? x : null;
+  }
+  if (r.addressed === 'to-her' || r.addressed === 'mentions-her') return null;
+  const scan = Math.max(0, Math.floor(W.repliedScan ?? 4));
+  if (!scan) return null;
+  const before = safe(core, 'workingRepliedNear', () => core.store.all(
+    `SELECT ${cols} FROM percepts WHERE setting_key = ? AND id < ? ORDER BY id DESC LIMIT ?`, r.setting_key, r.id, scan * REPLIED_READ), []) ?? [];
+  let n = 0;
+  for (const x of before) {
+    if (!x.actor_self && people.includes(x.actor_entity_id)) continue;   // 他自己连着说的几句：共用前面那一句
+    if (n >= scan) break;
+    n += 1;
+    if (x.actor_self) continue;                                           // 中间只隔着她的话也算
+    if (x.visible_to === 'her-only' && x.kind === 'content') continue;    // 她私下读到的材料不算
+    return ok(x) ? x : null;
+  }
+  return null;
 }
 
 function isHere(core, id, here) {
@@ -661,7 +758,11 @@ function topicTerms(core, here, people, focusId, own, W, at) {
  * 也不算多像。topic 可以是 词 → 权重 的 Map，也可以是词的 Set（权重都是 1）。
  */
 export function similarity(core, topic, row, own) {
-  const t = termsOf(core, row, own);
+  return simOfTerms(topic, termsOf(core, row, own));
+}
+
+/** similarity 的后半段：已经取好的词 t（Set）和话题比。 */
+function simOfTerms(topic, t) {
   if (!t.size || !topic.size) return 0;
   const weight = (w) => (topic instanceof Map ? topic.get(w) ?? 0 : topic.has(w) ? 1 : 0);
   let n = 0;

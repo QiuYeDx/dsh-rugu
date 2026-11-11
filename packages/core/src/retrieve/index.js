@@ -220,16 +220,20 @@ export async function backgroundForExtraction(core, seg, opt) { return backgroun
  * units（D110）：在全部候选上切的段——open（一件开着的意图，成员是它的来源行）、thread（约定的一串：根是他的 asks、照着做的一步经 follows
  * 追到根；第一眼 glance-2 以前的旧行按连续几句宽松 asks 退回切，fallback）、talk（其余），每段带 core、B（成员 B 的最大值 + cueWeight × 他这一句
  * 的话题相似度的最大值）、newerThanHere、latestRoot、replacedRef；有成员 A ≥ tau 的段（和开着的事）才返回，lines 含它们的全部成员。
+ * 【D145】他的一句话在回别人时，这一行带 repliedTo（被回的那一句：回复 / 引用的目标，没有的话是同一场合往前 recall.working.repliedScan
+ * 条以内、中间只隔着她的话或他自己连着说的几句的第一条别人亲口说的话；对她说的话不猜），replied 列出这几句（原话、时间、说的人、
+ * 回它的那几行）。被回的那一句不是候选行，只在算他这一行的话题相似度时把它的词并进来；闲聊段的 core 另加话题相似度 ≥ onTopicMin
+ * 的他的那一句（最相近的一句）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string, focusPerceptId?: number|null}} cues
  * @param {{triggerEntityId: number|null, at?: number}} opt
- * @returns {{triggerEntityId: number|null, people: number[], lines: object[], units: object[], candidates: number, aboveTau: number}}
+ * @returns {{triggerEntityId: number|null, people: number[], lines: object[], units: object[], candidates: number, aboveTau: number, replied: object[]}}
  */
 export function workingSet(core, cues, opt) {
   try { return workingSetImpl(core, cues, opt ?? {}); } catch (e) {
     metric(core, 'retrieve.working.error');
     log(core, 'warn', 'retrieve.working.failed', { error: errKind(e) });
-    return { triggerEntityId: opt?.triggerEntityId ?? null, people: [], lines: [], units: [], candidates: 0, aboveTau: 0 };
+    return { triggerEntityId: opt?.triggerEntityId ?? null, people: [], lines: [], units: [], candidates: 0, aboveTau: 0, replied: [] };
   }
 }
 
