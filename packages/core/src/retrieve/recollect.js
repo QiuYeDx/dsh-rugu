@@ -170,13 +170,16 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
   const global = Array.isArray(set.items) ? set.items : [];
   const cap = Math.max(tier.maxItems, Math.floor(tier.maxItems * Math.max(1, Number(R.poolFactor) || 2)));
   const windows = intent?.timeWindows ?? [];
+  // 形状判断不出来、话里又没有时间：不是在问「那段时间的经过」，按一件具体的事走（细节为主，经过只留几行定位）。
+  // 原来一律各一半：问「那家店的东西怎么样」这种话，答案被十几行经过压到了后面（尺子上从第 1 条掉到第 25 条）
+  const shape = intent?.shape ?? (windows.length ? null : 'point');
   let segments = [];
   let items = global;
   if (inScope.length) {
     try {
       const span = spanOf(scope.rows, windows, core.now());
       segments = span && windows.length ? cutSpan(span, Math.max(1, Math.floor(Number(R.segments) || 6)), scope.rows) : [];
-      const ordered = arrange(inScope, { shape: intent?.shape ?? null, segments, n: tier.maxItems });
+      const ordered = arrange(inScope, { shape, segments, n: tier.maxItems });
       const inSet = new Set(ordered.map((c) => c.ref));
       const rest = global.filter((c) => !inSet.has(c.ref));
       const keepScoped = Math.min(ordered.length, Math.max(0, cap - Math.min(rest.length, Math.floor(cap / 4))));
@@ -201,11 +204,11 @@ export async function recollect(core, s, opt, { entry = null, fresh = null } = {
   let outlineChars = 0;
   if (scoped && !fallback) {
     try {
-      const share = shareOf(O.share, intent?.shape);
+      const share = shareOf(O.share, shape);
       outlineChars = Math.round(tier.totalChars * share);
       const per = Math.max(30, Math.round((Number(O.lineChars) || 80) * 0.8));
       let lines = Math.max(1, Math.ceil(outlineChars / per));
-      if (intent?.shape === 'point') lines = Math.min(lines, Math.max(1, Math.floor(Number(O.pointLines) || 5)));
+      if (shape === 'point') lines = Math.min(lines, Math.max(1, Math.floor(Number(O.pointLines) || 5)));
       const pool = Math.ceil(lines * Math.max(1, Number(O.poolFactor) || 1.5));
       const ranks = new Map(inScope.map((c) => [c.ref, c.scopeRank]));
       const span = spanOf(scope.rows, windows, core.now());
