@@ -53,6 +53,8 @@ function usageOf(core, since) {
   const inj = new Map();
   for (const r of core.store.all('SELECT items_json FROM injections WHERE ts >= ? ORDER BY id DESC LIMIT 5000', since)) {
     for (const it of safeJson(r.items_json, [])) {
+      // 指回去的那一行（D146）不算又注入了一次：同一条本周期早先已经算过
+      if (it?.layer === 'pointBack') continue;
       const id = typeof it?.id === 'string' ? parseRef(it.id) : null;
       if (id?.kind === 'assertion') inj.set(id.id, (inj.get(id.id) ?? 0) + 1);
     }

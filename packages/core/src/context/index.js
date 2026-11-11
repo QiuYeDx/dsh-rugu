@@ -90,6 +90,8 @@ export function coreBlock(core, settingId) {
  * recall()：retrieve.recall 取候选 → discretion.targetFor + gate → 分层（recalled / awarePrivate / recentFromPresent，
  * 加本模块自己组的 people / todaySoFar / gap / warmStart / intentions）→ retrieve.render → 去掉这个会话本周期已发过的
  * （sessions.sent_items_json）→ 按 opt.budgetChars 和 config.context.layers 打包。返回的每条都有 appraisalRef。
+ * 别人直接对她说的话开启的一轮，回想排在这一轮新给的前面的条目本周期已经给过时，加一层 pointBack：那一条的一行「指回去」
+ * （沿用这一轮对它的判定，D146；config.context.pointBack）。
  * 场合关着（admin.modeFor = off）就不算、返回 null；开着就照常给，说不说已经由关口①逐条判断过（没有影子档了，用户反馈第 6 轮）。
  * 在聊天路径上：任何依赖出错都只降级（少给或不给），不抛错。
  * @param {import('../core-types.js').CoreContext} core

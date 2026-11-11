@@ -14,6 +14,8 @@ export const WORKING_TITLES = Object.freeze({
   // 只讲这一段是干什么的、标签什么意思（他最新的说法算数；「私下」「当着那边的人」= 这里有人当时没听到），说不说由她掂量
   purpose: '眼前这个人在别处跟你说的、你回他的：让你接着那件事往下聊。他最新的说法是现在算数的（比这里更早的聊天记录新）；标着「私下」「当着那边的人」的，是这里有人当时没听到。',
 });
+/** 「指回去」那一节的小标题（D146）：两种写法一样，只说这是什么。 */
+export const POINT_BACK_TITLE = '跟这句话最有关的，前面已经想起过（往上看）：';
 /** 写法 → 块头 / 工具结果的头（不认识的按 guided）。 */
 export const headsFor = (style) => (style === 'purpose'
   ? { block: BLOCK_HEAD_PURPOSE, tool: TOOL_HEAD_PURPOSE, working: WORKING_TITLES.purpose }
@@ -27,6 +29,9 @@ const BASE_SECTIONS = [
   // 用法说明是通用的（D110）：跟他定好的事跟着人走，同一件事以最新的为准；不认任何词，例子都不写。每一轮都占字数，写短（评审）
   // 小标题按写法换（D125，WORKING_TITLES）；这里是默认的「详细指引」
   { layers: ['working'], title: WORKING_TITLES.guided, max: 320 },
+  // 指回去（D146）：被直接追问、最相关的那条前面已经给过时，核心给一行（那一条的来源说法和内容的开头，已经截短）。
+  // 紧跟在工作记忆后面、单独一个小标题：要显眼，又不和这一轮新想起来的混在一起
+  { layers: ['pointBack'], title: POINT_BACK_TITLE, max: 100 },
   { layers: ['warmStart'], title: '最近在这里聊到的：', max: 250 },
   { layers: ['people'], title: '人：', max: 180 },
   { layers: ['recentFromPresent'], title: '在场的人最近：', max: 200 },
@@ -39,8 +44,9 @@ const BASE_SECTIONS = [
 
 const itemText = (it, max) => clip(sanitizeForPrompt(it?.rendered ?? ''), max);
 
-/** 字数紧时谁先拿到（和核心 pack 的优先级同一个口径，D108）：你想着的 > 工作记忆 > 时间间隔 > 她的经验（D124）> 其余按展示顺序。 */
-const ALLOC_ORDER = ['intentions', 'working', 'gap', 'lessons'];
+/** 字数紧时谁先拿到（和核心 pack 的优先级同一个口径，D108）：你想着的 > 工作记忆 > 时间间隔 > 她的经验（D124）> 指回去（D146）> 其余按展示顺序。 */
+// 指回去（D146）排在她的经验后面：只有一两行，又是这一轮最相关的
+const ALLOC_ORDER = ['intentions', 'working', 'gap', 'lessons', 'pointBack'];
 
 /**
  * 先按优先级分字数（你想着的、工作记忆、时间间隔先拿；工作记忆里最新的先拿），再按 SECTIONS 的展示顺序排出来。

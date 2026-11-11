@@ -98,13 +98,13 @@ test('启动自检的一行：今天出错几处（按步骤）、整轮什么�
 test('管理页的诊断（recallHealthRow）：只留数字、步骤名、错误类型和代码位置；多给的字段（万一带了内容）不出去', () => {
   const row = recallHealthRow({
     days: [{ day: '2026-11-06', recalls: 3, errors: 1, legacyErrors: 37, partial: 1, lost: 0, byStage: { render: 1, '坏 键': 2 }, byCode: { 'render.TypeError': 1 }, ms: { le300: 3 },
-      host: { timeout: 1, wait: { le4500: 1 } }, embed: { retry: 1 }, inject: { overDay: 2, overRolling: 0, budgetDropped: 5 }, text: '不该出现的内容' }],
+      host: { timeout: 1, wait: { le4500: 1 } }, embed: { retry: 1 }, inject: { overDay: 2, overRolling: 0, budgetDropped: 5, pointBack: 3 }, text: '不该出现的内容' }],
     recent: [{ at: 1, stage: 'render', code: 'TypeError', frame: 'context/recall.js:700', layer: 'recalled', rendered: '不该出现的内容' }],
     buckets: ['le300'],
     injectBudget: [{ session: 'sess-aaaa-1111', adapter: 'zz', dayUsed: 1200, dayLimit: 40_000, rollingUsed: 300, rollingLimit: null, steps: 12, rendered: '不该出现的内容' }],
   });
   // 【D133】注入预算：每天的计数、各会话的已用 / 上限（会话 id 截成前 8 位，多给的字段不出去）
-  assert.deepEqual(row.days[0].inject, { overDay: 2, overRolling: 0, budgetDropped: 5 });
+  assert.deepEqual(row.days[0].inject, { overDay: 2, overRolling: 0, budgetDropped: 5, pointBack: 3 });
   assert.deepEqual(row.injectBudget, [{ session: 'sess-aaa', adapter: 'zz', dayUsed: 1200, dayLimit: 40_000, rollingUsed: 300, rollingLimit: null, steps: 12 }]);
   assert.deepEqual(row.days[0].byStage, { render: 1 });
   assert.equal(row.days[0].legacyErrors, 37);

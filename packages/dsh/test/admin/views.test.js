@@ -332,7 +332,7 @@ test('花费护栏的数据：三档每一项的值（每天输出按宿主每�
   assert.deepEqual(v.keys, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
     'injectShare', 'injectPerSessionPerDay']);
   assert.deepEqual(v.presets.loose, { dailyCalls: 3000, dailyUncachedTokens: 5_000_000, dailyOutputTokens: 1_000_000, perSourceShare: 0.5, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.25, injectPerSessionPerDay: 40_000 });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.25, injectPerSessionPerDay: null });
   assert.deepEqual(v.presets.unlimited, { dailyCalls: null, dailyUncachedTokens: null, dailyOutputTokens: null, perSourceShare: 1, mainChatRatioCap: null,
     balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null });
   // 注入预算（D133）：节省档是原来的数

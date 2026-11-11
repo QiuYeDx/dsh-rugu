@@ -231,12 +231,12 @@ test('预算（D121）：budget.overrides 只认那几个键、每个按自己�
   assert.match(mergeConfig(DEFAULTS, { budget: { overrides: [] } }).warnings[0], /应为对象/);
 });
 
-test('注入预算跟着花费档位（D133）：宽松 25% / 4 万字，节省 5% / 8000 字（原来的数），不设上限都是 null（不限）', () => {
+test('注入预算跟着花费档位（D133）：宽松 25% / 每天不限（D147），节省 5% / 8000 字（原来的数），不设上限都是 null（不限）', () => {
   const at = (preset) => budgetLimits(mergeConfig(DEFAULTS, { budget: { preset } }).config);
-  assert.deepEqual([at('loose').injectShare, at('loose').injectPerSessionPerDay], [0.25, 40_000]);
+  assert.deepEqual([at('loose').injectShare, at('loose').injectPerSessionPerDay], [0.25, null]);
   assert.deepEqual([at('saving').injectShare, at('saving').injectPerSessionPerDay], [0.05, 8000]);
   assert.deepEqual([at('unlimited').injectShare, at('unlimited').injectPerSessionPerDay], [null, null]);
-  assert.deepEqual([budgetLimits(DEFAULTS).injectShare, budgetLimits(DEFAULTS).injectPerSessionPerDay], [0.25, 40_000], '默认宽松');
+  assert.deepEqual([budgetLimits(DEFAULTS).injectShare, budgetLimits(DEFAULTS).injectPerSessionPerDay], [0.25, null], '默认宽松');
   // 自定义：单独改、单独设成不限
   const o = budgetLimits(mergeConfig(DEFAULTS, { budget: { preset: 'saving', overrides: { injectShare: 0.1, injectPerSessionPerDay: null } } }).config);
   assert.deepEqual([o.injectShare, o.injectPerSessionPerDay, o.sleepDepth], [0.1, null, 'essential']);
@@ -252,5 +252,5 @@ test('注入预算跟着花费档位（D133）：宽松 25% / 4 万字，节省 
   const old = mergeConfig(DEFAULTS, { context: { rolling: { steps: 30, maxShare: 0.01 }, perSessionPerDay: 100 } });
   assert.deepEqual(old.warnings, []);
   assert.equal(old.config.context.rolling.steps, 30, '滚动窗口的步数照旧有效');
-  assert.equal(budgetLimits(old.config).injectPerSessionPerDay, 40_000);
+  assert.equal(budgetLimits(old.config).injectPerSessionPerDay, null);
 });

@@ -330,13 +330,13 @@ export function makeFakePm(o = {}) {
           days: [
             { day: '2026-11-04', recalls: 153, errors: 3, legacyErrors: 37, partial: 3, lost: 0, byStage: { 'working-select': 2, retrieve: 1 }, byCode: { 'working-select.TypeError': 2, 'retrieve.Timeout': 1 },
               ms: { le300: 131, le800: 15, le1500: 5, le3000: 2 }, host: { ok: 150, timeout: 2, error: 1, aborted: 0, cachedServed: 3, wait: { le300: 140, le800: 9, le1500: 1, le4500: 3 } },
-              embed: { query: 1290, failed: 6, timeout: 4, late: 4, retry: 2, retryOk: 2 }, inject: { overDay: 0, overRolling: 4, budgetDropped: 11 } },
+              embed: { query: 1290, failed: 6, timeout: 4, late: 4, retry: 2, retryOk: 2 }, inject: { overDay: 0, overRolling: 4, budgetDropped: 11, pointBack: 6, pointBackCapped: 1 } },
             { day: '2026-11-03', recalls: 100, errors: 0, partial: 0, lost: 0, byStage: {}, byCode: {}, ms: { le300: 100 }, host: { ok: 100 }, embed: {} },
           ],
           // D133：各活跃会话的注入预算（编的）
           injectBudget: [
             { session: 'sess-a1b2', adapter: 'zz', dayUsed: 12_400, dayLimit: 40_000, rollingUsed: 2_310, rollingLimit: 2_250, steps: 51 },
-            { session: 'sess-c3d4', adapter: 'zz', dayUsed: 900, dayLimit: 40_000, rollingUsed: 0, rollingLimit: null, steps: 7 },
+            { session: 'sess-c3d4', adapter: 'zz', dayUsed: 900, dayLimit: null, rollingUsed: 0, rollingLimit: null, steps: 7 },
           ],
           recent: [
             { at: now - 40 * 60_000, stage: 'host.timeout', code: 'Timeout', frame: null, trigger: 'message', level: null, waitedMs: 4300, served: 4 },
