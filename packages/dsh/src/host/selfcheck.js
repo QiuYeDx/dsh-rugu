@@ -108,7 +108,7 @@ export async function runSelfCheck(d) {
   const agents = d.ctxGet('agents');
   add('host.agents', 'host', typeof agents?.list === 'function' ? 'ok' : 'warn', typeof agents?.list === 'function' ? 'agents.list 可用' : '拿不到 agents 服务：插件重载后要等新建的会话才有记忆工具');
   const llm = d.ctxGet('llm');
-  add('host.llm', 'host', typeof llm?.stream === 'function' ? 'ok' : 'fail', typeof llm?.stream === 'function' ? 'ctx.llm.stream 可用' : '宿主没有模型服务：提炼、评估、审视都做不了（外发按 fail closed）',
+  add('host.llm', 'host', typeof llm?.stream === 'function' ? 'ok' : 'fail', typeof llm?.stream === 'function' ? 'ctx.llm.stream 可用' : '宿主没有模型服务：提炼、评估、审视都做不了（往公开的地方说的改口；群里、私聊不需要模型审，照常）',
     typeof llm?.stream === 'function' ? {} : { disables: ['background-llm'] });
   add('host.defineTool', 'host', d.defineToolAvailable ? 'ok' : 'warn', d.defineToolAvailable ? '@deepseek-ai/dsh-tools 的 defineTool 可用' : '找不到 defineTool：记忆工具没注册', d.defineToolAvailable ? {} : { disables: ['tools'] });
   // D112：插件自己的 Agent 预设（新建任务的下拉里那一项）。不合格不关任何东西：只是告诉主人「选不了 / 用的是精简副本」
@@ -268,7 +268,7 @@ export async function runSelfCheck(d) {
   const frozen = h.features?.freeze !== false;
   add('bridge.freeze', 'bridge', frozen && d.registered.preExecute ? 'ok' : 'warn', frozen && d.registered.preExecute ? `桥接自带的记忆已冻结：拒绝 ${(h.freeze?.tools ?? []).join('、')} 的写入` : '桥接自带的记忆没冻结');
   const un = d.tooltable?.status?.().unclassified ?? [];
-  if (un.length) add('tools.unclassified', 'adapters', 'warn', `有 ${un.length} 个工具没有分类（记忆开着的场合带长文本会被拒绝）：${un.slice(0, 5).map((x) => x.tool).join('、')}`, { hint: '让对应的适配器声明它（最好）；或者在配置文件的 host.egress.extraTools 里补分类：补成说话类的一律送审（审不了就不说），标成不说话要在管理页确认' });
+  if (un.length) add('tools.unclassified', 'adapters', 'warn', `有 ${un.length} 个工具没有分类（照常放行，但它说的话没经过审视）：${un.slice(0, 5).map((x) => x.tool).join('、')}`, { hint: '让对应的适配器声明它（最好）；或者在配置文件的 host.egress.extraTools 里补分类：补成说话类的一律送审，标成不说话要在管理页确认' });
 
   const level = items.some((x) => x.level === 'fail') ? 'fail' : items.some((x) => x.level === 'warn') ? 'warn' : 'ok';
   return { at: d.now?.() ?? Date.now(), level, ok: level !== 'fail', items };

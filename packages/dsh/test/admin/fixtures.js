@@ -395,7 +395,11 @@ export function makeFakePm(o = {}) {
       forget: (ref) => { rec('admin.forget', ref); writable(); setState(ref, 'forgotten'); },
       hide: (ref) => { rec('admin.hide', ref); writable(); setState(ref, 'hidden'); },
       restore: (ref) => { rec('admin.restore', ref); writable(); setState(ref, null); },
-      purge: async (refs, opt) => { rec('admin.purge', refs, opt); writable(); return { deleted: { assertion: refs.length }, sessions: ['s1', 's2'] }; },
+      purge: async (refs, opt) => {
+        rec('admin.purge', refs, opt); writable();
+        return { deleted: { assertion: refs.length }, sessions: ['s1', 's2'], growth: { lines: 1, versions: 2, unknown: 0 }, wal: { main: 'truncated', vectors: 'busy' },
+          ...(opt?.alsoBackups ? { backups: { rewritten: 2, unchanged: 1, failed: 1, failures: [{ id: 7, reason: 'no-key' }] } } : {}) };
+      },
       withdrawBySource: (q) => { rec('admin.withdrawBySource', q); writable(); return { reviewId: 99, refs: 6 }; },
       retention: {
         get: () => ({ ...retention }),
@@ -535,7 +539,7 @@ export function makeFakeHost(o = {}) {
       ? { id: 'bridge.whitelist', group: 'bridge', level: 'ok', label: 'QQ 白名单已放行记忆工具' }
       : { id: 'bridge.whitelist', group: 'bridge', level: 'warn', label: 'QQ 会话还用不了：memory_recall、memory_note、memory_fix（白名单补丁没打）', hint: '运行 scripts/bridge-whitelist-patch.mjs（默认预演），征得主人同意后彻底重启 DSH' },
     { id: 'bridge.freeze', group: 'bridge', level: 'ok', label: '桥接自带的记忆已冻结：拒绝 qq_memory_append、qq_memory_remove、qq_memory_clear、qq_note_person 的写入' },
-    { id: 'tools.unclassified', group: 'adapters', level: 'fail', label: '有 1 个工具没有分类（记忆开着的场合带长文本会被拒绝）：mcp__some_server__post_message', hint: '在设置里补分类（egress.extraTools），或者让对应的适配器声明', disables: ['egress:unclassified'] },
+    { id: 'tools.unclassified', group: 'adapters', level: 'fail', label: '有 1 个工具没有分类（照常放行，但它说的话没经过审视）：mcp__some_server__post_message', hint: '在设置里补分类（egress.extraTools），或者让对应的适配器声明', disables: ['egress:unclassified'] },
   ];
   const level = items.some((x) => x.level === 'fail') ? 'fail' : items.some((x) => x.level === 'warn') ? 'warn' : 'ok';
   const lastCheck = { at: now - 12 * 60_000, level, ok: level !== 'fail', items };

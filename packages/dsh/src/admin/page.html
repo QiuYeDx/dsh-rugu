@@ -1684,13 +1684,36 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     }
     async function purge(refs) {
       const r = await purgeDialog(refs);
-      if (r) { toast('已彻底删除'); load(); }
+      if (r) { purgeDone(r); load(); }
     }
     renderTools();
     renderFilters();
     add(el, card({ title: '她记得的', cls: 'cq', desc: '你看得到全部，包括对别人隐藏的。隐藏：对别人不提；忘掉：隐藏并且以后别再记同样的内容，30 天内可恢复；彻底删除：连同只靠它作证据的内容一起删，找不回来。' },
       tools, filters, listBox, foot), bulk);
     return { load: () => load(), show: () => {} };
+  }
+  /**
+   * 【D143】彻底删除做完：一切顺利就提示一下；有备份包没改成、或者数据库日志没能截断，弹一个框照实说（没改成的不当成功）。
+   */
+  function purgeDone(r) {
+    const b = r?.backups ?? null;
+    const g = r?.growth ?? {};
+    const walBusy = r?.wal?.main === 'busy' || r?.wal?.vectors === 'busy';
+    const parts = ['已彻底删除'];
+    if (g.lines) parts.push(`成长块去掉了 ${g.lines} 行`);
+    if (b) parts.push(`改写了 ${b.rewritten} 个备份包`);
+    if (!(b?.failed) && !walBusy && !g.unknown) { toast(parts.join('，')); return; }
+    const BAD = { missing: '包文件不见了', 'no-key': '本机没有这个包的密钥', 'read-only': '数据库是只读的', aborted: '中途停下了', sha256: '包校验不过', corrupt: '包损坏了', format: '不是认得的包格式' };
+    const dlg = dialog({ title: b?.failed || walBusy ? '彻底删除做完了，但有没清干净的地方' : '彻底删除做完了，有一处请你自己看一眼' });
+    add(dlg.body,
+      h('p', null, `${parts.join('，')}。`),
+      b?.failed ? h('div', { class: 'pm-warnbox' },
+        h('div', null, `有 ${b.failed} 个备份包没改成，里面还留着删掉的内容：`),
+        h('ul', { class: 'pm-tight' }, (b.failures ?? []).map((f) => h('li', null, `${f.id != null ? `第 ${f.id} 号包` : '备份'}：${BAD[f.reason] ?? f.reason}`)))) : null,
+      g.unknown ? h('p', { class: 'pm-desc' }, `成长块里还有 ${g.unknown} 行判断不了是不是由删掉的内容写出来的（比如你自己手写进去的），没有动。到「成长」里看一眼，有要去掉的自己删。`) : null,
+      b && b.unchanged ? h('p', { class: 'pm-desc' }, `另有 ${b.unchanged} 个包里本来就没有这些内容，不用改。`) : null,
+      walBusy ? h('p', { class: 'pm-desc' }, '数据库日志（WAL）这次没能截断（有别的读者在用）：删掉之前的旧页还在日志文件里，等下一次彻底删除再截断，或者插件关闭时把日志写回、删掉。') : null);
+    add(dlg.foot, btn('知道了', () => dlg.close(), { kind: 'primary' }));
   }
   /** 彻底删除：预览 + 输入确认语 + 可选「同时从本机备份里清除」。 */
   function purgeDialog(refs) {
@@ -1703,12 +1726,13 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
           h('div', { class: 'pm-acts' }),
           x.text && h('div', { class: 'pm-eb' }, h('span', { class: 'pm-clamp' }, x.text)),
           !x.missing && !x.purged && h('div', { class: 'pm-ef' }, meta(`${x.sources ?? 0} 条来源`, x.injectedIn ? `注入过 ${x.injectedIn} 个会话` : '没注入过'))))),
-        h('div', { class: 'pm-warnbox' }, '会连同只靠它作证据的派生内容一起删掉（先删向量，再删库），删了找不回来。', pv?.sessions ? ` 已经注入过的文字仍然留在那 ${pv.sessions} 个会话的日志里，删库也收不回。` : ' 已经注入过的文字仍然留在过去的会话日志里，删库也收不回。'),
+        h('div', { class: 'pm-warnbox' }, '会连同只靠它作证据的派生内容一起删掉（先删向量，再删库；含它的社区小结、成长块里由它写出来的行连历史版本一起去掉），删了找不回来。', pv?.sessions ? ` 已经注入过的文字仍然留在那 ${pv.sessions} 个会话的日志里，删库也收不回。` : ' 已经注入过的文字仍然留在过去的会话日志里，删库也收不回。'),
       ],
       extra: (state) => {
         const c = h('input', { type: 'checkbox' });
         c.addEventListener('change', () => { state.params = { alsoBackups: c.checked }; });
-        return h('label', { class: 'pm-check' }, c, '同时从所有本机备份里清除（会重写每一个包，比较慢）');
+        return h('div', null, h('label', { class: 'pm-check' }, c, '同时从所有本机备份里清除（会重写每一个包，比较慢）'),
+          h('p', { class: 'pm-desc' }, '库文件里立刻抹掉：删掉的行、全文索引里的词元（这次删的）、数据库日志（WAL；有别的读者在用时要等下一次）。不勾的话，备份包（包括这次删除前自动做的那一份）里还留着，要等包按保留期轮换掉；以前删掉、还没合并掉的全文索引词元，等夜里的整理合并时清掉。'));
       },
     });
   }
@@ -1758,7 +1782,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       h('span', { class: 'pm-faint pm-mono' }, ref),
       sup ? btn('恢复', async () => { await api.act('memory.restore', { ref }); toast('已恢复'); refresh(); }) : btn('隐藏', async () => { await api.act('memory.hide', { ref }); toast('已对别人隐藏'); refresh(); }),
       !sup && btn('忘掉', async () => { await api.act('memory.forget', { ref }); toast('已忘掉（30 天内可恢复）'); refresh(); }, { kind: 'danger' }),
-      btn('彻底删除', async () => { const r = await purgeDialog([ref]); if (r) { toast('已彻底删除'); refresh(); } }, { kind: 'danger' }));
+      btn('彻底删除', async () => { const r = await purgeDialog([ref]); if (r) { purgeDone(r); refresh(); } }, { kind: 'danger' }));
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -1970,11 +1994,13 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
   }
   function diffNode(change) {
     const c = change ?? {};
+    if (c.purged) return h('span', { class: 'pm-muted' }, '这一处的文字因为彻底删除抹掉了');
     if (c.op === 'add') return h('div', { class: 'pm-diff' }, h('div', { class: 'add' }, c.after));
     if (c.op === 'remove') return h('div', { class: 'pm-diff' }, h('div', { class: 'del' }, c.before));
     if (c.op === 'revise') return h('div', { class: 'pm-diff' }, h('div', { class: 'del' }, c.before), h('div', { class: 'add' }, c.after));
     if (c.op === 'revoke') return h('span', { class: 'pm-muted' }, `撤销了第 ${c.of} 版的变化`);
     if (c.op === 'rollback') return h('span', { class: 'pm-muted' }, `回到了第 ${c.to} 版`);
+    if (c.op === 'purge') return h('span', { class: 'pm-muted' }, `因为彻底删除去掉了 ${c.removed ?? 0} 行`);
     return null;
   }
   // ════════════════════════════════════════════════════════════════════════
@@ -2059,7 +2085,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       let d;
       try { d = await api.get('growth'); } catch (e) { clear(el, card({ title: '她的成长块' }, errorBox(e, load))); return; }
       const cur = d.versions.find((v) => v.version === d.current) ?? null;
-      const OP = { add: '新增', revise: '修改', remove: '删掉', revoke: '撤销', rollback: '回退' };
+      const OP = { add: '新增', revise: '修改', remove: '删掉', revoke: '撤销', rollback: '回退', purge: '彻底删除' };
       clear(el,
         card({ title: '她的成长块', aside: d.mode ? (d.mode === 'approve' ? '逐条批准' : '自动生效，可撤销') : '', desc: '性格里慢慢长出来的部分：每处变化都有依据的经历，至少 5 条、跨 3 天以上、来自 2 个以上的人或场合。你可以撤销任何一处，或回到任何一版。' },
           cur && linesOf(cur.text).length ? h('div', { class: 'pm-block' }, cur.text) : empty('成长块还是空的', '夜间整理发现她真的变了，才会写进来。'),
@@ -2067,7 +2093,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
         card({ title: '版本历史', aside: d.versions.length ? `${d.versions.length} 版` : '' },
           d.versions.length ? h('div', { class: 'pm-list' }, d.versions.map((v) => {
             const op = v.change?.op;
-            const canRevoke = !v.revokedAt && ['add', 'revise', 'remove'].includes(op);
+            const canRevoke = !v.revokedAt && !v.change?.purged && ['add', 'revise', 'remove'].includes(op);
             return entry({
               kind: [`第 ${v.version} 版`, v.version === d.current ? 'info' : ''], title: label(OP, op), at: v.createdAt,
               status: v.revokedAt ? ['已撤销', 'dim'] : v.version === d.current ? ['当前', 'ok'] : null,

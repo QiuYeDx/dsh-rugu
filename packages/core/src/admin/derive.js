@@ -27,7 +27,7 @@ export function hasColumn(db, table, col) {
   if (!m.has(key)) m.set(key, hasTable(db, table) && db.all(`PRAGMA table_info(${table})`).some((c) => c.name === col));
   return m.get(key);
 }
-const parseIds = (s) => {
+export const parseIds = (s) => {
   try { const v = JSON.parse(s ?? '[]'); return Array.isArray(v) ? v.filter((x) => Number.isSafeInteger(x)) : []; } catch { return []; }
 };
 

@@ -223,7 +223,8 @@ export function createEgress({ getPm, claims, tooltable, guard, assembler, hostC
    * （里面有注入过的记忆），拿得到全局的说话工具（D112：插件预设照抄标准模式，带 subagent / subagent_fork / workflow）。
    * 所以外发按父会话的认领审（沿 parentSession 往上找，只走子代理这一串；只用于外发和按轮污点，别的一概不给）。
    * 只用已经认上的（claims.get；不在这里触发认领：这条路没有消息、看不到证据，D112 集成）。
-   * 返回 {claim} = 照这个审；{orphan:true} = 父会话已经不在了（或者链太长）、可这一串像是她的会话：审不了，说话类工具 fail closed；
+   * 返回 {claim} = 照这个审；{orphan:true} = 父会话已经不在了（或者链太长）、可这一串像是她的会话：审不了，说话类工具放行（orphanPassed），
+   * 只有公开目标改口（D113）；
    * null = 不是子代理，或者父会话在、但不是她的会话（和父会话一样不管）。
    */
   const inheritedClaim = (agent) => {

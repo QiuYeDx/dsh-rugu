@@ -51,7 +51,7 @@ table{border-collapse:collapse;margin-top:12px}td{border-bottom:1px solid #d0d7d
 </style></head><body>
 <div class="box"><h2>记忆插件没有启动（<code>${esc(err)}</code>）</h2>
 <p>${esc(HINTS[err] ?? '数据库没有打开。详细原因看 DSH 日志里 persona-memory 的 core.open 那一行（只有错误类型，没有内容）。')}</p>
-<p>这段时间：不感知、不注入；她在原来的对话里照常聊天；往别的场合说的话（发到别的群、私聊、公开评论、定时任务）一律先不说，因为审不了。插件重载、数据库打开之后自动恢复。</p></div>
+<p>这段时间：不感知、不注入；她在原来的对话里照常聊天。往别的场合说的话审不了：发到群里、私聊、定时任务照常放行（功能优先）；往公开的地方说的（公开评论，宿主读得到是公开的目标）先不说。插件重载、数据库打开之后自动恢复。</p></div>
 <table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(Number(v) || 0)}</td></tr>`).join('')}
 ${adapters.map((a) => `<tr><td>入口 ${esc(String(a.id ?? '?').slice(0, 32))}</td><td>${esc(a.error ? code(a.error) : a.disabled ? '停用' : '已登记，等数据库')}</td></tr>`).join('')}
 </table><p><small>${esc(new Date(o.at).toISOString())}</small></p></body></html>`;

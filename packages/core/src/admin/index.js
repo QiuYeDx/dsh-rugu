@@ -255,11 +255,18 @@ export function suppressedRefs(core, refs) { return sup.suppressedRefs(core, ref
  * 含被删感知的原文窗口在第一批的事务里交给 intake.dropFromWindows 重新渲染（一条不剩的删掉；删掉的窗口身上挂的行由 admin
  * 清掉并写墓碑）。删完重新定来源被删掉的级联隐藏（重新渲染过的窗口放开；还复述着删掉内容的留着，reason 改成 'purged:<ref>'）。
  * 删了人或身份证据时 entities.invalidateNames；常驻区标脏。
- * 删之前先做操作前快照（backup.preOperationSnapshot reason='purge'）。alsoBackups=true 时再重写本地的每个包（慢）。
+ * 【D143】被删内容参与过的社区（当前的、退休的、跨场合的）一起删；成长块里由它写出来的行从当前文本和全部历史版本里抹掉
+ * （consolidate.purgeGrowth），成长的审核项抹掉提议的文字；主库和向量库删除期间 secure_delete=ON、全文索引 secure-delete，
+ * 删完各做一次截断式的 WAL 检查点。
+ * 删之前先做操作前快照（backup.preOperationSnapshot reason='purge'）。alsoBackups=true 时再重写本地的每个包（慢），结果带回来。
  * @param {import('../core-types.js').CoreContext} core
  * @param {string[]} refs
  * @param {{by: string, alsoBackups?: boolean, at: number, reason?: 'purge'|'withdraw'}} ctx   【补】reason：操作前快照记的原因
- * @returns {Promise<{deleted: Record<string, number>, sessions: string[]}>}   sessions：注入过这些记忆的会话（提示「已经注入过的文字收不回」）
+ * @returns {Promise<{deleted: Record<string, number>, sessions: string[], growth: {lines: number, versions: number},
+ *                    wal: {main: 'truncated'|'busy'|'skipped', vectors: 'truncated'|'busy'|'skipped'},
+ *                    backups?: {rewritten: number, unchanged: number, failed: number, failures: {id: number|null, reason: string}[]}}>}
+ *   sessions：注入过这些记忆的会话（提示「已经注入过的文字收不回」）；growth：成长块去掉的行、抹过的历史版本；
+ *   wal：截断式检查点做没做成（busy = 有读者，WAL 里的旧页要等下一次检查点）；backups：勾了「连备份一起删」时每个包的结果
  */
 export async function purge(core, refs, ctx) { return purgeMod.purge(core, refs, ctx); }
 
@@ -277,9 +284,13 @@ export async function reapplyTombstones(core, opt) { return purgeMod.reapplyTomb
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../store/db.js').Store} db
  * @param {{kind: string, ref: string, at: number}[]} tombstones
- * @returns {{deleted: number}}
+ * @returns {{deleted: number, tombstones: {kind: string, ref: string, at: number}[]}}   deleted 含成长块里抹掉的行和版本（D143）；
+ *   tombstones：这个库上顺着级联一起删掉的（backup 按它们再删包里的向量）
  */
-export function applyTombstonesTo(core, db, tombstones) { return { deleted: purgeMod.applyTombstonesTo(core, db, tombstones).deleted }; }
+export function applyTombstonesTo(core, db, tombstones) {
+  const r = purgeMod.applyTombstonesTo(core, db, tombstones);
+  return { deleted: r.deleted, tombstones: r.tombstones };
+}
 
 /**
  * 【补】一批 (adapter, ext_key) 里哪些是被彻底删除过的消息：intake 入库前问，恢复后从来源补回、或平台重发同一条消息时不再入库。

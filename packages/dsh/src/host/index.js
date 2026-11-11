@@ -1,7 +1,8 @@
 // DSH 集成层（§10）：把核心接到宿主上。启动顺序照 §10.1：
-//   0.（同步）读配置、装端口、ctx.provide('personaMemory', 外壳)、挂全部钩子（核心没打开之前：不感知、不注入，外发钩子只放行原地说的话）；
+//   0.（同步）读配置、装端口、ctx.provide('personaMemory', 外壳)、挂全部钩子（核心没打开之前：不感知、不注入；外发钩子审不了，
+//      说话类工具往公开的目标说改口，其余放行（D113））；
 //   1. 建内置适配器、登记它们的 DSH 绑定（QQ、网页）：会话认领和工具分类只要桥接的文件和配置，不要核心——
-//      核心打不开时会话照样认得出来，往别处说的话才能 fail closed（插件重启前注入的记忆还在会话记录里）；
+//      核心打不开时会话照样认得出来，往公开目标说的话才能照旧改口（插件重启前注入的记忆还在会话记录里）；
 //   2. 打开数据库（单写者；迁移前自动备份，核心自己做）；启动 worker（startWorker: true）；打不开就只注册一个只给主人看的状态页；
 //   3. 把内置适配器交给核心（开始感知）；排队的外来适配器（bili-eyes）补上；
 //   4. 给已经活着的 agent 补注册记忆工具；注册管理接口（只给主人，admin/）；启动调度、资源管家、嵌入健康检查；
@@ -498,7 +499,7 @@ export function createHost(ctx, config = {}, deps = {}) {
   };
   /**
    * 第一步（核心打开之前）：建内置适配器、登记它们的 DSH 绑定（认领、工具分类、平台转义）。不碰核心，也不开始读桥接的消息
-   * （start(sink) 由核心的 registerAdapter 调）。核心打不开时绑定照样在：会话认得出来，外发钩子才能 fail closed。
+   * （start(sink) 由核心的 registerAdapter 调）。核心打不开时绑定照样在：会话认得出来，外发钩子才能对公开目标照旧改口（D113：其余放行）。
    */
   async function createAdapters() {
     const factories = deps.adapterFactories !== undefined ? (deps.adapterFactories ?? {}) : await loadAdapterFactories();

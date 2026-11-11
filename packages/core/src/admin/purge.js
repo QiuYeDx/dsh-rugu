@@ -4,21 +4,25 @@
 //   2. 按来源链找派生（encode.derivedFrom）：只靠它作证据的一起删，其余的事实标 needs_review；
 //      情节的叙述是整段派生出来的，删掉其中一条来源就删掉整个情节，把剩下的感知放回切分缓冲重新提炼（「有其他证据的重新评估」）；
 //      含被删内容的印象、故事线、社区摘要也删掉，夜里从剩下的事实重新生成——摘要里不能留着删掉的话；
+//      社区（D143）：被删的人、事实涉及的人、情节的参与者和场合所在的社区，当前的、退休的、跨场合的都算；
 //   3. 计划写进 meta 'admin.purge.pending'（中途崩溃，下次启动时 reapplyTombstones 接着做完，结果一致）；
 //   4. **先删向量**（worker.dropEmbeddings），再删主库：主表行 + FTS 行 + 规范 + 谁知道 + 告诉过谁 + 痕迹 + 来源 + 评估记录……
 //      删除期间 secure_delete 打开，删掉的内容不留在数据库页里；含被删感知的原文窗口交给 intake.dropFromWindows 重新渲染
 //      （一条成员都不剩的整个删掉），和第一批删除在同一个事务里，所以窗口里不会留着已经删掉的原话；
 //      解开的备份副本上没有 intake，含被删感知的窗口整个删掉；
+//      最后一个事务里清成长块（D143）：依据里有被删内容的行，从当前文本和全部历史版本里抹掉（consolidate.purgeGrowth），
+//      成长的审核项抹掉提议的文字；全文索引开 secure-delete，删的时候词元就从索引页里抹掉；
 //   5. 写墓碑（kind = owner_kind，ref = 记忆引用；身份证据 kind='identity'，ref = id_hash；感知另记 kind='obs'，
 //      ref = 适配器 + ext_key，这样恢复后从来源补回、或者平台重发同一条消息时，删掉的消息不会回来）；
-//   6. 返回注入过这些记忆的会话（「已经注入过的文字收不回」）。
+//   6. 主库、向量库各做一次截断式的 WAL 检查点（WAL 里删除之前的旧页清掉，D143）；
+//   7. 返回注入过这些记忆的会话（「已经注入过的文字收不回」）；勾了「连备份一起删」时带回每个包改写没改写成（D143）。
 // 墓碑按时间生效：只删墓碑时间之前就有的行。恢复旧包之后新写入的行可能复用同一个 id，那是新的记忆，不该被删。
 import { ContractError } from '../contract/errors.js';
 import { parseRef, refOf, OWNER_TABLES } from '../store/refs.js';
-import { ftsDelete } from '../store/fts.js';
+import { ftsDelete, ftsOptimize, enableFtsSecureDelete } from '../store/fts.js';
 import { getMetaJson, setMetaJson, setMeta, bumpMetric } from '../store/kv.js';
 import { suppress, restore, settleCascades } from './suppress.js';
-import { hasTable, hasColumn, derivedOf, windowsContaining, CREATED } from './derive.js';
+import { hasTable, hasColumn, derivedOf, windowsContaining, parseIds, CREATED } from './derive.js';
 import { residentDirty, namesChanged } from './notify.js';
 import { param } from './params.js';
 
@@ -31,8 +35,18 @@ const bad = (what, path, message) => new ContractError(what, [{ path, message }]
 // ── 小工具 ────────────────────────────────────────────────────────────────
 
 const run = (db, table, sql, ...p) => (hasTable(db, table) ? Number(db.run(sql, ...p).changes) : 0);
+// 只在这一列存在时才跑（旧版本做的备份包里可能还没有这一列，比如迁移 014 之前的 glances.follows）
+const runIf = (db, table, col, sql, ...p) => (hasColumn(db, table, col) ? Number(db.run(sql, ...p).changes) : 0);
 const jsonList = (a) => JSON.stringify([...a]);
 export const obsTombRef = (adapter, extKey) => `${adapter}:${extKey}`;
+
+/** 【D143】成员里有这些人的社区（不管当前还是退休、挂在哪个场合下）。 */
+function communitiesOf(db, entityIds, push) {
+  const ids = [...new Set(entityIds.filter((x) => Number.isSafeInteger(x)))];
+  if (!ids.length || !hasTable(db, 'communities')) return;
+  for (const c of db.all(`SELECT id FROM communities WHERE EXISTS (SELECT 1 FROM json_each(communities.members_json) j
+                          WHERE j.value IN (SELECT value FROM json_each(?)))`, JSON.stringify(ids))) push('community', c.id);
+}
 
 function principalIds(core, db) {
   if (db === core.store) { try { return new Set(core.mods.entities.principals(core)); } catch { /* 退回 SQL */ } }
@@ -112,15 +126,25 @@ export function expandPlan(core, db, refs, opt = {}) {
           if (!windowViaPercept.has(m.id)) for (const p of db.all('SELECT id FROM percepts WHERE window_id = ?', m.id)) push('percept', p.id);
           break;
         case 'episode': {
-          const e = db.get('SELECT setting_key FROM episodes WHERE id = ?', m.id);
+          const e = db.get('SELECT setting_key, participants_json FROM episodes WHERE id = ?', m.id);
           for (const p of db.all('SELECT id FROM percepts WHERE episode_id = ?', m.id)) release.add(p.id);
           // 这个场合的故事线、社区摘要可能写着删掉的内容：一起删，夜里从剩下的情节重新生成
           if (e && hasTable(db, 'storylines')) for (const s of db.all('SELECT id FROM storylines WHERE setting_key = ?', e.setting_key)) push('storyline', s.id);
-          if (e && hasTable(db, 'communities')) for (const c of db.all('SELECT id FROM communities WHERE setting_key = ? AND is_current = 1', e.setting_key)) push('community', c.id);
+          if (e && hasTable(db, 'communities')) {
+            // 【D143】当前的、退休的都算（退休的行和摘要还在库里）；跨场合的（场合键为空）按参与者找
+            for (const c of db.all('SELECT id FROM communities WHERE setting_key = ?', e.setting_key)) push('community', c.id);
+            communitiesOf(db, parseIds(e.participants_json), push);
+          }
           break;
         }
         case 'assertion':
           if (hasTable(db, 'intentions')) for (const t of db.all("SELECT id FROM intentions WHERE about_kind = 'assertion' AND about_id = ?", m.id)) push('intention', t.id);
+          // 【D143】社区摘要是按成员的事实写的：这条事实涉及的人所在的社区（当前的、退休的、跨场合的）一起删，夜里重新生成
+          if (hasTable(db, 'communities')) {
+            const ids = db.all('SELECT entity_id AS id FROM assertion_entities WHERE assertion_id = ?', m.id).map((r) => r.id);
+            const obj = hasColumn(db, 'assertions', 'object_entity_id') ? db.get('SELECT object_entity_id AS id FROM assertions WHERE id = ?', m.id)?.id : null;
+            communitiesOf(db, obj != null ? [...ids, obj] : ids, push);
+          }
           break;
         case 'entity': {
           for (const i of db.all('SELECT id FROM entity_impressions WHERE entity_id = ?', m.id)) push('impression', i.id);
@@ -133,9 +157,7 @@ export function expandPlan(core, db, refs, opt = {}) {
                                   FROM assertion_entities ae WHERE ae.entity_id = ? GROUP BY ae.assertion_id`, m.id, m.id)) {
             if (a.core && Number(a.others) === 0) push('assertion', a.id); else review.add(a.id);
           }
-          if (hasTable(db, 'communities')) {
-            for (const c of db.all('SELECT id FROM communities WHERE EXISTS (SELECT 1 FROM json_each(communities.members_json) j WHERE j.value = ?)', m.id)) push('community', c.id);
-          }
+          communitiesOf(db, [m.id], push);
           break;
         }
         default: break;
@@ -197,8 +219,8 @@ export function deleteUnit(db, m) {
       if (p) tombs.push({ kind: 'obs', ref: obsTombRef(p.adapter, p.ext_key) });
       run(db, 'sources', 'UPDATE sources SET percept_id = NULL WHERE percept_id = ?', id);
       run(db, 'glances', 'DELETE FROM glances WHERE percept_id = ?', id);
-      run(db, 'glances', 'UPDATE glances SET replaces = NULL WHERE replaces = ?', id);
-      run(db, 'glances', 'UPDATE glances SET follows = NULL WHERE follows = ?', id);
+      runIf(db, 'glances', 'replaces', 'UPDATE glances SET replaces = NULL WHERE replaces = ?', id);
+      runIf(db, 'glances', 'follows', 'UPDATE glances SET follows = NULL WHERE follows = ?', id);
       run(db, 'percepts', 'UPDATE percepts SET target_id = NULL WHERE target_id = ?', id);
       run(db, 'percepts', 'UPDATE percepts SET relay_of = NULL WHERE relay_of = ?', id);
       run(db, 'relays', 'UPDATE relays SET matched_percept = NULL WHERE matched_percept = ?', id);
@@ -314,18 +336,69 @@ function dropPerceptsFromWindows(core, tx, perceptIds, windows) {
   }
 }
 
+/** PRAGMA secure_delete 的读数（0 / 1 / 2）→ 设回去用的值。 */
+const SECURE = ['OFF', 'ON', 'FAST'];
+
 /**
- * 在给定的库上执行一个计划（主库或备份副本）。每批一个事务；secure_delete 打开。
+ * 【D143】删掉的记忆可能写进了别的派生文字里，按引用找不到的部分在这里清：
+ *   - 成长块：依据里有被删内容的行，从当前文本和全部历史版本里抹掉（consolidate.purgeGrowth）；
+ *     这次删了经历或事实时，判断不了来历的行也去掉（宁可多去一行成长，不留被删的内容）；
+ *   - 成长的审核项（逐条批准方式）：依据里有被删内容的，提议的文字抹掉，还挂着的撤下（withdrawn）。
+ * gone = 这次删的单元（删除时间 at）+ 这个库墓碑表里以前删的（墓碑按时间生效：比墓碑晚的依据指向的是新写入的行）。
+ * 在调用方的事务里调用。
+ * @returns {{growthLines: number, growthVersions: number, reviews: number}}
+ */
+function scrubDerivedText(core, db, units, at, { removeUnknown }) {
+  const gone = units.map((ref) => ({ ref, at }));
+  if (hasTable(db, 'tombstones')) for (const t of db.all('SELECT ref, at FROM tombstones')) gone.push({ ref: t.ref, at: t.at });
+  const goneAt = new Map();
+  for (const g of gone) goneAt.set(g.ref, Math.max(goneAt.get(g.ref) ?? -Infinity, g.at));
+  let reviews = 0;
+  if (hasTable(db, 'review_queue')) {
+    for (const r of db.all("SELECT id, payload_json, status, created_at FROM review_queue WHERE kind = 'growth'")) {
+      let p;
+      try { p = JSON.parse(r.payload_json ?? '{}'); } catch { p = {}; }
+      const ev = Array.isArray(p?.evidenceRefs) ? p.evidenceRefs : [];
+      if (!ev.some((x) => typeof x === 'string' && goneAt.has(x) && goneAt.get(x) >= r.created_at) || p?.change?.purged) continue;
+      const change = { op: p?.change?.op ?? null, before: null, after: null, signature: `purged:review:${r.id}`, purged: true };
+      const payload = JSON.stringify({ ...p, change, ...(p && 'text' in p ? { text: null } : {}) });
+      if (r.status === 'pending') db.run("UPDATE review_queue SET payload_json = ?, status = 'withdrawn', decided_at = ?, decided_by = 'purge' WHERE id = ?", payload, at, r.id);
+      else db.run('UPDATE review_queue SET payload_json = ? WHERE id = ?', payload, r.id);
+      reviews += 1;
+    }
+  }
+  const g = core.mods.consolidate.purgeGrowth(core, db, { gone, removeUnknown, clearPending: reviews > 0, by: 'owner', at });
+  return { growthLines: g.removed, growthVersions: g.versions, growthUnknown: g.unknown ?? 0, reviews };
+}
+
+/**
+ * 在给定的库上执行一个计划（主库或备份副本）。每批一个事务；secure_delete 打开，全文索引的 secure-delete 打开（D143）。
  * live=true（主库）：第一批的事务里先让 intake 重新渲染含被删感知的原文窗口。
- * @returns {{deleted: Record<string, number>, tombstones: {kind: string, ref: string, at: number}[]}}
+ * 最后一个事务里清成长块和成长的审核项（scrubDerivedText），和收尾的副作用在一起。
+ * @returns {{deleted: Record<string, number>, tombstones: {kind: string, ref: string, at: number}[], scrubbed: {growthLines: number, growthVersions: number, reviews: number}}}
  */
 function executePlan(core, db, plan, { at, batch, live = false }) {
   const deleted = {};
   const written = [];
+  let scrubbed = { growthLines: 0, growthVersions: 0, reviews: 0 };
   const perceptIds = live ? plan.units.map(parseRef).filter((m) => m?.kind === 'percept').map((m) => m.id) : [];
   let windowsDone = !perceptIds.length;
-  const prevSecure = db.pragma('secure_delete');
+  const prevSecure = Number(db.pragma('secure_delete'));
   try { db.exec('PRAGMA secure_delete = ON'); } catch { /* 不支持就算了 */ }
+  // 解开的备份副本（旧版本做的包）上表还没开 secure-delete：先开，删掉的词元才不会留在索引页里等以后合并
+  const fts = enableFtsSecureDelete(db);
+  if (fts.failed) core.log.warn('admin.purge-fts-secure-delete', { failed: fts.failed });
+  // 这次会删到行的 FTS 表（删完 optimize 一次：词在段里没有行了，词本身也不留）
+  const ftsTouched = new Set();
+  for (const ref of plan.units) {
+    const m = parseRef(ref);
+    if (m?.kind === 'episode') ftsTouched.add('episodes_fts');
+    else if (m?.kind === 'assertion') ftsTouched.add('assertions_fts');
+    else if (m?.kind === 'percept' && hasTable(db, 'percepts')) {
+      const sh = db.get('SELECT fts_shard FROM percepts WHERE id = ?', m.id)?.fts_shard;
+      if (sh && SHARD_RE.test(sh)) ftsTouched.add(sh);
+    }
+  }
   try {
     for (let i = 0; i < plan.units.length; i += batch) {
       const chunk = plan.units.slice(i, i + batch);
@@ -352,11 +425,27 @@ function executePlan(core, db, plan, { at, batch, live = false }) {
         if (windowsDeleted) deleted.window = (deleted.window ?? 0) + windowsDeleted;
       }
     }
-    db.tx((tx) => finishSideEffects(tx, plan));
+    let ftsFailed = 0;
+    for (const t of ftsTouched) {
+      if (!hasTable(db, t)) continue;
+      try { ftsOptimize(db, t); } catch { ftsFailed += 1; }
+    }
+    if (ftsFailed) {
+      // 行已经删了、查不到了；只是词元可能还在索引页里，等夜里的小步合并。记下来，看得见
+      core.log.warn('admin.purge-fts-optimize-failed', { failed: ftsFailed });
+      bumpMetric(core.store, 'admin.purge.ftsOptimizeFailed', ftsFailed);
+    }
+    // 判断不了来历的行（整块替换写进来的，多半是主人自己手写的）不去掉：原来删任何一段经历、一条事实都会把它们全去掉，
+    // 等于删一句话就清空主人手写的成长块。改成留着、把行数报给主人（管理页提示他自己看一眼）
+    const removeUnknown = false;
+    db.tx((tx) => {
+      finishSideEffects(tx, plan);
+      scrubbed = scrubDerivedText(core, tx, plan.units, at, { removeUnknown });
+    });
   } finally {
-    try { db.exec(`PRAGMA secure_delete = ${Number(prevSecure) ? 'ON' : 'OFF'}`); } catch { /* 尽力 */ }
+    try { db.exec(`PRAGMA secure_delete = ${SECURE[prevSecure] ?? 'FAST'}`); } catch { /* 尽力 */ }
   }
-  return { deleted, tombstones: written };
+  return { deleted, tombstones: written, scrubbed };
 }
 
 /** 注入过这些记忆的会话（注入日志里只有 id，没有正文）。 */
@@ -375,7 +464,7 @@ function injectedSessions(core, refs) {
  * 主库上删完之后：来源被删掉的级联隐藏重新定（重新渲染过的窗口放开，还复述着删掉内容的留着）；档案、名字、身份证据改过就让
  * 名字匹配器重建；常驻区标脏（人物卡、计划里可能有删掉的东西）。
  */
-function afterLiveDelete(core, plan, identityDeleted = 0) {
+function afterLiveDelete(core, plan, identityDeleted = 0, scrubbed = null) {
   const units = plan.units ?? [];
   if (units.length) {
     const rebuilt = (plan.windows ?? []).filter((id) => core.store.get('SELECT 1 FROM raw_windows WHERE id = ?', id)).map((id) => refOf('window', id));
@@ -384,17 +473,53 @@ function afterLiveDelete(core, plan, identityDeleted = 0) {
     }
   }
   if (identityDeleted || units.some((r) => parseRef(r)?.kind === 'entity')) namesChanged(core);
-  if (units.length || identityDeleted) residentDirty(core);
+  if (units.length || identityDeleted || scrubbed?.growthLines) residentDirty(core);
+}
+
+/**
+ * 【D143】删完以后让删掉的内容在文件里也不在：主库和向量库各做一次截断式的 WAL 检查点（TRUNCATE）。
+ * WAL 里还留着删除之前那些页的旧副本；检查点把抹过的页写回主文件，再把 WAL 截成 0 字节。
+ * 有读者（worker 的只读连接）正读着旧快照时做不完：等到忙等超时（几秒）为止，做不完的记下来（busy）、照实告诉主人；
+ * 旧页留在日志文件里，等下一次彻底删除再截断，或者关库时最后一个连接把日志写回、删掉。
+ * @returns {{main: 'truncated'|'busy'|'skipped', vectors: 'truncated'|'busy'|'skipped'}}
+ */
+function truncateWal(core) {
+  const one = (store) => {
+    if (!store || store.readOnly || store.closed) return 'skipped';
+    try {
+      const r = store.checkpoint('TRUNCATE');
+      return r && Number(r.busy) === 0 ? 'truncated' : 'busy';
+    } catch { return 'busy'; }
+  };
+  const out = { main: one(core.store), vectors: one(core.vectors) };
+  if (out.main === 'busy' || out.vectors === 'busy') {
+    core.log.warn('admin.purge-wal-busy', out);
+    bumpMetric(core.store, 'admin.purge.walBusy');
+  }
+  return out;
+}
+
+/** 向量库在彻底删除期间也打开 secure_delete = ON（平时是 FAST）：删掉的向量连同放回空闲列表的页一起抹掉。返回恢复用的函数。 */
+function secureVectors(core) {
+  const v = core.vectors;
+  if (!v || v.readOnly || v.closed) return () => {};
+  let prev;
+  try { prev = Number(v.pragma('secure_delete')); v.exec('PRAGMA secure_delete = ON'); } catch { return () => {}; }
+  return () => { try { v.exec(`PRAGMA secure_delete = ${SECURE[prev] ?? 'FAST'}`); } catch { /* 尽力 */ } };
 }
 
 async function runLivePlan(core, plan, ctx) {
   const batch = param(core, 'admin.purgeBatch');
-  // 先删向量，再删主库（§12.7）。worker 不可用就停下（计划留着，下次启动接着做）
-  const mrefs = plan.units.map(parseRef).filter(Boolean);
-  if (mrefs.length) core.mods.worker.dropEmbeddings(core, mrefs);
-  const r = executePlan(core, core.store, { windows: [], ...plan }, { at: ctx.at, batch, live: true });
+  const restoreVectors = secureVectors(core);
+  let r;
+  try {
+    // 先删向量，再删主库（§12.7）。worker 不可用就停下（计划留着，下次启动接着做）
+    const mrefs = plan.units.map(parseRef).filter(Boolean);
+    if (mrefs.length) core.mods.worker.dropEmbeddings(core, mrefs);
+    r = executePlan(core, core.store, { windows: [], ...plan }, { at: ctx.at, batch, live: true });
+  } finally { restoreVectors(); }
   setMeta(core.store, PENDING, null);
-  afterLiveDelete(core, plan);
+  afterLiveDelete(core, plan, 0, r.scrubbed);
   return r;
 }
 
@@ -403,7 +528,9 @@ async function runLivePlan(core, plan, ctx) {
  * @param {object} core
  * @param {string[]} refs
  * @param {{by: string, alsoBackups?: boolean, at: number}} ctx
- * @returns {Promise<{deleted: Record<string, number>, sessions: string[]}>}
+ * @returns {Promise<{deleted: Record<string, number>, sessions: string[], growth: {lines: number, versions: number, unknown: number},
+ *                    wal: {main: string, vectors: string}, backups?: {rewritten: number, unchanged: number, failed: number, failures: {id: number|null, reason: string}[]}}>}
+ *   growth：从成长块去掉的行、抹过的历史版本（D143）；wal：截断式检查点做没做成；backups：勾了「连备份一起删」时每个包的结果
  */
 export async function purge(core, refs, ctx) {
   if (!Array.isArray(refs) || !refs.length || refs.some((r) => !parseRef(r))) throw bad('purge', 'refs', '应为非空的记忆引用列表');
@@ -417,12 +544,33 @@ export async function purge(core, refs, ctx) {
   const sessions = injectedSessions(core, [...plan.units, ...plan.windows.map((id) => refOf('window', id))]);
   bumpMetric(core.store, 'admin.purge', plan.units.length);
   core.log.info('admin.purged', { units: plan.units.length, review: plan.review.length, released: plan.release.length, sessions: sessions.length });
-  if (ctx?.alsoBackups) {
-    try { await core.mods.backup.scrubPacks(core, { tombstones: r.tombstones }); } catch (e) {
-      core.log.warn('admin.purge-backups-failed', { error: e?.code ?? e?.name ?? 'Error' });
-    }
+  const out = { deleted: r.deleted, sessions, growth: { lines: r.scrubbed.growthLines, versions: r.scrubbed.growthVersions,
+    // 这次删了经历或事实时，成长块里还有几行判断不了是不是由被删内容写出来的（没有动）
+    unknown: plan.units.some((x) => ['episode', 'assertion'].includes(parseRef(x)?.kind)) ? r.scrubbed.growthUnknown : 0 } };
+  if (ctx?.alsoBackups) out.backups = await scrubBackups(core, r.tombstones);
+  // 最后做：之前的计数、备份登记这些写入也进了 WAL（里面没有内容），一起截掉
+  out.wal = truncateWal(core);
+  return out;
+}
+
+/**
+ * 【D143】「连备份一起删」：交给 backup.scrubPacks 重写每个包，把结果带回去（几个改写了、几个没改成、为什么）。
+ * 整个调用失败也算没改成，不当成功；没改成的记日志和计数。
+ */
+async function scrubBackups(core, tombstones) {
+  let s;
+  try { s = await core.mods.backup.scrubPacks(core, { tombstones }); } catch (e) {
+    const reason = e?.code ?? e?.name ?? 'Error';
+    core.log.warn('admin.purge-backups-failed', { error: reason });
+    s = { rewritten: 0, failed: 1, skipped: 0, failures: [{ id: null, reason }] };
   }
-  return { deleted: r.deleted, sessions };
+  const failures = Array.isArray(s?.failures) ? s.failures.map((f) => ({ id: f?.id ?? null, reason: String(f?.reason ?? 'error').slice(0, 60) })) : [];
+  const failed = Math.max(Number(s?.failed) || 0, failures.length);
+  if (failed) {
+    core.log.warn('admin.purge-backups-incomplete', { failed, rewritten: Number(s?.rewritten) || 0 });
+    bumpMetric(core.store, 'admin.purge.backupsFailed', failed);
+  }
+  return { rewritten: Number(s?.rewritten) || 0, unchanged: Number(s?.skipped) || 0, failed, failures };
 }
 
 // ── 墓碑重删 ──────────────────────────────────────────────────────────────
@@ -484,14 +632,23 @@ export function applyTombstonesTo(core, db, tombstones, opt = {}) {
   const unitTargets = targets.filter((r) => !r.startsWith('identity:'));
   const plan = unitTargets.length ? expandPlan(core, db, unitTargets, { rebuildWindows: live }) : { units: [], review: [], release: [], windows: [] };
   if (live && opt.dropVectors !== false && plan.units.length) {
+    const restoreVectors = secureVectors(core);
     try { core.mods.worker.dropEmbeddings(core, plan.units.map(parseRef)); } catch (e) {
       // 向量库是缓存：嵌入文本跟着主库一起删掉，下次清扫会把孤立的向量清走
       core.log.warn('admin.tombstones-vectors-deferred', { error: e?.code ?? e?.name ?? 'Error' });
-    }
+    } finally { restoreVectors(); }
   }
   const at = core.now();
-  const r = plan.units.length ? executePlan(core, db, plan, { at, batch: param(core, 'admin.purgeBatch'), live }) : { deleted: {}, tombstones: [] };
-  let deleted = Object.values(r.deleted).reduce((a, b) => a + b, 0);
+  let r = { deleted: {}, tombstones: [], scrubbed: { growthLines: 0, growthVersions: 0, reviews: 0 } };
+  if (plan.units.length) r = executePlan(core, db, plan, { at, batch: param(core, 'admin.purgeBatch'), live });
+  else if (tombstones.length) {
+    // 没有要删的行了，成长块里可能还留着以前删掉的内容写出来的行（D143 之前的彻底删除不清成长块；换回来的旧包）：照墓碑再清一遍
+    try { db.tx((tx) => { r.scrubbed = scrubDerivedText(core, tx, [], at, { removeUnknown: false }); }); } catch (e) {
+      core.log.warn('admin.tombstones-growth-failed', { error: e?.code ?? e?.name ?? 'Error' });
+    }
+  }
+  // 成长块里抹掉的也算删掉的（备份包据此判断要不要重写）
+  let deleted = Object.values(r.deleted).reduce((a, b) => a + b, 0) + r.scrubbed.growthLines + r.scrubbed.growthVersions + r.scrubbed.reviews;
   let idDeleted = 0;
   if (idTargets.length) {
     const idAt = new Map(tombstones.filter((x) => x.kind === 'identity').map((x) => [x.ref, x.at]));
@@ -503,7 +660,7 @@ export function applyTombstonesTo(core, db, tombstones, opt = {}) {
     });
     deleted += idDeleted;
   }
-  if (live) afterLiveDelete(core, plan, idDeleted);
+  if (live) afterLiveDelete(core, plan, idDeleted, r.scrubbed);
   return { deleted, tombstones: r.tombstones };
 }
 
@@ -521,7 +678,10 @@ export async function reapplyTombstones(core, opt = {}) {
   }
   const list = opt.tombstones ?? core.store.all('SELECT kind, ref, at FROM tombstones ORDER BY id');
   if (list.length) deleted += applyTombstonesTo(core, core.store, list).deleted;
-  if (deleted) core.log.info('admin.tombstones-reapplied', { deleted });
+  if (deleted) {
+    core.log.info('admin.tombstones-reapplied', { deleted });
+    truncateWal(core);
+  }
   return { deleted };
 }
 

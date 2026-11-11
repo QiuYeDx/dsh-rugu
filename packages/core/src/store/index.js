@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openDatabase } from './db.js';
 import { migrate, schemaVersionOf } from './migrate.js';
 import { MIGRATIONS, SCHEMA_VERSION } from './migrations/index.js';
+import { enableFtsSecureDelete } from './fts.js';
 
 export { Store, StoreLockedError, openDatabase, DEFAULT_SLOW_MS } from './db.js';
 export { migrate, checkMigrations, schemaVersionOf } from './migrate.js';
@@ -49,7 +50,15 @@ export async function openStore(opt) {
     store.close();
     throw e;
   }
-  if (!result.readOnly) { store.migration = result; return store; }
+  if (!result.readOnly) {
+    store.migration = result;
+    // 【D143】全文索引删除时抹掉词元（迁移建的表、旧库里已有的表都补上）。开不了只记日志：检索照常，只是删掉的词元要等合并才清
+    try {
+      const r = enableFtsSecureDelete(store);
+      if (r.failed) store.logger.warn('store.fts-secure-delete', { failed: r.failed });
+    } catch (e) { try { store.logger.warn('store.fts-secure-delete', { error: e?.code ?? e?.name ?? 'Error' }); } catch { /* 忽略 */ } }
+    return store;
+  }
   // 库比代码新：换成真正的只读连接，SQLite 自己也会拒绝写入
   store.close();
   const ro = openDatabase({ ...base, readOnly: true });

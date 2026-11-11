@@ -2,6 +2,7 @@
 // 测试数据直接写表（schema 就是契约，测试只需要行在那里）。
 import { createTestCore } from '../fakes/index.js';
 import { refOf, parseRef } from '../../src/store/refs.js';
+import { ensurePerceptShard } from '../../src/store/fts.js';
 
 /** 测试里的 queryTerms 替身：和 lang 的契约一致（规范化、去重），中文切二元组。 */
 export function terms(text) {
@@ -193,12 +194,8 @@ export function seedEntity(core, { name = '阿明', authority = 'none', closenes
   return id;
 }
 
-function shardFor(core, at) {
-  const shard = `percepts_fts_${new Date(at).getUTCFullYear()}${String(new Date(at).getUTCMonth() + 1).padStart(2, '0')}`;
-  core.store.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${shard} USING fts5(tokens, content='', contentless_delete=1, tokenize="unicode61 remove_diacritics 0 tokenchars '_'")`);
-  core.store.run('INSERT OR IGNORE INTO fts_shards(name, month, created_at) VALUES (?, ?, ?)', shard, shard.slice(-6), core.now());
-  return shard;
-}
+// 原文分表照真的建法（store.ensurePerceptShard：登记、开 secure-delete）
+const shardFor = (core, at) => ensurePerceptShard(core.store, at);
 
 export function seedPercept(core, { settingKey, actor = null, text = '你好', at = core.now(), ext } = {}) {
   const shard = shardFor(core, at);

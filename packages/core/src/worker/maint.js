@@ -1,7 +1,8 @@
 // 运维（§7.7 第 10 步，评审:FE-05）：全部在一个临时的 worker 线程里跑（thread.js 的 role='maint'），不占主线程。
 //   - quick_check / integrity_check 跑在**刚备份出的副本**上（task.file），不碰正在用的库；
 //   - FTS 不整体 optimize，改成每次小步合并（usermerge = 8，merge = 200 页）；
-//   - incremental_vacuum(N) 每次限定页数。
+//   - incremental_vacuum(N) 每次限定页数；
+//   - 这条连接 secure_delete = ON（D143）：合并、vacuum 腾出来的页抹成零。
 // 结果只有 ok 和计数（detail 里没有内容）。
 import fs from 'node:fs';
 import { DEFAULTS } from '../config/defaults.js';
@@ -75,6 +76,8 @@ export function runTask(DatabaseSync, task) {
   if (!task.target || !fs.existsSync(task.target)) return { ok: false, detail: 'missing-file' };
   const db = new DatabaseSync(task.target, { timeout: task.busyMs ?? DEFAULTS.worker.busyMs });
   try {
+    // 【D143】合并和 vacuum 腾出来的页抹成零：以前删掉的词元合并出索引以后，旧段的页不留在空闲列表里（每次只动几百页，多写的有限）
+    try { db.exec('PRAGMA secure_delete = ON'); } catch { /* 不支持就算了 */ }
     if (task.kind === 'fts-merge') return ftsMerge(db, task.ftsMerge);
     return vacuum(db, task.pages ?? task.vacuumPages);
   } catch (e) {

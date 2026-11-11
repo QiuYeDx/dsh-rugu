@@ -258,7 +258,7 @@ export function openDatabase(opt) {
   return store;
 }
 
-/** 主库的 PRAGMA（§12.1）：WAL、synchronous=NORMAL、auto_vacuum=INCREMENTAL。 */
+/** 主库的 PRAGMA（§12.1）：WAL、synchronous=NORMAL、auto_vacuum=INCREMENTAL、secure_delete=FAST。 */
 function applyWriterPragmas(store) {
   const db = store.raw;
   // auto_vacuum 只能在建第一张表之前设；已经有表的旧库要 VACUUM 才能改，这里不动它
@@ -271,4 +271,7 @@ function applyWriterPragmas(store) {
   db.exec('PRAGMA synchronous = NORMAL');
   db.exec('PRAGMA foreign_keys = OFF');   // 引用完整性由各模块按来源链维护（§12.3 删除按来源链级联），不用外键
   db.exec('PRAGMA temp_store = MEMORY');
+  // 【D143】删掉的行在页里的内容抹成零（FAST：只在不多花 I/O 的时候抹——同一页里的就地抹掉，整页放回空闲列表的不再额外写一遍）。
+  // 日常的删除（原文到期、清扫、重嵌）都很多，ON 会让每次放回空闲页都多写一页；彻底删除那几步临时开 ON（admin/purge.js）
+  try { db.exec('PRAGMA secure_delete = FAST'); } catch { /* 太旧的 SQLite 不认 FAST：保持默认 */ }
 }

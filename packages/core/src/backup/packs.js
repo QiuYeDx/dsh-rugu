@@ -535,43 +535,54 @@ export async function restoreDrill(core) {
 /**
  * 从每个包里清除这些墓碑指向的内容：解开 → 按墓碑删（admin 的同一套级联）→ VACUUM（删掉的内容不留在空闲页）→ 重新打包 → 验证 → 换掉旧包。
  * 异地副本本机有密钥就一起重写。慢，逐个来；单个失败只记下，原包留着。
+ * 【D143】结果带回每个没改成的包和原因（failures），彻底删除的结果里显示给主人：
+ *   rewritten 改写了；skipped 包里本来就没有这些内容（不用改）；failed 没改成——解不开 / 验证不过（原因是校验的错误类别）、
+ *   文件不见了（missing）、改写或验证出错（错误类型）。没改成的包原样留着，里面还有被删的内容。
  * @param {object} core
  * @param {{tombstones: {kind: string, ref: string, at: number}[], signal?: AbortSignal}} opt
+ * @returns {Promise<{rewritten: number, failed: number, skipped: number, failures: {id: number, reason: string}[]}>}
  */
 export async function scrubPacks(core, opt) {
-  if (!writable(core.store) || !opt.tombstones?.length) return { rewritten: 0, failed: 0, skipped: 0 };
+  if (!opt.tombstones?.length) return { rewritten: 0, failed: 0, skipped: 0, failures: [] };
+  if (!writable(core.store)) return { rewritten: 0, failed: 1, skipped: 0, failures: [{ id: null, reason: 'read-only' }] };
   const rows = core.store.all('SELECT * FROM backups WHERE deleted_at IS NULL ORDER BY created_at');
   let rewritten = 0;
-  let failed = 0;
   let skipped = 0;
+  const failures = [];
   for (const row of rows) {
-    if (opt.signal?.aborted) break;
-    if (!fs.existsSync(row.path)) { skipped += 1; continue; }
+    if (opt.signal?.aborted) { failures.push({ id: row.id, reason: 'aborted' }); continue; }
+    if (!fs.existsSync(row.path)) { failures.push({ id: row.id, reason: 'missing' }); continue; }
     try {
       const done = await serialize(core, () => scrubOne(core, row, opt.tombstones));
       if (done) rewritten += 1; else skipped += 1;
     } catch (e) {
-      failed += 1;
-      core.log.warn('backup.scrub-failed', { id: row.id, error: e?.code ?? e?.name ?? 'Error' });
+      const reason = e?.reason ?? e?.code ?? e?.name ?? 'Error';
+      failures.push({ id: row.id, reason: String(reason) });
+      core.log.warn('backup.scrub-failed', { id: row.id, error: String(reason) });
     }
   }
-  return { rewritten, failed, skipped };
+  return { rewritten, failed: failures.length, skipped, failures };
 }
 
 async function scrubOne(core, row, tombstones) {
   const u = await unpackVerified(core, row.path, { keep: true, purpose: 'scrub', checkRegistered: false });
-  if (!u.ok) return false;
+  // 解不开（没有密钥、校验不过）：不能当成「包里没有」——里面可能还有被删的内容
+  if (!u.ok) { removeDir(u.dir); throw new PackError(u.errors?.[0] ?? 'verify', '解不开这个包'); }
   try {
     const db = openDatabase({ file: u.files['main.db'], lock: false });
     let deleted = 0;
+    let cascaded = [];
     try {
-      deleted = core.mods.admin.applyTombstonesTo(core, db, tombstones).deleted;
+      const r = core.mods.admin.applyTombstonesTo(core, db, tombstones);
+      deleted = r.deleted;
+      cascaded = Array.isArray(r.tombstones) ? r.tombstones : [];
       db.exec('PRAGMA journal_mode = DELETE');
     } finally { db.close(); }
     if (u.files['vectors.db']) {
       const vdb = openDatabase({ file: u.files['vectors.db'], lock: false });
       try {
-        for (const t of tombstones) {
+        // 墓碑本身指向的，加上在这个包里顺着级联一起删的（社区、印象……）
+        for (const t of [...tombstones, ...cascaded]) {
           const r = parseRef(t.ref);
           if (r && r.kind === t.kind) deleted += Number(vdb.run('DELETE FROM vectors WHERE owner_kind = ? AND owner_id = ?', r.kind, r.id).changes);
         }

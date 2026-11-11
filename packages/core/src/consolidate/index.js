@@ -21,7 +21,7 @@ import { storylineBatch } from './storyline.js';
 import { impressionsBatch } from './impressions.js';
 import { timeMaintenanceImpl } from './time.js';
 import { revertCheckImpl } from './correct.js';
-import { growthBlock as growthBlockImpl, applyGrowthImpl, revokeGrowthImpl, rollbackGrowthImpl, growthVersionsImpl } from './growth.js';
+import { growthBlock as growthBlockImpl, applyGrowthImpl, revokeGrowthImpl, rollbackGrowthImpl, growthVersionsImpl, purgeGrowthImpl } from './growth.js';
 
 /** @param {import('../core-types.js').CoreContext} core */
 export function init(core) {
@@ -146,6 +146,17 @@ export function revokeGrowth(core, version, ctx) { revokeGrowthImpl(core, versio
  * @param {{by: string, at: number}} ctx
  */
 export function rollbackGrowth(core, toVersion, ctx) { rollbackGrowthImpl(core, toVersion, ctx); }
+
+/**
+ * 【D143】彻底删除之后清成长块（admin.purge 调，主库和解开的备份副本都用；在调用方的事务里，同步）：
+ * 依据里有被删内容的行（removeUnknown 时连判断不了来历的行；admin.purge 不用它：那些行多半是主人手写的，留着，行数在返回值的 unknown 里）从当前文本去掉，存成新的一版（op='purge'，只记去掉了几行）；
+ * 历史版本里同样抹掉这些行（彻底删除优先于可以撤销）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {import('../store/db.js').Store} db
+ * @param {{gone: {ref: string, at: number}[], removeUnknown?: boolean, clearPending?: boolean, by?: string, at: number}} opt
+ * @returns {{removed: number, versions: number, version: number|null, unknown: number}}
+ */
+export function purgeGrowth(core, db, opt) { return purgeGrowthImpl(core, db, opt ?? { gone: [], at: core.now() }); }
 
 /**
  * 成长块的版本历史（管理页「她」）。

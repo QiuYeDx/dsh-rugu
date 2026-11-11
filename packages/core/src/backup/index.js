@@ -284,7 +284,10 @@ export const isRestoring = (core) => restore.isRestoring(core);
 export const replayWindow = (core) => restore.replayWindow(core);
 /** 补回进度；补完或窗口过了就结束跟踪，剩下的空白记给总览。 */
 export const replayStatus = (core) => restore.replayStatus(core);
-/** 彻底删除时「同时从所有本地备份里清除」：按墓碑重写每个包（admin.purge alsoBackups=true 时调用）。 */
+/**
+ * 彻底删除时「同时从所有本地备份里清除」：按墓碑重写每个包（admin.purge alsoBackups=true 时调用）。
+ * 【D143】返回 {rewritten, failed, skipped, failures: [{id, reason}]}：解不开、文件不见了、改写出错的包算没改成，带原因。
+ */
 export const scrubPacks = (core, opt) => packs.scrubPacks(core, opt);
 /** 每月一份 JSONL 导出（runScheduled 在做月包的那晚调用）。 */
 export const exportMonthly = (core, opt) => exporter.exportMonthly(core, opt);

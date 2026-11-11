@@ -51,10 +51,10 @@ export const HOST_DEFAULTS = deepFreeze({
   // 她自己的经验（D124）：enabled 关掉就不把工具结果交给核心、不按工具想起经验；nudge：工具先没成、换了做法成了时，下一步提醒她一句可以记成经验
   lessons: { enabled: true, nudge: true },
   egress: {
-    appraiseTimeoutMs: 12_000,       // 审视的总时限（LLM 自己 8 秒，§10.6）；超时 = 审不了 → fail closed（§9.4.2 第 4 条）
+    appraiseTimeoutMs: 12_000,       // 审视的总时限（LLM 自己 8 秒，§10.6）；超时 = 审不了 → 公开目标改口，其余放行（D113）
     unclassifiedMinChars: 40,        // 没分类的工具，参数里有这么长的自由文本才算「可能在说话」（§9.4.2 第 6 条）
     extraTools: {},                  // 主人补的分类：{工具名: 'speak'|'read'|'none'…}（适配器声明过的工具不认；标成 none / read 要确认）
-    maxTargets: 64,                  // 一次调用最多审几个目标场合；更多 = 审不了（fail closed）
+    maxTargets: 64,                  // 一次调用最多审几个目标场合；更多 = 审不了（D113：公开目标改口，其余放行）
     finalReflection: '这次先不说了',
   },
   // §15.2：桥接自带的记忆先冻结、不退役。精确名或「MCP 前缀 + __ + 名字」都算
