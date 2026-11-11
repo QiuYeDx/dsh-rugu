@@ -562,6 +562,9 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
   const ATTN = { attended: '专心看了', peripheral: '顺带听到' };
   const ADDR = { 'to-her': '对她说', 'mentions-her': '提到她', ambient: '旁听', 'by-her': '她说的' };
   const DEGRADE = ['完整', '不重排', 'CPU 稠密', '没有向量', '存储故障'];
+  // 夜间整理里会调模型的步（D138：诊断里列出因为调用上限少做了的）
+  const SLEEP_STEP = { 'seal-review': '复核', replay: '对照原话纠错', generalize: '泛化', reflect: '反思', entities: '印象', time: '回头问问',
+    settings: '故事线和社区', self: '日记和成长', lessons: '回顾经验' };
   const KIND_NAME = { assertion: '事实', episode: '经历', entity: '人与物', intention: '意图', percept: '原话', window: '原文片段', impression: '印象', storyline: '故事线', community: '圈子', link: '链接' };
   const label = (map, v) => (Array.isArray(map[v]) ? map[v][0] : map[v]) ?? (v == null ? '—' : String(v));
   const tone = (map, v) => (Array.isArray(map[v]) ? map[v][1] : '');
@@ -2444,6 +2447,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             ['在用的入口', s.adapters?.length ? s.adapters.join('、') : '还没有'],
             ['启动步骤', startupLine(s.startup)],
           ])),
+          sleepCard(s.sleep),
           card({ title: '检索与嵌入' }, e.error ? h('div', { class: 'pm-err' }, errText(e)) : kv([
             ['后台线程', e.mode === 'thread' ? badge('正常', 'ok') : e.mode === 'fallback' ? badge('退回主线程', 'warn') : (e.mode ?? '—')],
             ['向量检索', e.dense ? badge('可用', 'ok') : badge(e.breakerOpen ? '熔断中' : '不可用', 'warn')],
@@ -2506,6 +2510,19 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
             x?.unclassifiedTools?.length ? h('div', { class: 'pm-sec' }, h('h3', null, '没有分类的工具'), h('div', { class: 'pm-chips' }, x.unclassifiedTools.map((t) => badge(`${t.tool} ×${t.count ?? 0}`, 'warn')))) : null)),
         spacesCard(d.spaces, () => load()),
         h('div', { class: 'pm-foot' }, h('span', null, `读取于 ${when(d.now)} · 这里只有数字，没有任何记忆内容`), btn('刷新', () => load(), { kind: 'sm' })));
+    }
+    /** 上一次夜间整理（D138）：模型调用用了多少、哪几步因为上限少做了、泛化和日记的几个数。 */
+    function sleepCard(z) {
+      const title = '夜间整理';
+      if (!z) return card({ title }, h('div', { class: 'pm-faint' }, '还没跑过（每天 04:30 跑一次）'));
+      const g = z.generalize;
+      const d = z.diary;
+      return card({ title, aside: z.at ? `上次 ${when(z.at)}` : '' }, kv([
+        ['模型调用', z.llmMax != null ? `${fmtNum(z.llmCalls ?? 0)} / ${fmtNum(z.llmMax)}` : fmtNum(z.llmCalls ?? 0)],
+        ['到上限少做了的', z.capped?.length ? badge(z.capped.map((n) => label(SLEEP_STEP, n)).join('、'), 'warn') : '没有'],
+        g ? ['泛化', `问了 ${fmtNum(g.asked ?? 0)} 组，归纳出 ${fmtNum(g.written ?? 0)} 条；问过没变跳过 ${fmtNum(g.skippedAsked ?? 0)} 组${g.left ? `，留到下一晚 ${fmtNum(g.left)} 组` : ''}`] : null,
+        d ? ['日记', `写了 ${fmtNum(d.written ?? 0)} 天${d.pending ? `，还缺 ${fmtNum(d.pending)} 天（下一晚接着补）` : ''}`] : null,
+      ]));
     }
     /** 回想的稳定性（D117）：今天 / 昨天的出错按步骤、整轮什么都没给、耗时分布、宿主等待、最近的出错（只有步骤、错误类型、代码位置）。 */
     function recallCard(r) {

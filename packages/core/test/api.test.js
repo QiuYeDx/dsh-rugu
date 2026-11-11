@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createPersonaMemory, CAPABILITIES, SCHEMA_VERSION, ContractError, NotImplementedError, validateRecallLayers, isOpaqueId } from '../src/index.js';
 import { MODULES } from '../src/api.js';
-import { openDatabase, migrate, MIGRATIONS, enqueueJob, getJob } from '../src/store/index.js';
+import { openDatabase, migrate, MIGRATIONS, enqueueJob, getJob, setMetaJson } from '../src/store/index.js';
 import { readPack } from '../src/backup/format.js';
 import { fakePorts } from './fakes/index.js';
 import { tmpDir, rmDir } from './helpers.js';
@@ -93,6 +93,12 @@ test('API 的形状（§4.5）；启动步骤都跑了', withPm('api-shape', asy
   assert.deepEqual(st.startup.sweep, { removed: 0, requeued: 0 }, '不起线程也做启动清扫（§12.8）');
   assert.equal(st.startup.worker, undefined, 'startWorker:false 不起线程');
   assert.equal(pm._core.keyFile, path.join(dir, 'persona-memory.key'), 'core.keyFile：身份哈希密钥的位置（backup 用）');
+  // 【D138】上一次夜间整理的摘要：只有数字和步名
+  assert.equal(st.sleep, null, '还没跑过');
+  setMetaJson(pm._core.store, 'sleep.lastReport', { startedAt: 5, llmCalls: 6, llmMax: 6, capped: ['generalize'],
+    steps: [{ name: 'generalize', detail: { asked: 2, written: 1, skippedAsked: 3, left: 0, groups: 6 } }, { name: 'self', detail: { diaries: 2, diaryPending: 1, reasons: 0 } }] });
+  assert.deepEqual(pm.status().sleep, { at: 5, llmCalls: 6, llmMax: 6, capped: ['generalize'],
+    generalize: { asked: 2, written: 1, skippedAsked: 3, left: 0 }, diary: { written: 2, pending: 1 } });
 }));
 
 test('启动步骤失败只降级，不让 createPersonaMemory 失败；keyFile 可以放在数据目录以外', async () => {

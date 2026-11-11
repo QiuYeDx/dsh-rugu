@@ -479,7 +479,9 @@ export function createViews(deps) {
         recall: recall == null ? null : recall.error ? recall : recallHealthRow(recall),
         store: st.error ? st : { readOnly: !!st.readOnly, readOnlyReason: st.readOnlyReason ?? null, schemaVersion: st.schemaVersion ?? null,
           codeSchemaVersion: st.codeSchemaVersion ?? null, schema: numbersOnly(st.schema), migration: numbersOnly(st.migration),
-          adapters: Array.isArray(st.adapters) ? st.adapters.map(adapterTitle) : [], startup: startupSummary(st.startup), files: numbersOnly(st.files ?? null), vectors: numbersOnly(st.vectors ?? null) },
+          adapters: Array.isArray(st.adapters) ? st.adapters.map(adapterTitle) : [], startup: startupSummary(st.startup), files: numbersOnly(st.files ?? null), vectors: numbersOnly(st.vectors ?? null),
+          // 【D138】上一次夜间整理：模型调用用了多少、哪几步因为上限少做了、泛化问了几组、日记写了几天还缺几天（只有数字和步名）
+          sleep: numbersOnly(st.sleep ?? null) },
         embedding: health?.error ? health : healthRow(health),
         spaces: Array.isArray(spaces) ? spaces.map(spaceRow) : spaces,
         gpu, budget, selfCheck: checks,

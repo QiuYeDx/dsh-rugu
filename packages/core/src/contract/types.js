@@ -365,5 +365,8 @@ export {};
  * @typedef {object} SleepReport
  * @property {number} startedAt
  * @property {number} finishedAt
- * @property {{step: number, name: string, ok: boolean, llmCalls: number, skipped?: string}[]} steps
+ * @property {{step: number, name: string, ok: boolean, llmCalls: number, skipped?: string, capped?: boolean}[]} steps
+ * @property {number} [llmCalls]                   这一晚调了几次模型
+ * @property {number} [llmMax]                     【D138】这一晚的总上限（sleep.maxLlmCalls，null = 各步之和）
+ * @property {string[]} [capped]                   【D138】因为调用上限少做了的步（整步或其中一段）
  */

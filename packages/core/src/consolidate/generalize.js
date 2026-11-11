@@ -5,7 +5,11 @@
 //     规范经 discretion.inheritNorm（推断类：「谁知道」只有她自己，§5.6）。
 //   - 已经泛化过的（已有的 pattern 事实覆盖了这组证据的一大半）：不再调 LLM，只把新证据追加成来源（又遇到了一次）。
 //   - 关于她自己的规律只用她自己的经历（和成长块同一套依据规则：指令类、按轮污点、别人反复的「你就是……」都不算，§5.7、S29）。
-import { parseRef } from '../store/index.js';
+//   - 情节聚类取窗口里最近的 generalize.maxEpisodes（400）段（按时间先后聚，结果和取法无关）；更早的一段一段滑出去，不让最新的进不来（D138）。
+//   - 问过、模型没归纳出来的组按成员记一个签名（meta 'sleep.generalize.asked'，重启不丢），成员不变不再问，变了才重新问；
+//     一晚的几次调用先给没问过的组，最近有动静的排前面（D138：以前顺序固定，每晚反复问同一批归纳不出来的，新的轮不到）。
+import crypto from 'node:crypto';
+import { parseRef, getMetaJson, setMetaJson } from '../store/index.js';
 import { params } from './params.js';
 import {
   DATA_ONLY, DAY, callLlm, canCall, cosine, dateText, errCode, forPrompt, fromModel, jaccard, localDay, metric, parseJsonLines,
@@ -15,6 +19,8 @@ import { entityLabeler, evidencePerceptIds, flaggedSets, participantsOf, selfId,
 import { analyzeEvidence } from './growth.js';
 
 const PROMPT_VER = 'generalize-v1';
+/** 问过、没归纳出来的组：{签名: 问的时间}。只留今晚还在候选里的（成员变了的旧签名自然掉出去），所以不会越攒越多。 */
+const ASKED_KEY = 'sleep.generalize.asked';
 const SYSTEM = [
   DATA_ONLY,
   '下面每一组是「我」记得的同一类、发生过好几次的事。判断能不能归纳成一条稳定的规律（习惯、常做的事、反复出现的情况）。',
@@ -69,8 +75,9 @@ export async function candidateGroups(core, { at, signal }) {
   }
 
   // (b) 情节聚类
+  // 取最近的 maxEpisodes 段，再按时间先后聚（聚类是贪心的、和顺序有关：顺序固定，同样的情节聚出同样的组）
   const eps = core.store.all(`SELECT id, setting_key, header, narrative, title, t_start, t_end, participants_json FROM episodes
-      WHERE ep_kind = 'event' AND t_end >= ? ORDER BY t_end, id LIMIT 400`, since);
+      WHERE ep_kind = 'event' AND t_end >= ? ORDER BY t_end DESC, id DESC LIMIT ?`, since, g.maxEpisodes).reverse();
   let vectors = new Map();
   try {
     const v = await core.mods.worker.storedVectors(core, eps.map((e) => `e${e.id}`));
@@ -163,16 +170,31 @@ function perceptRows(core, ids) {
   return out;
 }
 
+/** 一组的签名：按成员（证据和候选主体）定，和顺序无关。成员变了签名就变，那时再问一次。 */
+export function groupSig(grp) {
+  const refs = grp.items.map((i) => i.ref).sort();
+  const subjects = [...grp.subjects].sort((a, b) => a - b);
+  return crypto.createHash('sha1').update(`${refs.join(',')}|${subjects.join(',')}`).digest('hex').slice(0, 16);
+}
+
+/** 一组里最近的一段经历（新的组先问）。 */
+const latestOf = (grp) => Math.max(...grp.items.map((i) => i.at ?? 0));
+
 /**
  * 夜间整理第 3 步。
- * @returns {Promise<{groups: number, written: number, reinforced: number, skipped?: string}>}
+ * groups：候选组数；asked：今晚问了模型的组；written：归纳出的规律；reinforced：已归纳过、追加了新证据的；
+ * skippedAsked：以前问过、没归纳出来、成员也没变的（不再问）；left：没问过、但今晚的调用次数用完了的（下一晚接着问）。
+ * @returns {Promise<{groups: number, asked: number, written: number, reinforced: number, skippedAsked: number, left: number, skipped?: string}>}
  */
 export async function generalizeStep(core, ctx) {
   const p = params(core);
   const at = ctx.at;
   const self = selfId(core);
   const groups = await candidateGroups(core, ctx);
-  const out = { groups: groups.length, written: 0, reinforced: 0 };
+  const out = { groups: groups.length, asked: 0, written: 0, reinforced: 0, skippedAsked: 0, left: 0 };
+  const prev = getMetaJson(core.store, ASKED_KEY, {});
+  const asked = new Map(Object.entries(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {}));
+  const present = new Set();
   const fresh = [];
   for (const grp of groups) {
     const percepts = evidencePerceptIds(core, grp.items.map((i) => i.ref));
@@ -197,12 +219,17 @@ export async function generalizeStep(core, ctx) {
       } catch (e) { warn(core, 'generalize.reinforce', { error: errCode(e) }); }
       continue;
     }
+    grp.sig = groupSig(grp);
+    present.add(grp.sig);
+    if (asked.has(grp.sig)) { out.skippedAsked += 1; continue; }
     fresh.push(grp);
   }
-  if (!fresh.length) return out;
+  // 最近有动静的组先问（sort 是稳定的：一样新的保持候选的顺序）
+  fresh.sort((a, b) => latestOf(b) - latestOf(a));
   const label = entityLabeler(core);
   let calls = 0;
-  for (let i = 0; i < fresh.length && calls < p.generalize.maxCalls; i += p.generalize.groupsPerCall) {
+  let i = 0;
+  for (; i < fresh.length && calls < p.generalize.maxCalls; i += p.generalize.groupsPerCall) {
     if (!canCall(ctx.run)) { out.skipped = 'llm-cap'; break; }
     const batch = fresh.slice(i, i + p.generalize.groupsPerCall);
     const blocks = batch.map((grp, k) => {
@@ -216,6 +243,8 @@ export async function generalizeStep(core, ctx) {
     calls += 1;
     const r = await callLlm(core, ctx.run, { use: 'sleep', version: PROMPT_VER, system: SYSTEM, user: blocks.join('\n\n'), maxTokens: 160 * batch.length, signal: ctx.signal, timeoutMs: p.llmTimeoutMs });
     if (!r.ok) { out.skipped = r.reason; break; }
+    out.asked += batch.length;
+    const done = new Set();   // 写成了的、写的时候出错的：都不记成「问过没归纳出来」
     for (const l of parseJsonLines(r.text).lines) {
       if (l.type !== 'pattern') continue;
       const grp = batch.find((x) => x.tag === l.group);
@@ -224,9 +253,20 @@ export async function generalizeStep(core, ctx) {
       try {
         writePattern(core, grp, subject, l, { at, self, p, model: r.model, promptVer: r.promptVer });
         out.written += 1;
-      } catch (e) { metric(core, 'generalize.error'); warn(core, 'generalize.write', { error: errCode(e) }); }
+        done.add(grp);
+      } catch (e) { done.add(grp); metric(core, 'generalize.error'); warn(core, 'generalize.write', { error: errCode(e) }); }
     }
+    // 问过、没归纳出来的（答了 none、没答、答的不合格）记下签名，成员不变就不再问。写的时候出错的不记，下一晚再问
+    for (const grp of batch) if (!done.has(grp)) asked.set(grp.sig, at);
   }
+  out.left = Math.max(0, fresh.length - Math.min(i, fresh.length));
+  // 只留今晚还在候选里的签名：成员变了、滑出窗口、已经归纳成规律的，旧签名都不再要。
+  // 中止了的那次候选可能没找全（聚类前就停了），不清旧的
+  const keep = {};
+  for (const [sig, t] of asked) if (present.has(sig) || ctx.signal?.aborted) keep[sig] = t;
+  try { setMetaJson(core.store, ASKED_KEY, keep); } catch (e) { warn(core, 'generalize.asked', { error: errCode(e) }); }
+  if (out.asked) metric(core, 'generalize.asked', out.asked);
+  if (out.skippedAsked) metric(core, 'generalize.skippedAsked', out.skippedAsked);
   return out;
 }
 

@@ -1,11 +1,11 @@
-// 夜间整理的编排（§7.7）：什么时候跑、10 步按顺序、开始前先备份、每步失败只跳过这一步、LLM ≤ 12 次 / 晚超了顺延、
+// 夜间整理的编排（§7.7）：什么时候跑、10 步按顺序、开始前先备份、每步失败只跳过这一步、LLM ≤ 各步之和（D138，给她自己和经验回顾留名额）超了顺延、
 // 预算不够整步跳过、节省预设只做必要项、同一时间只跑一个；第 1 步补跑失败批次、第 2 步分诊和重放。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { world, reply, T0, MIN, HOUR, DAY } from './world.js';
 import { FakeLLM, FakeBudget } from '../fakes/index.js';
 import { getMeta, setMeta, getMetaJson, enqueueJob, completeJob } from '../../src/store/index.js';
-import { nextRecurrence, replayStep } from '../../src/consolidate/sleep.js';
+import { nextRecurrence, replayStep, sleepCallPlan } from '../../src/consolidate/sleep.js';
 import { params } from '../../src/consolidate/params.js';
 
 // 测试统一用 UTC+8：T0 是本地 10-31 18:00；本地 11-01 04:30 = T0 + 10.5 小时
@@ -92,24 +92,81 @@ function busyDay(w) {
   return { G, a, b };
 }
 
-test('LLM 调用一晚 ≤ sleep.maxLlmCalls：到了上限后面的步顺延（skipped=llm-cap），水位线不推进，下一晚接着做', async () => {
+test('LLM 调用一晚 ≤ sleep.maxLlmCalls：到了上限的步顺延（skipped=llm-cap，记进 capped），水位线不推进，下一晚接着做；「她自己」的名额留着（D138）', async () => {
   const llm = new FakeLLM({ fallback: { sleep: [] } });
   const w = await world({ llm, config: { sleep: { maxLlmCalls: 2 } } });
   try {
     const { core } = w;
     busyDay(w);
     const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
-    assert.equal(llm.callsFor('sleep').length, 2);
-    assert.equal(r.llmCalls, 2);
-    const skipped = r.steps.filter((s) => s.skipped === 'llm-cap').map((s) => s.name);
-    assert.ok(skipped.includes('self'), JSON.stringify(r.steps));
+    assert.ok(r.llmCalls <= 2);
+    assert.equal(r.llmMax, 2);
+    const by = Object.fromEntries(r.steps.map((s) => [s.name, s]));
+    // 总共 2 次：她自己、经验回顾各留 1 次，前面的步一次都拿不到
+    for (const n of ['generalize', 'reflect', 'entities']) assert.equal(by[n].skipped, 'llm-cap', n);
+    assert.notEqual(by.self.skipped, 'llm-cap', '她自己的名额留着');
+    assert.equal(by.self.llmCalls, 1);
+    assert.ok(r.capped.includes('generalize') && r.capped.includes('settings') && !r.capped.includes('self'), JSON.stringify(r.capped));
     assert.equal(core.store.get('SELECT COUNT(*) AS n FROM storylines').n, 0, '故事线没写，水位线也就没动');
-    // 第二晚：额度恢复，接着做
-    core.config.update({ sleep: { maxLlmCalls: 12 } });
+    assert.ok(core.store.get("SELECT SUM(value) AS n FROM metrics WHERE name = 'consolidate.sleep.llmCap.generalize'").n >= 1, '到上限少做了有计数');
+    // 第二晚：额度恢复（默认 = 各步之和），接着做
+    core.config.update({ sleep: { maxLlmCalls: null } });
     const r2 = await core.mods.consolidate.sleep(core, { at: NEXT_0430 + DAY });
-    assert.ok(r2.llmCalls > 0 && r2.llmCalls <= 12);
-    assert.ok(llm.callsFor('sleep').length <= 2 + 12);
+    assert.equal(r2.llmMax, 14);
+    assert.ok(r2.llmCalls > 0 && r2.llmCalls <= 14);
+    assert.deepEqual(r2.capped, []);
   } finally { await w.cleanup(); }
+});
+
+test('D138 名额：前面的步骤把能用的全用满时，「她自己」和经验回顾照样跑；总上限默认 = 各步之和（宽松 14、节省 6），每一步不超过自己登记的次数', async () => {
+  const llm = new FakeLLM({ fallback: { sleep: [] } });
+  // 前面的步骤这一晚想调 7 次（复核、泛化、反思、印象、故事线……），总上限只给 6：前面最多拿到 4 次，她自己和经验回顾各 1 次
+  const w = await world({ llm, config: { sleep: { maxLlmCalls: 6 } }, mods: { encode: { reviewFlagged: async () => ({ reviewed: 2, llmCalls: 1 }) } } });
+  try {
+    const { core } = w;
+    busyDay(w);
+    // 有新的「工具反复没成」：经验回顾要调一次
+    for (let i = 0; i < 3; i++) core.mods.encode.lessonToolOutcome(core, { tool: 'some_tool', ok: false, error: 'timeout', sessionId: `s${i}`, at: T0 + i * MIN });
+    const plan = sleepCallPlan(params(core));
+    assert.equal(plan.total, 6);
+    assert.equal(plan.sum, 14);
+    assert.deepEqual([...plan.reserve], [[8, 1], [11, 1]]);
+    const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
+    const by = Object.fromEntries(r.steps.map((s) => [s.name, s]));
+    for (const s of r.steps) assert.ok(s.llmCalls <= (plan.steps.get(s.step) ?? 0), `${s.name} 用了 ${s.llmCalls} 次`);
+    const before = r.steps.filter((s) => s.step < 8).reduce((n, s) => n + s.llmCalls, 0);
+    assert.equal(before, 4, '前面的步骤把留给后面的以外的全用了');
+    assert.ok(r.capped.length > 0 && !r.capped.includes('self') && !r.capped.includes('lessons'), JSON.stringify(r.capped));
+    assert.equal(by.self.llmCalls, 1, '她自己照样跑');
+    assert.equal(by.lessons.llmCalls, 1, '经验回顾照样跑');
+    assert.equal(r.llmCalls, 6);
+    const saved = getMetaJson(core.store, 'sleep.lastReport');
+    assert.equal(saved.llmMax, 6);
+    assert.deepEqual(saved.capped, r.capped);
+  } finally { await w.cleanup(); }
+  // 默认（宽松）：总上限 = 各步之和 14
+  const w1 = await world();
+  try {
+    const plan = sleepCallPlan(params(w1.core));
+    assert.equal(plan.total, 14);
+    assert.equal(plan.sum, 14);
+  } finally { await w1.cleanup(); }
+  // 节省档：只做必要项，总量 6（复核 1 + 纠错 2 + 印象 2 + 故事线 1），她自己和经验回顾的模型部分不做、不留名额
+  const w2 = await world({ config: { budget: { preset: 'saving' } } });
+  try {
+    const plan = sleepCallPlan(params(w2.core));
+    assert.equal(plan.total, 6);
+    assert.deepEqual([...plan.reserve], [[8, 0], [11, 0]]);
+    assert.equal(plan.steps.get(3), 0);
+    assert.equal(plan.steps.get(7), 1);
+  } finally { await w2.cleanup(); }
+  // 不设上限档：和宽松一样按各步之和；写了数字就按数字封顶，名额照样先留
+  const w3 = await world({ config: { budget: { preset: 'unlimited' }, sleep: { maxLlmCalls: 5 } } });
+  try {
+    const plan = sleepCallPlan(params(w3.core));
+    assert.equal(plan.total, 5);
+    assert.deepEqual([...plan.reserve], [[8, 1], [11, 1]]);
+  } finally { await w3.cleanup(); }
 });
 
 test('预算不允许：要 LLM 的步整步跳过（不调模型），不需要 LLM 的照常做', async () => {
@@ -458,29 +515,27 @@ test('跑完给所有场合的常驻区标脏（只标脏，§10.4）；中止�
 });
 
 test('第 1 步的复核先占 LLM 额度：额度用完就不复核（标记留到下一晚）；没东西复核退回额度；出错按占了算', async () => {
-  // 上限 1：复核用掉了这一次，后面要 LLM 的步顺延
+  // 上限 3：她自己、经验回顾各留 1 次，前面只有 1 次——复核用掉了这一次，后面要 LLM 的前几步顺延
   const llm = new FakeLLM({ fallback: { sleep: [] } });
-  const w = await world({ llm, config: { sleep: { maxLlmCalls: 1 } }, mods: { encode: { reviewFlagged: async () => ({ reviewed: 2, llmCalls: 1 }) } } });
+  const w = await world({ llm, config: { sleep: { maxLlmCalls: 3 } }, mods: { encode: { reviewFlagged: async () => ({ reviewed: 2, llmCalls: 1 }) } } });
   try {
     const { core } = w;
     busyDay(w);
     const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
     assert.equal(r.steps[1].llmCalls, 1);
-    assert.equal(r.llmCalls, 1);
-    assert.equal(llm.callsFor('sleep').length, 0);
+    assert.equal(r.steps.filter((s) => s.step > 1 && s.step < 8).reduce((n, s) => n + s.llmCalls, 0), 0);
     assert.ok(r.steps.filter((s) => s.skipped === 'llm-cap').length >= 3, JSON.stringify(r.steps));
   } finally { await w.cleanup(); }
-  // 上限 1：没有要复核的（一次都没调）→ 额度退回去，后面的步还能用
+  // 上限 3：没有要复核的（一次都没调）→ 额度退回去，后面的步还能用
   const llm2 = new FakeLLM({ fallback: { sleep: [] } });
-  const w2 = await world({ llm: llm2, config: { sleep: { maxLlmCalls: 1 } } });
+  const w2 = await world({ llm: llm2, config: { sleep: { maxLlmCalls: 3 } } });
   try {
     const { core } = w2;
     busyDay(w2);
     const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
     assert.equal(w2.rec.reviewFlagged.length, 1);
     assert.equal(r.steps[1].llmCalls, 0);
-    assert.equal(llm2.callsFor('sleep').length, 1, '退回的那一次给了后面的步');
-    assert.equal(r.llmCalls, 1);
+    assert.equal(r.steps.filter((s) => s.step > 1 && s.step < 8).reduce((n, s) => n + s.llmCalls, 0), 1, '退回的那一次给了后面的步');
   } finally { await w2.cleanup(); }
   // 上限 0：复核根本不调
   const w3 = await world({ config: { sleep: { maxLlmCalls: 0 } } });
@@ -489,10 +544,11 @@ test('第 1 步的复核先占 LLM 额度：额度用完就不复核（标记留
     const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
     assert.equal(w3.rec.reviewFlagged.length, 0);
     assert.equal(r.steps[1].detail.review, 'llm-cap');
+    assert.ok(r.capped.includes('seal-review'));
     assert.equal(r.llmCalls, 0);
   } finally { await w3.cleanup(); }
   // 复核出错：不知道调没调成，按占了的算
-  const w4 = await world({ config: { sleep: { maxLlmCalls: 2 } }, mods: { encode: { reviewFlagged: async () => { throw new Error('x'); } } } });
+  const w4 = await world({ config: { sleep: { maxLlmCalls: 4 } }, mods: { encode: { reviewFlagged: async () => { throw new Error('x'); } } } });
   try {
     const { core } = w4;
     const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
