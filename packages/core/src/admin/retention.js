@@ -4,9 +4,12 @@
 //     待审提示显示倒计时）→ 到期先做一次完整备份 → 按新期限分批删除（可中断、可重跑）。
 //   - 只能经管理接口改；聊天和工具都改不了（§9.6）——这里没有任何从感知或工具到这些函数的路径。
 //   - 状态在 meta：'retention.policy'（当前生效的）、'retention.pending'（冷静期中的改动）、'retention.doneBefore'（例行到期删除做到了哪）。
+//   - 日志表（任务、注入日志、判定、她说过的话的审视记录）另有保留期 retention.logs（D139）：夜间整理第 10 步 expireLogs，
+//     各表的拥有者定哪些能删；结果记在 meta 'retention.logs.last'，管理页总览的「原文保留期」卡片下面显示。
 import { ContractError } from '../contract/errors.js';
-import { RETENTION_MS } from '../config/defaults.js';
+import { RETENTION_MS, logRetentionDays } from '../config/defaults.js';
 import { getMeta, setMeta, getMetaJson, setMetaJson, bumpMetric } from '../store/kv.js';
+import { expireJobs } from '../store/jobs.js';
 import { param } from './params.js';
 
 const DAY = 86_400_000;
@@ -20,12 +23,17 @@ export function currentPolicy(core) {
   return OPTIONS.includes(d) ? d : '2y';
 }
 
+const LOGS_META = 'retention.logs.last';
+/** 日志清理每张表每晚最多删几批（每批 retention.batch 行）；删不完的下一晚接着删。 */
+const LOG_MAX_BATCHES = 200;
+
 /** @returns {{current: string, pending: {to: string, effectiveAt: number, impact: object, daysLeft: number}|null}} */
 export function retentionState(core) {
   const p = getMetaJson(core.store, 'retention.pending', null);
   return {
     current: currentPolicy(core),
     pending: p ? { to: p.to, effectiveAt: p.effectiveAt, impact: p.impact, daysLeft: Math.max(0, Math.ceil((p.effectiveAt - core.now()) / DAY)) } : null,
+    logs: getMetaJson(core.store, LOGS_META, null),
   };
 }
 
@@ -171,4 +179,45 @@ async function applyRetentionOnce(core, now) {
   if (r?.done) setMeta(core.store, 'retention.doneBefore', cutoff);
   if (expired) { bumpMetric(core.store, 'retention.expired', expired); core.log.info('admin.retention-expired', { n: expired, done: !!r?.done }); }
   return { expired, done: !!r?.done };
+}
+
+/**
+ * 日志表到期清理（D139，夜间整理第 10 步调）。保留天数见 config.logRetentionDays（0 或负数 = 那张表不清理）；
+ * 哪些行能删由各表的拥有者定：jobs（store.expireJobs）、injections（context）、utterances 和 appraisals（discretion）。
+ * 判定排在注入日志之后（还留着的注入行引用的判定不删）。告诉过谁（told_log）是记忆，不在这里；discretion_log、presence_sets、sessions 不动。
+ * 每批一个短事务、批间让出，能被 signal 中断；每张表每晚最多 LOG_MAX_BATCHES 批，没删完的下一晚接着删。
+ * 删了多少记计数 retention.logs.<表>，最近一次的结果记 meta 'retention.logs.last'（retentionState 的 logs）。
+ * @returns {Promise<{deleted: Record<string, number>, done: boolean, skipped?: string}>}
+ */
+export async function expireLogs(core, at, opt = {}) {
+  if (core.readOnly) return { deleted: {}, done: false, skipped: 'read-only' };
+  const now = Number.isFinite(at) ? at : core.now();
+  const days = logRetentionDays(core.config.get());
+  const run = { batch: param(core, 'retention.batch'), maxBatches: LOG_MAX_BATCHES, signal: opt.signal };
+  const before = (d) => now - d * DAY;
+  const deleted = {};
+  const off = [];
+  let done = true;
+  const table = async (name, fn) => {
+    if (days[name] == null) { off.push(name); return; }
+    if (opt.signal?.aborted) { done = false; return; }
+    try {
+      const r = await fn(before(days[name]));
+      deleted[name] = r.deleted;
+      if (!r.done) done = false;
+      if (r.deleted) bumpMetric(core.store, `retention.logs.${name}`, r.deleted, now);
+    } catch (e) {
+      done = false;
+      deleted[name] = 0;
+      core.log.warn('admin.retention-logs-failed', { table: name, error: e?.code ?? e?.name ?? 'Error' });
+    }
+  };
+  await table('jobs', (b) => expireJobs(core.store, { before: b, kinds: [...core.jobHandlers.keys()], ...run }));
+  await table('injections', (b) => core.mods.context.expireInjections(core, { before: b, ...run }));
+  await table('utterances', (b) => core.mods.discretion.expireUtterances(core, { before: b, ...run }));
+  await table('appraisals', (b) => core.mods.discretion.expireAppraisals(core, { before: b, ...run }));
+  const total = Object.values(deleted).reduce((a, b) => a + b, 0);
+  try { setMetaJson(core.store, LOGS_META, { at: now, deleted, total, done, off }); } catch { /* 记不下不影响 */ }
+  if (total) core.log.info('admin.retention-logs', { n: total, done });
+  return { deleted, done };
 }

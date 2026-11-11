@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { keyFingerprint } from '../store/index.js';
 import { writePack, PACK_EXT } from './format.js';
 import { activeBackupKey, BackupKeyError } from './crypto.js';
 import { runDbTask } from './thread.js';
@@ -26,7 +27,7 @@ export async function exportJsonl(core, opt) {
   if (!opt || typeof opt.dest !== 'string' || !opt.dest) throw new TypeError('exportJsonl 需要 dest');
   const at = core.now();
   const idKey = readIdentityKey(core);
-  const meta = { createdAt: at, coreVersion: CORE_VERSION, identityKeyId: idKey ? crypto.createHash('sha256').update('pm-identity-key/').update(idKey).digest('hex').slice(0, 16) : null };
+  const meta = { createdAt: at, coreVersion: CORE_VERSION, identityKeyId: idKey ? keyFingerprint(idKey) : null };
   if (!opt.encrypt) {
     const file = destFile(opt.dest, at, '.jsonl');
     const tmp = `${file}.partial`;

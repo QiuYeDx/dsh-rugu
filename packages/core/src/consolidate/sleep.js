@@ -12,7 +12,7 @@
 //   - 第 9 步的嵌入队列按夜里的方式跑（worker.runEmbedQueue night=true：白天推后的积压、失败一天的行），一轮接一轮做到
 //     活动空间的队列空了（推到夜里的必须夜里做完，§7.6）；分层（dynamics.retier）一晚做完一整轮，做完让 worker 按新的
 //     tier 重建内存索引（worker.reloadIndex，§6.8）。
-//   - 第 10 步的维护全在 worker 里（FTS 小步合并、增量 vacuum）；完整性检查由 backup 在刚做好的包上做（verifyPack 在 worker 里
+//   - 第 10 步的维护全在 worker 里（FTS 小步合并、增量 vacuum）；日志表到期清理（admin.expireLogs，D139）在主库上分批删；完整性检查由 backup 在刚做好的包上做（verifyPack 在 worker 里
 //     解开副本跑 integrity_check），不碰正在用的库。
 //   - 跑完给所有场合的常驻区标脏（context.markResidentDirty，§10.4），新文本等下一条真实消息再换上。
 //   - 同一时间只跑一个（state.consolidate.running）；dispose 时中止；整体恢复进行中不开始（§12.4.5）。
@@ -362,6 +362,8 @@ async function stepOps(core, ctx) {
     }
     detail.ftsMerge = merged;
   } catch (e) { errors.push(`fts:${errCode(e)}`); }
+  // 日志表到期清理（D139）放在增量 vacuum 之前：删出来的空页这一晚就能还回去
+  try { detail.logs = (await core.mods.admin.expireLogs(core, at, { signal }))?.deleted ?? null; } catch (e) { errors.push(`logs:${errCode(e)}`); }
   try { detail.vacuum = !!(await core.mods.worker.maintenance(core, { kind: 'vacuum', pages: p.maintenance.vacuumPages }))?.ok; } catch (e) { errors.push(`vacuum:${errCode(e)}`); }
   try { detail.retention = await core.mods.admin.applyRetention(core, at); } catch (e) { errors.push(`retention:${errCode(e)}`); }
   return { detail, errors };

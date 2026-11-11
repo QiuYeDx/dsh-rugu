@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 const KEY_BYTES = 32;
+/** 核心主库在数据目录里的文件名（rugu-core 的 MAIN_DB_FILE）：宿主只用它判断「库在不在」，不打开它。 */
+export const MAIN_DB_FILE = 'persona-memory.db';
 
 /**
  * 确保身份哈希密钥文件在（§12.3）。内置适配器的盐（§4.2：SettingId 里不含账号原值）由适配器自己从这个文件按 id 派生

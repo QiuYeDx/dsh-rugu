@@ -12,7 +12,7 @@ import {
   validateImportRecords, isOpaqueId, LIMITS,
 } from './contract/index.js';
 import {
-  openStore, openVectorStore, dataFiles, mainDbIdOf, loadOrCreateKey, makeKeyring, bumpMetric, checkSchema,
+  openStore, openVectorStore, dataFiles, mainDbIdOf, checkIdentityKey, recordKeyFingerprint, makeKeyring, bumpMetric, checkSchema,
   MIGRATIONS, SCHEMA_VERSION, schemaVersionOf, getMetaJson,
 } from './store/index.js';
 import { normalizePorts } from './ports/index.js';
@@ -81,7 +81,9 @@ function lastSleepOf(store) {
 }
 
 /**
- * 打开记忆核心。失败只在两种情况下抛错：数据目录或密钥不可用、迁移前的备份做不了（这时不迁移，宁可不启动）。
+ * 打开记忆核心。失败只在这几种情况下抛错：数据目录或密钥不可用、迁移前的备份做不了（这时不迁移，宁可不启动）、
+ * 身份哈希密钥和库对不上（D140：库里记着指纹而密钥文件不在或不是那一把，或者库里已有数据而密钥文件不在——IdentityKeyError，
+ * code 'IDENTITY_KEY_MISSING' / 'IDENTITY_KEY_MISMATCH'；不新建密钥，库不动）。
  * 其余启动步骤（worker、向量空间、墓碑清扫……）失败只降级，结果在 status().startup 里。
  * @param {CreateOptions} opt
  * @returns {Promise<PersonaMemoryApi>}
@@ -92,7 +94,6 @@ export async function createPersonaMemory(opt) {
   const config = toConfigHandle(opt.config);
   const files = dataFiles(opt.dataDir);
   const keyFile = opt.keyFile ?? path.join(opt.dataDir, 'persona-memory.key');
-  const keys = makeKeyring(loadOrCreateKey(keyFile));
 
   /** @type {import('./core-types.js').CoreContext} */
   const core = {
@@ -100,7 +101,7 @@ export async function createPersonaMemory(opt) {
     vectors: null,
     ports,
     config,
-    keys,
+    keys: /** @type {any} */ (null),   // 打开库时核对过密钥再放上（openStores）
     keyFile,
     adapters: new Map(),
     dataDir: opt.dataDir,
@@ -116,6 +117,7 @@ export async function createPersonaMemory(opt) {
 
   async function openStores() {
     const cfg = config.get();
+    let identity = null;
     core.store = await openStore({
       file: files.main,
       readOnly: !!opt.readOnly,
@@ -124,8 +126,11 @@ export async function createPersonaMemory(opt) {
       slowMs: cfg.store.slowMs,
       busyTimeoutMs: cfg.store.busyTimeoutMs,
       backup: (info) => core.mods.backup.preOperationSnapshot(core, info),
+      // D140：迁移之前核对身份哈希密钥（迁移前快照要用到 core.keys，所以在这里就放上）。每次打开都从文件重读：整体恢复换了密钥文件也照样核对
+      verify: (s) => { identity = checkIdentityKey(s, keyFile); core.keys = makeKeyring(identity.key); },
     });
     core.readOnly = core.store.readOnly;
+    if (identity?.record && !core.readOnly) recordKeyFingerprint(core.store, identity.fingerprint);
     core.vectors = null;
     if (!core.readOnly) {
       try {

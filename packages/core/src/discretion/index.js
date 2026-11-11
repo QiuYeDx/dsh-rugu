@@ -24,6 +24,7 @@ import * as EG from './egress.js';
 import * as T from './told.js';
 import * as WK from './working.js';
 import * as GL from './glance.js';
+import * as EX from './expire.js';
 
 export { STAGE1_RULES } from './stage1.js';
 export { TRIGGER_CLASSES, AUDIENCE_FEATURES, APPRAISE_PROMPT_VERSION } from './stage2.js';
@@ -498,6 +499,24 @@ export async function holdDecision(core, token, approve) { return EG.holdDecisio
  * @param {import('../intake/index.js').PerceptRow} percept
  */
 export function onSelfUtterance(core, percept) { T.onSelfUtterance(core, percept); }
+
+/**
+ * 到期清理判定记录（D139，admin.expireLogs 在夜里调，在注入日志清完之后）：早于 before 的分批删掉，除了还留着的注入行引用的、
+ * 第二段缓存还没过期的。工作记忆只沿用比保留期新的判定，删不到它要沿用的。可以中断，下次接着删。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{before: number, batch?: number, maxBatches?: number, signal?: AbortSignal}} opt
+ * @returns {Promise<{deleted: number, done: boolean}>}
+ */
+export async function expireAppraisals(core, opt) { return EX.expireAppraisals(core, opt); }
+
+/**
+ * 到期清理她说过的话的审视记录（D139）：早于 before 的分批删掉，除了还在等主人处理的挂起草稿、批准了还没发出去的、
+ * 带按轮污点标记的（成长不拿那句话当依据的唯一记录）。可以中断，下次接着删。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{before: number, batch?: number, maxBatches?: number, signal?: AbortSignal}} opt
+ * @returns {Promise<{deleted: number, done: boolean}>}
+ */
+export async function expireUtterances(core, opt) { return EX.expireUtterances(core, opt); }
 
 /**
  * 记一笔分寸日志。

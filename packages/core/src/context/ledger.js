@@ -4,7 +4,7 @@
 //   - 污点账本 = 本周期已确认送达、带内容的注入条目 + 本周期常驻区放进过这个会话的条目（推出来，不另存）。
 //   - 压缩周期：compaction end / restart 时 cycle + 1，已发名单清空。
 //   - 预算：每会话每天的字数从注入日志算；滚动窗口按 recordStep 记下的上下文 token 算（§10.4）。
-import { bumpMetric, parseRef } from '../store/index.js';
+import { bumpMetric, parseRef, expireInBatches } from '../store/index.js';
 import { ContractError, LAYERS, ITEM_VERDICTS, SPEAK_LEVELS, WORKING_UNITS, isOpaqueId } from '../contract/index.js';
 import { safeJson, dayStart } from './text.js';
 import { UNMETERED_LAYERS } from './pack.js';
@@ -468,6 +468,30 @@ export function taintLedger(core, sessionId, { residentLive }) {
   }
   if (s.setting_key && residentLive(s.setting_key)) for (const id of s.residentItems) if (parseRef(id)) out.add(id);
   return [...out];
+}
+
+/**
+ * 到期清理注入日志（D139）。早于 before 的行删掉，除了还有人要读的（读者：污点账本、本周期已发 / 等确认、今天和滚动窗口的预算、
+ * 「这个会话第一次」的暖启动、外发守护和关口③的本周期账本、彻底删除时找注入过的会话——这些都只看下面留着的行）：
+ *   - 这个会话当前周期的行（会话从不标「结束」，一个安静的会话一个周期可以持续很多天：多旧都不删）；
+ *   - 还在等确认的块（pending_json 里的 nonce）；
+ *   - 这个会话滚动窗口记下的第一步之后送达的行；
+ *   - 这个会话最新的一行（recall 用「这个会话有没有注入过」判断暖启动，全删了会被当成新会话）。
+ * 夜里按「用到的程度」往回看的天数由 logRetentionDays 保证（before 不会比它们近）。
+ * @returns {Promise<{deleted: number, done: boolean}>}
+ */
+export async function expireInjections(core, { before, ...opt }) {
+  return expireInBatches(core.store, 'injections', (after, limit) => {
+    const rows = core.store.all(`SELECT i.id, CASE WHEN s.session_id IS NULL THEN 0
+          WHEN i.cycle = s.cycle THEN 1
+          WHEN i.seen_at IS NOT NULL AND i.seen_at >= coalesce(json_extract(s.inject_window_json, '$.steps[0].at'), 9e15) THEN 1
+          WHEN EXISTS (SELECT 1 FROM json_each(s.pending_json) p WHERE json_extract(p.value, '$.nonce') = i.nonce) THEN 1
+          WHEN i.id = (SELECT max(x.id) FROM injections x WHERE x.session_id = i.session_id) THEN 1
+          ELSE 0 END AS keep
+        FROM injections i LEFT JOIN sessions s ON s.session_id = i.session_id
+        WHERE i.id > ? AND i.ts < ? ORDER BY i.id LIMIT ?`, after, before, limit);
+    return { seen: rows.map((r) => r.id), del: rows.filter((r) => !r.keep).map((r) => r.id) };
+  }, opt);
 }
 
 export function sessionInfo(core, sessionId) {

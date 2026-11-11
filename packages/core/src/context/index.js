@@ -252,6 +252,17 @@ export function taintLedger(core, sessionId) {
 }
 
 /**
+ * 到期清理注入日志（D139，admin.expireLogs 在夜里调）：早于 before 的行分批删掉，还在用的留着——会话当前周期的、还在等确认的、
+ * 滚动窗口里的、每个会话最新的一行。可以中断，下次接着删。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{before: number, batch?: number, maxBatches?: number, signal?: AbortSignal}} opt
+ * @returns {Promise<{deleted: number, done: boolean}>}
+ */
+export async function expireInjections(core, opt) {
+  return ledger.expireInjections(core, opt);
+}
+
+/**
  * @param {import('../core-types.js').CoreContext} core
  * @param {string} sessionId
  * triggerEntityIds / focusPerceptId：这个会话这一轮回想时认出的触发者（主触发者在前）和焦点那条感知（D107，只在内存里；没回想过、重启了是 [] / null）。
