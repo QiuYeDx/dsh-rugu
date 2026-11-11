@@ -161,3 +161,25 @@ test('降级（线程起不来）：词法在主线程以更小的上限查（�
     assert.deepEqual(r2.hits, []);
   } finally { await cleanup(); }
 });
+
+test('lexicalSearch 的 weights（D150）：同一个权重的词一起查，各组的 −bm25 乘权重按行相加；权重轻的词只匹配上的排在后面', async () => {
+  const { core, cleanup } = await workerCore({ name: 'worker-lex-weights' });
+  try {
+    const { cur } = seed(core);
+    // 焦点「驿站」权重 1，对话其余部分「晚上」权重 0.1：只有「晚上」的一堆行排在「驿站」的后面
+    const r = await W(core).lexicalSearch(core, { terms: ['驿站', '晚上'], weights: [1, 0.1], tables: [cur, 'episodes_fts'], limit: 50 }, { deadlineMs: 2000 });
+    const refs = r.hits.map((h) => h.ref);
+    assert.deepEqual(refs.slice(0, 2).sort(), ['e1', 'p100']);
+    assert.ok(refs.includes('p101') && refs.indexOf('p101') > 1);
+    // e1 两组都匹配上：分数是两组加起来
+    const one = await W(core).lexicalSearch(core, { terms: ['驿站'], tables: ['episodes_fts'], limit: 5 }, { deadlineMs: 1000 });
+    const e1 = r.hits.find((h) => h.ref === 'e1').score;
+    assert.ok(e1 > one.hits.find((h) => h.ref === 'e1').score);
+    // 权重不是正数的词不查；不给 weights 和全是 1 一样
+    const z = await W(core).lexicalSearch(core, { terms: ['驿站', '晚上'], weights: [0, -1], tables: [cur], limit: 50 }, { deadlineMs: 1000 });
+    assert.deepEqual(z.hits, []);
+    const a = await W(core).lexicalSearch(core, { terms: ['驿站', '晚上'], tables: [cur], limit: 50 }, { deadlineMs: 1000 });
+    const b = await W(core).lexicalSearch(core, { terms: ['驿站', '晚上'], weights: [1, 1], tables: [cur], limit: 50 }, { deadlineMs: 1000 });
+    assert.deepEqual(a.hits, b.hits);
+  } finally { await cleanup(); }
+});

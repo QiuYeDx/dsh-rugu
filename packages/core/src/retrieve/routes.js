@@ -94,13 +94,11 @@ export async function denseRoute(ctx, pseudoSources) {
 
 // ── 词法 ────────────────────────────────────────────────────────────────
 /**
- * FTS5 BM25：原文分表 + 情节 + 事实。最多 12 个词，先按 IDF 排序、剔掉出现在超过 1% 行里的常见词；
- * 线索的「焦点」（有意回想的 query、最新对她说的那句）的词排在窗口其余部分之前。热路径只查最近 3 个月的原文分表。
- * 「常见」还要求含这个词的行数本身也多（> recall.lexical.commonMinDocs）：刚装上、库里只有几十行时，出现一次就超过 1%，
- * 只按比例会把真正的词全剔掉。库里一行都没有的词（docs = 0，比如分词方式和入库时不一样的单字）匹配不上任何一行，
- * 排在能匹配上的词后面，不占前面的名额（统计可能是缓存的旧数，所以只是往后排，不删）。
- * 统计不算眼前这段对话（线索窗口里的感知，worker.termStats 的 excludePercepts）：问题本身入了库，只在问题里出现过的词
- * 原来 docs = 1、IDF 最高，会把真正能匹配上记忆的词挤出 12 个名额。
+ * FTS5 BM25：原文分表 + 情节 + 事实。热路径只查最近 3 个月的原文分表。挑词见 pickLexicalTerms（D150）：
+ * 虚词不当查询词、跨词边界的碎片不占名额、常见词降权不剔除；线索的「焦点」（有意回想的 query、最新对她说的那句）的词
+ * 权重 1、排在前面，窗口其余部分的词权重 recall.lexical.contextWeight。
+ * 统计不算眼前这段对话（线索窗口里的感知，worker.termStats 的 excludePercepts，D90）：问题本身入了库，只在问题里出现过的词
+ * 原来 docs = 1、IDF 最高，会把真正能匹配上记忆的词挤出名额。
  * @param {RouteCtx} ctx
  * @returns {Promise<RouteResult>}
  */
@@ -114,39 +112,161 @@ export async function lexicalRoute(ctx) {
   // 窗口其余部分不带「名字：」：说话人已经是实体线索了，名字当词用只会让关于他的每一条都命中
   const restText = cues.windowPlain ?? cues.windowText;
   const termsOf = (text, ents) => (text ? safe(core, 'queryTerms', () => core.mods.lang.queryTerms(core, text, { lang: cues.lang, entityIds: ents }), []) ?? [] : []);
-  const tier1 = dedupe(termsOf(focusText || restText, entityIds));
+  const text1 = focusText || restText;
+  const tier1 = dedupe(termsOf(text1, entityIds));
   const tier2 = dedupe(termsOf(focusText ? restText : '', [])).filter((t) => !tier1.includes(t));
-  const all = [...tier1, ...tier2];
-  if (!all.length) return empty('lexical');
+  if (!tier1.length && !tier2.length) return empty('lexical');
+  const tiers = [{ text: text1, terms: tier1, weight: 1 }, { text: focusText ? restText : '', terms: tier2, weight: lx.contextWeight ?? 0.3 }];
+  // 统计连二元组的两个字一起要（凝聚度用；有 jieba 时单字不一定在查询词里）
+  const all = [...new Set(tiers.flatMap((t) => [...t.terms, ...t.terms.flatMap(gramParts)]))];
   let stats = null;
   // 眼前这段对话（线索窗口里的感知）不算进词的统计：只在问题里出现过的词库里其实没有，不该占前面的名额（D34 同一个道理）
   const live = (cues.window ?? []).map((w) => w.perceptId).filter(Number.isInteger);
   const s = await withDeadline(() => core.mods.worker.termStats(core, all, live.length ? { excludePercepts: live } : undefined),
     Math.max(1, Math.min(remaining(ctx) / 3, 150)), ctx.signal);
   if (s.value instanceof Map) stats = s.value;
-  const minDocs = lx.commonMinDocs;
-  // 常见词：比例超过 commonRowFraction，而且行数也超过 commonMinDocs（没给行数的统计只看比例）
-  const common = (st) => st?.rowFraction > lx.commonRowFraction && !(Number.isFinite(st.docs) && st.docs <= minDocs);
-  const pick = (list) => {
-    if (!stats) return { live: list, dead: [] };
-    const ranked = list.filter((t) => !common(stats.get(t)))
-      .map((t, i) => ({ t, i, idf: stats.get(t)?.idf ?? Infinity }))   // 没统计到的词（新词）最稀有
-      .sort((a, b) => b.idf - a.idf || a.i - b.i).map((x) => x.t);
-    const none = (t) => stats.get(t)?.docs === 0;
-    return { live: ranked.filter((t) => !none(t)), dead: ranked.filter(none) };
-  };
-  const p1 = pick(tier1);
-  const p2 = pick(tier2);
-  const terms = [...p1.live, ...p2.live, ...p1.dead, ...p2.dead].slice(0, lx.maxTerms);
+  const classOf = (t) => safe(core, 'termClass', () => core.mods.lang.termClass?.(core, t, { lang: cues.lang }) ?? null, null);
+  const { terms, weights } = pickLexicalTerms(tiers, stats, { ...lx, classOf });
   if (!terms.length) return { ...empty('lexical'), ms: wall() - t0 };
   const shards = safe(core, 'shards', () => perceptShards(core, ctx.mode === 'involuntary' ? lx.hotMonths : null, ctx.at), []);
   const tables = [...shards, 'episodes_fts', 'assertions_fts'];
-  const r = await withDeadline((signal) => core.mods.worker.lexicalSearch(core, { terms, tables, limit: lx.topK },
+  const r = await withDeadline((signal) => core.mods.worker.lexicalSearch(core, { terms, weights, tables, limit: lx.topK },
     { deadlineMs: Math.max(1, remaining(ctx)), signal }), Math.max(1, remaining(ctx)), ctx.signal);
   const out = routeOf('lexical', r, t0, ctx);
   out.terms = terms.length;
   return out;
 }
+
+/** 不用空格分词的文字（汉字、假名……）的一个字：这些文字的二元组才谈得上「是词还是碎片」。 */
+const UNSEG = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}ー々〇]$/u;
+const ENTITY_TOKEN = /^ent_\d+$/;
+/** 二元组的两个字（不是二元组给 []）。 */
+function gramParts(t) {
+  const c = [...t];
+  return c.length === 2 && UNSEG.test(c[0]) && UNSEG.test(c[1]) ? c : [];
+}
+
+/**
+ * 词法路挑词（D150）。每一层（焦点、窗口其余部分）分别：
+ *   1. 分类：实体词元 ent_<id>；虚词（lang.termClass = 'function'：代词、疑问词、语气词、助词……这门语言的封闭词类）不进查询，
+ *      但盖住它的字；认得的整词（'word'，用户词典里的名字、别名）直接当词；不用空格分词的文字的二元组、单字；其他（字母数字词、
+ *      三字以上的词）当词。
+ *   2. 二元组看凝聚度 df(ab)·N / (df(a)·df(b))（类似 PMI，用 termStats 的条数），按它在文字里的每一处判断：≥ cohesionMin、
+ *      而且不低于和它重叠的左右二元组的 cohesionRivalRatio 倍，才算词；否则是跨词边界的碎片（「些猫」「得群」；「检测指令」里
+ *      的「测指」——几个字都少见时碎片的凝聚度也会过 1，要和两边的词比），丢掉：稀有不等于有信息。判断不了（统计超时、没给条数、
+ *      单字没入库）的照旧当词；库里一行都没有的（docs = 0：可能是新词，统计也可能是缓存的旧数）留着、排在最后、不盖字。
+ *   3. 单字只在它出现的某一处没被任何词（含虚词）盖住时才当词（「群里有过哪些猫」的「猫」）。
+ *   4. 常见词降权不剔除（BM25 的 IDF 本来就低）；只有出现在 skipRowFraction 以上的行里（IDF 到 0，只剩开销）、而且行数也超过
+ *      commonMinDocs 的才跳过（刚装上的小库出现几次就过了比例，D72）。其余按 IDF 从高到低。
+ * 合起来：焦点层能匹配的词在前（权重 = 层的 weight），下一层在后，库里一行都没有的最后；最多 maxTerms 个。
+ * 选中的词加起来匹配的行数（按统计的条数估）超过 maxPostings 时先去掉最常见的词（FTS 查询的开销和匹配的行数成正比），至少留一个。
+ * 没有统计时按出现的顺序，只去掉虚词。
+ * @param {{text: string, terms: string[], weight: number}[]} tiers  terms：规范化、去重过的 queryTerms
+ * @param {Map<string, {idf: number, rowFraction: number, docs?: number, rows?: number}>|null} stats  worker.termStats 的结果
+ * @param {{classOf?: (t: string) => ('function'|'word'|null), maxTerms: number, cohesionMin?: number, cohesionRivalRatio?: number, skipRowFraction?: number,
+ *          commonMinDocs?: number, maxPostings?: number}} opt
+ * @returns {{terms: string[], weights: number[], dropped: {functions: string[], fragments: string[], skipped: string[]}}}
+ */
+export function pickLexicalTerms(tiers, stats, opt) {
+  const classOf = typeof opt.classOf === 'function' ? opt.classOf : () => null;
+  const cohesionMin = opt.cohesionMin ?? 1;
+  const rivalRatio = opt.cohesionRivalRatio ?? 0.5;
+  const skipFrac = opt.skipRowFraction ?? 0.5;
+  const minDocs = opt.commonMinDocs ?? 20;
+  const st = (t) => (stats instanceof Map ? stats.get(t) : undefined);
+  const dropped = { functions: [], fragments: [], skipped: [] };
+  /** 凝聚度；判断不了给 null。 */
+  const cohesion = (g, [a, b]) => {
+    const sg = st(g); const sa = st(a); const sb = st(b);
+    const N = sg?.rows;
+    if (!(sg?.docs > 0) || !(sa?.docs > 0) || !(sb?.docs > 0) || !(N > 0)) return null;
+    return (sg.docs * N) / (sa.docs * sb.docs);
+  };
+  const lists = tiers.map((tier) => {
+    const chars = [...String(tier.text ?? '').normalize('NFKC').toLowerCase()];
+    const covered = new Uint8Array(chars.length);
+    const cover = (t) => {
+      const c = [...t];
+      for (let i = 0; i + c.length <= chars.length; i++) {
+        let ok = true;
+        for (let k = 0; k < c.length && ok; k++) ok = chars[i + k] === c[k];
+        if (ok) covered.fill(1, i, i + c.length);
+      }
+    };
+    // 文字里每一处二元组的凝聚度（和左右两边重叠的二元组比）
+    const termSet = new Set(tier.terms);
+    const at = new Map();
+    for (let i = 0; i + 1 < chars.length; i++) {
+      const g = chars[i] + chars[i + 1];
+      if (termSet.has(g) && gramParts(g).length) at.set(i, { g, c: cohesion(g, gramParts(g)) });
+    }
+    /** 这一处是不是词：够凝聚，而且不比和它重叠的二元组弱太多（「测指」夹在「检测」「指令」中间）。判断不了算是。 */
+    const wordAt = (i) => {
+      const o = at.get(i);
+      if (o.c === null) return true;
+      if (o.c < cohesionMin) return false;
+      const rival = Math.max(at.get(i - 1)?.c ?? 0, at.get(i + 1)?.c ?? 0);
+      return !(o.c < rivalRatio * rival);
+    };
+    const keep = [];
+    const dead = [];
+    const singles = [];
+    for (const t of tier.terms) {
+      if (ENTITY_TOKEN.test(t)) { keep.push(t); continue; }
+      const cls = classOf(t);
+      if (cls === 'function') { dropped.functions.push(t); cover(t); continue; }
+      if (cls !== 'word' && [...t].length === 1 && UNSEG.test(t)) { singles.push(t); continue; }
+      const parts = cls === 'word' ? [] : gramParts(t);
+      if (parts.length && stats) {
+        if (st(t)?.docs === 0) { dead.push(t); continue; }   // 库里没有：可能是新词，统计也可能是旧数——不盖字、排最后
+        const spots = [...at].filter(([, o]) => o.g === t).map(([i]) => i);
+        const words = spots.filter(wordAt);
+        if (spots.length && !words.length) { dropped.fragments.push(t); continue; }
+        keep.push(t);
+        for (const i of words) covered.fill(1, i, i + 2);
+        if (!spots.length) cover(t);
+        continue;
+      }
+      keep.push(t);
+      cover(t);
+    }
+    // 单字：某一处没被盖住就当词（文字里找不到它的位置时也留着）
+    for (const t of singles) {
+      let found = false;
+      let free = false;
+      chars.forEach((ch, i) => { if (ch === t) { found = true; if (!covered[i]) free = true; } });
+      if (free || !found) keep.push(t);
+    }
+    const ranked = keep.filter((t) => {
+      const x = st(t);
+      const skip = x?.rowFraction >= skipFrac && !(Number.isFinite(x.docs) && x.docs <= minDocs);
+      if (skip) dropped.skipped.push(t);
+      return !skip;
+    }).map((t) => ({ t, idf: st(t)?.idf ?? Infinity, i: tier.terms.indexOf(t) }));   // 没统计到的词（新词）当最稀有
+    ranked.sort(stats ? (a, b) => b.idf - a.idf || a.i - b.i : (a, b) => a.i - b.i);
+    const none = (t) => st(t)?.docs === 0;
+    const names = ranked.map((x) => x.t);
+    return { live: names.filter((t) => !none(t)), dead: [...names.filter(none), ...dead], weight: tier.weight };
+  });
+  const picked = [];
+  const seen = new Set();
+  const add = (t, w) => { if (!seen.has(t)) { seen.add(t); picked.push({ t, w }); } };
+  for (const l of lists) for (const t of l.live) add(t, l.weight);
+  for (const l of lists) for (const t of l.dead) add(t, l.weight);
+  let out = picked.slice(0, Math.max(0, opt.maxTerms ?? 12));
+  if (Number.isFinite(opt.maxPostings)) {
+    const docs = (t) => (Number.isFinite(st(t)?.docs) ? st(t).docs : 0);
+    let total = out.reduce((n, x) => n + docs(x.t), 0);
+    while (total > opt.maxPostings && out.length > 1) {
+      const worst = out.reduce((a, b) => (docs(b.t) > docs(a.t) ? b : a));
+      total -= docs(worst.t);
+      dropped.skipped.push(worst.t);
+      out = out.filter((x) => x !== worst);
+    }
+  }
+  return { terms: out.map((x) => x.t), weights: out.map((x) => x.w), dropped };
+}
+
 /**
  * 原文分表：热路径只要覆盖最近 hotMonths 个月的那几张（按日历算，中间几个月没消息也不会多查更早的），有意回想全查。
  */

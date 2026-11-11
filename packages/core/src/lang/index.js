@@ -26,6 +26,7 @@ import { DEFAULTS } from '../config/defaults.js';
  * @property {(text: string, opt?: {lang?: string, mode?: 'index'|'query'}) => string[]} tokenize
  * @property {(text: string, at: number, lang?: string) => import('../ports/index.js').TimeWindow[]} parseTime
  * @property {(text: string, lang?: string) => number} questionCue
+ * @property {(term: string, lang?: string) => ('function'|'word'|null)} termClass   【D150】查询词的词类（分析器不给就是 null）
  * @property {(lang?: string) => string[]} pastQuestionExemplars
  * @property {(words: string[]) => void} setUserDictionary                                  转给支持的分析器（jieba）
  * @property {{jieba: boolean, langs: string[]}} info                                       给启动自检看
@@ -134,6 +135,19 @@ export function queryTerms(core, text, opt) {
 }
 
 /**
+ * 查询词的词类（D150，词法路挑词用）：'function' 虚词——代词、疑问词、语气词、助词、连词、介词这类封闭词类，
+ * 不带「要找什么」的信息，不当查询词；'word' 分析器认得的整词（用户词典里的名字、别名），优先于虚词；
+ * null 不知道（交给统计）。词类由各语言的分析器给（LanguageAnalyzer.termClass，可选），核心不放词表。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} term  queryTerms 给出的词
+ * @param {{lang?: string}} [opt]
+ * @returns {'function'|'word'|null}
+ */
+export function termClass(core, term, opt) {
+  return registry(core).termClass(String(term ?? ''), opt?.lang);
+}
+
+/**
  * 区分性的词（§7.3 污点检查、§9.4.2 外发初筛、§5.6 告诉过谁的比对）：数字、高 IDF 的二元组、实体名。
  * idf 不给时只返回数字和 names 里命中的名字。exclude 里的词先去掉（外发初筛要去掉线索里本来就有的词）。
  *   - 数字：两位以上的数字串（电话、日期、金额）；
@@ -210,6 +224,11 @@ function withEntities(toks, entityIds) {
   }
   return out;
 }
+/** 分析器给的词类；不给、出错、给了不认识的值都当不知道（null）。 */
+function classOf(a, term) {
+  if (typeof a?.termClass !== 'function') return null;
+  try { const c = a.termClass(String(term ?? '')); return c === 'function' || c === 'word' ? c : null; } catch { return null; }
+}
 const clamp01 = (x) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
 const validWindow = (w) => w && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start;
 
@@ -273,6 +292,7 @@ function buildRegistry(core, analyzers, meta) {
       const a = pick(text, lang);
       try { return clamp01(a.questionCue(String(text ?? ''))); } catch { return 0; }
     },
+    termClass(term, lang) { return classOf(pick(term, lang), term); },
     pastQuestionExemplars(lang) {
       const a = get(lang ?? core.ports?.selfProfile?.locale);
       try { const r = a.pastQuestionExemplars(); return Array.isArray(r) ? r.filter((x) => typeof x === 'string') : []; } catch { return []; }
@@ -342,6 +362,7 @@ function routedUnd(base, owner) {
       }
       return out;
     },
+    termClass(term) { return classOf(owner(term) ?? base, term); },
     questionCue(text) {
       let best = 0;
       for (const a of [base, ...owners(text)]) {

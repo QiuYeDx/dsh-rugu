@@ -326,22 +326,36 @@ export class Engine {
 
   /**
    * BM25 词法查询（§8.2）：逐词加引号再 OR（store.matchQuery），每张表取前 limit，按 −bm25 合并。
-   * @param {{terms: string[], tables: string[], limit: number, maxTerms?: number, hotMonths?: number, maxShards?: number|null, deadlineAt: number}} a
+   * 【D150】weights（和 terms 一一对应，缺省都是 1）：同一个权重的词一起查一次，各组的 −bm25 乘上权重再按行加起来
+   * （焦点的词权重 1、对话其余部分的词轻一些）。FTS5 的 bm25 给不了逐词的权重，分组查是最直接的办法。
+   * @param {{terms: string[], weights?: number[], tables: string[], limit: number, maxTerms?: number, hotMonths?: number, maxShards?: number|null, deadlineAt: number}} a
    * @param {(partial: {table: string, hits: object[]}) => void} [onPartial]
    */
   lexical(a, onPartial) {
-    const q = matchQuery(a.terms, Math.min(MAX_MATCH_TERMS, Math.max(1, a.maxTerms ?? MAX_MATCH_TERMS)));
-    if (!q) return { hits: [], timedOut: false };
+    const max = Math.min(MAX_MATCH_TERMS, Math.max(1, a.maxTerms ?? MAX_MATCH_TERMS));
+    const groups = new Map();
+    (a.terms ?? []).slice(0, max).forEach((t, i) => {
+      const w = Number(a.weights?.[i] ?? 1);
+      if (!(w > 0) || !Number.isFinite(w)) return;
+      if (!groups.has(w)) groups.set(w, []);
+      groups.get(w).push(t);
+    });
+    const queries = [...groups].map(([w, ts]) => ({ w, q: matchQuery(ts, max) })).filter((g) => g.q);
+    if (!queries.length) return { hits: [], timedOut: false };
     const limit = Math.max(1, a.limit ?? DEFAULTS.recall.lexical.topK);
     const all = [];
     let timedOut = false;
     for (const [t, prefix] of this.resolveTables(a.tables, a.hotMonths, a.maxShards ?? null)) {
       if (wallNow() > a.deadlineAt) { timedOut = true; break; }
-      let rows = [];
-      try {
-        rows = this.main.all(`SELECT rowid AS id, bm25(${t}) AS s FROM ${t} WHERE ${t} MATCH ? ORDER BY s LIMIT ?`, q, limit);
-      } catch { rows = []; }   // 某张表坏了只丢这一张
-      const hits = rows.map((r) => ({ ref: `${prefix}${r.id}`, score: -r.s, table: t }));
+      const score = new Map();
+      for (const { w, q } of queries) {
+        let rows = [];
+        try {
+          rows = this.main.all(`SELECT rowid AS id, bm25(${t}) AS s FROM ${t} WHERE ${t} MATCH ? ORDER BY s LIMIT ?`, q, limit);
+        } catch { rows = []; }   // 某张表坏了只丢这一张
+        for (const r of rows) score.set(r.id, (score.get(r.id) ?? 0) - w * r.s);
+      }
+      const hits = [...score].map(([id, sc]) => ({ ref: `${prefix}${id}`, score: sc, table: t }));
       all.push(...hits);
       onPartial?.({ table: t, hits });
     }

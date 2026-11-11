@@ -100,6 +100,11 @@ export class DictMatcher {
       this.maxLen = Math.max(this.maxLen, chars.length);
     }
   }
+  /** 这个词（已经过 prep）是不是词典里的整词。 */
+  has(word) {
+    const w = String(word ?? '').replace(/[\s_]+/g, '');
+    return !!this.byFirst.get([...w][0])?.has(w);
+  }
   /**
    * 文字里出现的词典词，按位置排。
    * @param {string} text 已经过 prep
