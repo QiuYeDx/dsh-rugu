@@ -14,7 +14,8 @@
 // 话题词里方括号的占位（［图片］［视频］［表情包:…］）不算（D113：媒体占位不是话题，原来两张图片「同一个话题」）；有看过的媒体的说明时
 // 拿说明的文字来比（row.note：她看过的媒体的说明，D116 的 intake.seenMedia）。
 // 这里从不看「这里能不能说」（§8.2）：能不能放进心里、说出口是哪一档，由 discretion.admitWorking 判；装哪几段由 context 按软预算定。同步、零 LLM。
-// 她自己开口的一轮（D132）没有「眼前这个人」：context 按「这里的听众」取——recentPartners 给出她最近在别处来往过、又在这里的人，
+// 她自己开口的一轮（D132）没有「眼前这个人」：context 按「这里的听众」取——recentPartners 给出她最近在别处来往过、又在这里的人
+// （听众名单里的、最近在这里说过话的，或者以前在这里说过话的：成员列不全的群里，半小时没开口的人照样是这里的人），
 // 每个人照样走 workingSet（focusPerceptId 为空：话题只拿他在这里最近的几句算）。
 import { safe, selfId, metric } from './util.js';
 
@@ -247,19 +248,21 @@ export function workingSet(core, q, opt = {}) {
 
 /**
  * 她最近在别的场合来往过的人里，哪几个在这里（D132，retrieve.recentPartners 的实现）：别处对她说话的人、她在别处接着回的那个人
- * （她那一句前面最近一条别人亲口说的话，同一场合），按最近一次来往从新到旧；among 是这里的听众（权利层确认的同一个人也算在这里）。
- * 没有时间窗：一次只往回看 recall.working.candidatePool 条；隔得久了的由 workingSet 的 A / tau 自然淡掉（返回了也装不进东西）。
+ * （她那一句前面最近一条别人亲口说的话，同一场合），按最近一次来往从新到旧。「在这里」：在 among 里（这里的听众：名单、最近在这里
+ * 说过话的人），或者以前亲自在这里说过话（成员列不全的群只看得到最近说话的人，半小时没开口的人照样是这里的人）；权利层确认的
+ * 同一个人也算。没有时间窗：一次只往回看 recall.working.candidatePool 条、最多核对最近的 4 × max 个人；隔得久了的由 workingSet 的
+ * A / tau 自然淡掉（返回了也装不进东西）。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string}} q
- * @param {{among: number[], max?: number}} opt
- * @returns {number[]}  听众里的实体 id（among 里的那个），最近来往的在前，最多 max 个
+ * @param {{among?: number[], max?: number}} opt
+ * @returns {number[]}  在这里的那个实体 id，最近来往的在前，最多 max 个
  */
 export function recentPartners(core, q, opt = {}) {
   const W = core.config.get().recall.working;
   const here = q?.settingKey;
   const among = new Set((opt.among ?? []).filter((x) => Number.isSafeInteger(x)));
   const max = Math.max(1, Math.floor(opt.max ?? W?.maxTriggers ?? 3));
-  if (!W?.enabled || typeof here !== 'string' || !here || !among.size) return [];
+  if (!W?.enabled || typeof here !== 'string' || !here) return [];
   const me = selfId(core);
   const pool = Math.max(1, Math.floor(W.candidatePool));
   const kinds = TRIGGER_KINDS.map(() => '?').join(',');
@@ -274,14 +277,18 @@ export function recentPartners(core, q, opt = {}) {
        FROM percepts s WHERE s.setting_key <> ? AND s.actor_self = 1 AND s.kind IN (${SELF_KINDS.map(() => '?').join(',')}) ORDER BY s.id DESC LIMIT ?`,
     ...TRIGGER_KINDS, here, ...SELF_KINDS, pool), []) ?? [];
   const rows = [...toHer, ...replied].filter((r) => Number.isSafeInteger(r.e) && r.e !== me).sort((x, y) => y.id - x.id);
+  // 以前亲自在这里说过话（走 percepts_actor 索引，只问有没有）
+  const spokeHere = (id) => !!safe(core, 'partnersHere', () => core.store.get(
+    `SELECT 1 AS x FROM percepts WHERE actor_entity_id = ? AND setting_key = ? AND actor_self = 0 AND kind IN (${kinds}) LIMIT 1`, id, here, ...TRIGGER_KINDS), null);
   const out = [];
   const seen = new Set();
   for (const r of rows) {
-    if (out.length >= max) break;
+    if (out.length >= max || seen.size >= max * 4) break;
     if (seen.has(r.e)) continue;
     seen.add(r.e);
     // 在这里的是他本人，或者权利层确认的同一个人（另一个平台上的他）
-    const hereId = among.has(r.e) ? r.e : equivalents(core, r.e).find((x) => among.has(x)) ?? null;
+    const ids = equivalents(core, r.e);
+    const hereId = ids.find((x) => among.has(x)) ?? ids.find((x) => spokeHere(x)) ?? null;
     if (hereId == null || out.includes(hereId)) continue;
     out.push(hereId);
   }

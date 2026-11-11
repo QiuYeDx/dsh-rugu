@@ -9,7 +9,7 @@
 //   - intentions：encode.dueIntentions → 按激活排序 → 浮上来前 encode.recheckIntention（评审:SC-08）→ 意图和它指向的事实都过关口①；
 //   - working（工作记忆，§8.10，D100）：第一步就同步算好（working.js），眼前这个人刚在别处跟她说过、她回过他的话确定地在她心里，
 //     写进 recallCached 的缓存（整个回想超时了也拿得到）；放进来的从普通回想的候选里去掉。
-//     她自己开口的一轮（空闲唤醒，D132）没有「眼前这个人」，按「她要对谁说」取（addresseesFor：这里的听众里，一对一就是对方，
+//     她自己开口的一轮（空闲唤醒，D132）没有「眼前这个人」，按「她要对谁说」取（addresseesFor：一对一就是对方，
 //     群里是她最近在别处来往过、又在这里的人）；这些人也算在场（人物卡、在场者近况、对着他的意图），「今天到目前为止」也给。
 // 「看起来在问过去」（§6.6、§8.5）：对她说的话看起来在问过去，就把这一轮切到有意回想（τ_del、可以等到 3 秒）。
 // 重新开始（§10.5、§17 Q6）：只给常驻区和长期记忆，不给「这里最近在聊什么」（暖启动、时间间隔、重新开始前不久的原文），
@@ -661,8 +661,8 @@ function presentOf(core, cset, key, at, selfId, lead, cfg) {
 }
 
 /**
- * 她自己开口的一轮要对谁说（D132）：这里的听众（名单 + 最近在这里说过话的人）里——一对一就是对方；别的场合是她最近在别处来往过、
- * 又在这里的人（retrieve.recentPartners：按最近一次来往从新到旧，没有时间窗，最多 recall.working.maxTriggers 个）。
+ * 她自己开口的一轮要对谁说（D132）：一对一就是对方；别的场合是她最近在别处来往过、又在这里的人（retrieve.recentPartners：
+ * 在这里 = 听众名单里的、最近在这里说过话的，或者以前在这里说过话的；按最近一次来往从新到旧，没有时间窗，最多 recall.working.maxTriggers 个）。
  * 公开的、不认识的场合没有（工作记忆本来就不进这些场合）。只决定工作记忆替谁算、谁算在场；能不能进来照旧由 discretion.admitWorking 判。
  * @returns {number[]}
  */
@@ -670,8 +670,7 @@ function addresseesFor(core, target, { key, selfId, cfg }) {
   const a = target?.audience;
   if (!a?.known || a.publicLike) return [];
   const people = [...new Set([...(a.members ?? []), ...(a.recentSpeakers ?? [])])].filter((x) => Number.isSafeInteger(x) && x !== selfId);
-  if (!people.length) return [];
-  if (a.oneOnOne && people.length === 1) return people;
+  if (a.oneOnOne) return people.length === 1 ? people : [];
   const max = Math.max(1, Math.floor(cfg.recall.working?.maxTriggers ?? 3));
   return (core.mods.retrieve.recentPartners?.(core, { settingKey: key }, { among: people, max }) ?? []).filter((x) => Number.isSafeInteger(x) && x !== selfId);
 }

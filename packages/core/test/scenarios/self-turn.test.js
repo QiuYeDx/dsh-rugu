@@ -119,16 +119,18 @@ test('候选缓存有新鲜度：这个场合一直没有新消息，过了 reca
   } finally { await w.close(); }
 });
 
-test('群里她自己开口：最近在别处来往过、又在这里的人，他私下说的话在她心里（带「你们俩私聊时」）；不在这里的人的不进来；原样转述出去照旧被外发守护挡下', async () => {
+test('群里她自己开口：最近在别处来往过、又在这里的人（半小时没开口也算），他私下说的话在她心里（带「你们俩私聊时」）；不在这里的人的不进来；原样转述出去照旧被外发守护挡下', async () => {
   const w = await world('st-group');
   try {
-    // 朋友私下说的：他不在这个群的听众里（最近没在这里说过话）
+    // 朋友私下说的：他不是这个群的人（从没在这里说过话）
     const moving = w.say('friendDm', 'friend', '我下个月要搬家了，先别跟别人说', TO_HER);
     w.say('friendDm', 'her', '好，我不说');
+    // 他几个小时前在群里说过话：成员列不全的群里看不到他「最近在这里」，但他是这里的人
+    w.say('groupY', 'principal', '中午吃什么好', AMBIENT);
+    await w.flush();
+    w.clock.advance(3 * 60 * MINUTE);
     const leave = w.say('oneOnOne', 'principal', '我今天请假了，在家休息', TO_HER);
     w.say('oneOnOne', 'her', '那你好好歇着');
-    // 他十分钟前在群里说过话：在这里
-    w.say('groupY', 'principal', '中午吃什么好', AMBIENT);
     await w.flush();
     await w.core.mods.discretion.glancesIdle(w.core);
     w.clock.advance(10 * MINUTE);

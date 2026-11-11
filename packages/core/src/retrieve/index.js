@@ -235,12 +235,12 @@ export function workingSet(core, cues, opt) {
 
 /**
  * 【补】她最近在别的场合来往过的人里，哪几个在这里（D132；同步、零 LLM）：她自己开口的一轮没有「眼前这个人」，context 拿它定
- * 「她要对谁说」，再按每个人各算一份 workingSet。来往 = 别处对她说的话、她在别处接着回的那个人；among 是这里的听众（权利层确认的
- * 同一个人也算在这里）。按最近一次来往从新到旧，最多 max 个（默认 recall.working.maxTriggers）；没有时间窗，一次往回看
- * recall.working.candidatePool 条。不抛错：出问题返回空的。
+ * 「她要对谁说」，再按每个人各算一份 workingSet。来往 = 别处对她说的话、她在别处接着回的那个人；在这里 = 在 among 里（这里的听众），
+ * 或者以前亲自在这里说过话（成员列不全的群），权利层确认的同一个人也算。按最近一次来往从新到旧，最多 max 个（默认
+ * recall.working.maxTriggers）；没有时间窗，一次往回看 recall.working.candidatePool 条。不抛错：出问题返回空的。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{settingKey: string}} q
- * @param {{among: number[], max?: number}} opt
+ * @param {{among?: number[], max?: number}} opt
  * @returns {number[]}
  */
 export function recentPartners(core, q, opt) {
