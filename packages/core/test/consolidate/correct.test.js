@@ -99,7 +99,7 @@ test('a163 那一类：她自己说的「收不到群里的消息」被挑中；
     assert.equal(op.certainty, 'stated', '证据是主人说的');
     assert.equal(op.confidence, 0.9);
     assert.deepEqual(op.evidence, [s.fix]);
-    assert.match(op.extractVer, /^consolidate-correction-v1#/);
+    assert.match(op.extractVer, /^consolidate-correction-v2#/);
     const row = w.core.store.get('SELECT * FROM memory_checks WHERE assertion_id = ?', s.claim.id);
     assert.equal(row.verdict, 'corrected');
     assert.ok(row.result_id > s.claim.id);

@@ -1,4 +1,4 @@
-// 核验（§7.4 的 14 条，纯代码，防「种植记忆」）：只检查提炼输出里各个结构化字段之间是否自洽，不用词表（评审:UV-04）。
+// 核验（§7.4 的 15 条，纯代码，防「种植记忆」）：只检查提炼输出里各个结构化字段之间是否自洽，不用词表（评审:UV-04）。
 // 不通过的丢弃（dropped 里记规则号和理由），能改判的改判（rewritten 计数）。说话人、来源方式、确定程度、转了几手都由代码
 // 从证据消息的结构算出来，不信模型自报。读库只为了权限、配额和「告诉过谁」，不写。
 import {
@@ -7,6 +7,7 @@ import {
 } from './util.js';
 import { assertionSubjects, assertionRow, quotaUsed, quotaLimit, selfIdOf } from './write.js';
 import { parseRef } from '../store/refs.js';
+import { echoOf } from './support.js';
 
 const FACTISH = new Set(['fact', 'plan', 'self', 'rel']);
 const SELF_ALIASES = new Set(['我', 'self', 'me']);
@@ -204,8 +205,8 @@ export function verify(core, lines, ctx) {
     const text = typeof l.text === 'string' ? l.text.trim() : '';
     if (!text) { drop(l, 0, 'no-text'); continue; }
     let type = l.type;
-    const evCodes = ev.rows.map(codeOfPercept);
-    const allHer = evCodes.every((c) => c === '我');
+    let evCodes = ev.rows.map(codeOfPercept);
+    let allHer = evCodes.every((c) => c === '我');
     const claimed = cc(l.speaker);
     let speaker = claimed && evCodes.includes(claimed) ? claimed : evCodes[0];
     if (claimed && claimed !== speaker) rewritten += 1;
@@ -217,6 +218,25 @@ export function verify(core, lines, ctx) {
     if (unknownSubj.length) { subjects = subjects.filter(known); rewritten += 1; }
     if (type === 'self' && !subjects.length) subjects = ['我'];
     if (!subjects.length) { drop(l, 7, 'no-known-subject'); continue; }
+    // 第 15 条（D157）：关于别人的事实要落到「谁说了能支撑它的话」上。对方那一侧只是在问（或什么都没说）、内容出自她自己的话的，
+    // 是她凭记忆答的、猜的，不是那个人说的事实：她的看法照旧算她自己说的（下面「她说的」那一支），别的不写（叙述和原话里都有）。
+    // 只引了她的回答、没引那句问话的，按这一段里她前面那句问话认（encode/support.js）
+    let echo = null;
+    if (type !== 'self' && !subjects.includes('我') && ev.rows.some((p) => p.actor_self)) {
+      const e = echoOf(core, { text, names: subjects.map(label), rows: ev.rows, segment: ctx.percepts ?? [] });
+      if (e.echo) {
+        echo = e;
+        const herRows = ev.rows.filter((p) => p.actor_self);
+        if (herRows.length !== ev.rows.length) {
+          ev.rows = herRows;
+          ev.refs = ev.refs.filter((r) => herRows.some((p) => p.id === msgRefs.get(r)));
+          evCodes = ev.rows.map(codeOfPercept);
+          allHer = true;
+          speaker = '我';
+          rewritten += 1;
+        }
+      }
+    }
     const object = type === 'rel' ? cc(l.b) : cc(l.object);
     const out = {
       ...l, type, id: l.__id, text: delabel(clip(text, cfg.extract.factTextMax)), subjects, object: object && known(object) ? object : null,
@@ -234,6 +254,8 @@ export function verify(core, lines, ctx) {
       if (type !== 'self') rewritten += 1;
       type = 'self'; speaker = '我'; asserter = '我'; certainty = 'self_said'; hop = 0;
     } else if (allHer) {
+      // 第 15 条（D157）：她凭记忆答别人的问、猜别人的事，不写成关于那个人的事实；她的看法（opinion）照旧是她说的
+      if (echo && l.kind_hint !== 'opinion') { drop(l, 15, echo.asked ? 'echo-answer' : 'echo'); continue; }
       // 第 13 条：她复述已有记忆的话不新建（来源继承原记忆，确定程度不升）
       if (retold(ev.rows)) { drop(l, 13, 'retell'); continue; }
       speaker = '我'; asserter = '我'; certainty = certainty === 'inferred' ? 'inferred' : 'self_said'; hop = 1;

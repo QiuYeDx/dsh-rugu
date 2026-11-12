@@ -193,6 +193,9 @@ export const DEFAULTS = deepFreeze({
       selfClaimConfidenceMax: 0.6, selfClaimImpMax: 4,
       selfAbilityConfidenceMax: 0.4, selfAbilityImpMax: 3,
     },
+    // §7.4 第 15 条（D157）：关于别人的事实要落到「谁说了能支撑它的话」上（encode/support.js）。分句的问句线索（lang.questionCue）
+    // 到 questionMin 算在问：一句问话不是证据，对方那一侧只有问话、内容出自她自己的话的，是她凭记忆答的，不写成那个人的事实
+    support: { questionMin: 0.6 },
   },
   reconcile: {                           // §7.5
     maxCandidates: 30,                   // 重复 / 矛盾候选（只是条数上限，不设分数门槛）

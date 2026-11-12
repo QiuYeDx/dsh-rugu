@@ -596,6 +596,7 @@ export function reviseAssertion(core, id, patch, ctx) {
  *   raise：把握升到 confidence（只升不降；新版本、来源照抄；上限由调用方给，确认过的不动）。
  *   changed：只标「变了但不知道变成什么」（change_known=1）：不加来源（证据记在调用方那里）、不加痕迹——
  *            过时的事不该因此更容易被想起，主人的那句话也不会让它变成「主人说的」。
+ *   withdraw：【D157】收回：只标过时（expired_at），不取代、不加来源；原话和那段经历都还在（清查她凭记忆答的话被记成了别人的事实）。
  *   restore：主人撤销一次改正：照 from（改之前的那一版）复制出新版本，确定程度 confirmed、把握至少 0.9、不带「变了」，取代现在这一版。
  * 换版本时还开着的意图跟着指向新版本。
  */
@@ -622,6 +623,11 @@ export function applyCorrection(core, id, c, ctx = {}) {
     }
     if (c.op === 'changed') {
       core.store.run('UPDATE assertions SET change_known = 1, updated_at = ? WHERE id = ?', core.now(), id);
+      return old.id;
+    }
+    if (c.op === 'withdraw') {
+      // D157：收回（不再当成事实；不取代、不删，原话和那段经历都还在）。撤销时 restore 照它恢复出新的一版
+      core.store.run('UPDATE assertions SET expired_at = COALESCE(expired_at, ?), updated_at = ? WHERE id = ?', at, core.now(), id);
       return old.id;
     }
     if (c.op === 'restore') {

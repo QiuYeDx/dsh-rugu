@@ -1629,11 +1629,12 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
         }
         case 'checks': {
           // 夜里对照原话核对的一条（D122）：原来记的 → 改成什么、为什么、依据是哪几句原话
-          const [vName, vTone] = CHECK[x.verdict] ?? [x.verdict, ''];
+          const [vName, vTone] = x.withdrawn ? ['收回了', 'warn'] : CHECK[x.verdict] ?? [x.verdict, ''];
           const old = x.before?.text ?? '（这条已经被彻底删除了）';
           const lines = [];
           if (x.verdict === 'corrected') lines.push(h('div', null, h('span', { class: 'pm-faint' }, '原来记的：'), old), h('div', null, h('span', { class: 'pm-faint' }, '改成：'), x.after?.text ?? '（新的一条已经被删除了）'));
           else if (x.verdict === 'changed') lines.push(h('div', null, old), h('div', { class: 'pm-faint' }, '后来变了，现在是什么样还不知道；她提起时会说「以前是这样」。'));
+          else if (x.verdict === 'doubted' && x.withdrawn) lines.push(h('div', null, old), h('div', { class: 'pm-faint' }, '收回了：这条只有她自己的话撑着（多半是她凭记忆答别人的问），不再当成事实；那段经历和原话都还在。'));
           else if (x.verdict === 'doubted') lines.push(h('div', null, old), h('div', { class: 'pm-faint' }, `原话撑不住这条（多半只是她自己随口一说）：把握从 ${pct(x.beforeConf)} 降到 ${pct(x.afterConf ?? x.beforeConf)}，她再提起会说「好像」。`));
           else lines.push(h('div', null, old));
           if (x.why) lines.push(h('div', null, h('span', { class: 'pm-faint' }, '为什么：'), x.why));

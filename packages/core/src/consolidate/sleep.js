@@ -30,6 +30,7 @@ import { storylineBatch, settingsNeedingStoryline } from './storyline.js';
 import { rebuildCommunities } from './communities.js';
 import { selfStep } from './self.js';
 import { correctStep } from './correct.js';
+import { echoSweep } from './echo.js';
 import { lessonsStep } from './lessons.js';
 
 const numMeta = (core, key) => {
@@ -432,10 +433,13 @@ async function runSleep(core, at, signal) {
   await step(1, 'seal-review', () => stepSeal(core, ctx));
   await step(2, 'replay', async () => {
     // 先对照原话纠错（D122；有 LLM 调用，额度和预算不够就只做重放），再重放：改正后的新版本继承了旧的激活，重放挑的是现在这一版
+    // 再之前（D157，纯代码）：清查她凭记忆答的话被记成别人的事实——明确的收回，拿不准的标上，同一晚的纠错先核它们
+    let echo;
+    try { echo = echoSweep(core, { at }); } catch (e) { echo = { skipped: `error:${errCode(e)}` }; }
     let correct;
     try { correct = await correctStep(core, { run, signal, at }); } catch (e) { correct = { skipped: `error:${errCode(e)}` }; }
     const r = replayStep(core, ctx);
-    return { detail: { ...r.detail, correct }, errors: r.errors };
+    return { detail: { ...r.detail, echo, correct }, errors: r.errors };
   });
   await step(3, 'generalize', async () => wrap(await generalizeStep(core, { run, signal, at })), { llm: true });
   await step(4, 'reflect', async () => wrap(await reflectStep(core, { run, signal, at })), { llm: true });

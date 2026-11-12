@@ -369,9 +369,10 @@ function applyBatch(core, b) {
     const asserterId = idOf(l.asserter) ?? speakerId;
     const evidence = l.evidence.map((id) => pById.get(id)).filter(Boolean);
     const usedBg = [...new Set((l.used_bg ?? []).map((c) => prompt.bgCodes.get(c) ?? c).filter((r) => parseRef(r)))];
+    // 断言人是说出那句话的人（D157）：她自己的话断言人就是她，不是这条事实的断言人（原来她答别人的话被记成「对方说的」）
     const sources = evidence.map((p) => ({
       perceptId: p.id, snapshotId: p.snapshot_id, perceivedIn: p.perceived_in,
-      speaker: p.actor_self ? self : (p.actor_entity_id ?? speakerId), asserter: asserterId,
+      speaker: p.actor_self ? self : (p.actor_entity_id ?? speakerId), asserter: p.actor_self ? self : asserterId,
       mode: l.mode === 'inferred' || l.mode === 'self_generated' ? l.mode : modeOfPercept(p), hop: l.hop,
       quote: p.id === l.quotePercept ? l.quote : null, confidence: l.confidence, usedBg, at: p.at,
     }));
