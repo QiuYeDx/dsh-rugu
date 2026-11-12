@@ -319,6 +319,27 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
   // 只有前台的这一轮记（后台的 maybePrepare、预取不写：评审，原来后台的一次回想会把「问的是谁」换掉）
   if (s.sessionId && !prefetch && !background) guard('turn', () => noteTurn(core, s.sessionId, key, triggers, focus, at, { self: selfTurn }));
 
+  // 这句话是不是在跟她说（D158）：按意思判断（第一眼的 to），不按有没有 @。结构上是旁听、第一眼还在看的，等它一小会儿
+  // （discretion.glance.recallWaitMs，第一眼把它排到最前）；等到了重新读这一行（可能已经被抬成对她说的），等不到照结构上的值走——
+  // 看完以后抬高了，下一次回想（宿主每一步模型调用前都会回想一次）自然用上。不用代码规则去猜
+  let waitedMs = 0;
+  if (!selfTurn && !background && !prefetch && s.trigger === 'message' && focus && !focus.actor_self && focus.addressed === 'ambient') {
+    const w0 = performance.now();
+    const ms = Math.max(0, Number(cfg.discretion?.glance?.recallWaitMs ?? 0));
+    const r = ms > 0 ? await guardAsync('addressee', () => core.mods.discretion.awaitAddressee(core, focus.id, ms, opt.signal ?? null), 'none') : 'none';
+    if (r !== 'none') {
+      waitedMs = performance.now() - w0;
+      try { bumpMetric(core.store, `context.addresseeWait.${r}`); } catch { /* 只是计数 */ }
+      if (r === 'done') {
+        const again = guard('focus', () => perceptById(core, key, focus.id), null);
+        if (again) {
+          focus = again;
+          for (const t of triggers) if (t.entityId === focus.actor_entity_id) t.focus = focus;
+        }
+      }
+    }
+  }
+
   // 「看起来在问过去」→ 有意回想（§6.6 (b)）；拿不准也切（评审:SC-22）
   let mode = opt.mode;
   if (mode === 'involuntary' && !selfTurn && focus && isToHer(focus) && focus.text && focus.kind === 'utterance') {
@@ -327,7 +348,9 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
   // 查询模型正在冷加载（闲了很久以后的第一句话，要两三秒）：这一轮多等一会儿，等到有意回想的截止时间，
   // 不然这一轮必然没有查询向量，只能按字面想（实测问题 #1）。模式不变，只是截止时间放宽；集成层本来就按这个时间等
   const cold = mode === 'involuntary' && !background && s.trigger === 'message' && queryWarming(core);
-  const deadlineMs = mode !== opt.mode || cold ? Math.max(opt.deadlineMs, cfg.recall.deliberate.deadlineMs) : opt.deadlineMs;
+  // 等第一眼的那一会儿（D158）不算进不自主回想自己的时间，但总共不超过有意回想的截止时间（集成层按它等）
+  const deadlineMs = mode !== opt.mode || cold ? Math.max(opt.deadlineMs, cfg.recall.deliberate.deadlineMs)
+    : Math.min(opt.deadlineMs + waitedMs, Math.max(opt.deadlineMs, cfg.recall.deliberate.deadlineMs));
   if (cold) core.log.info('context.recall.coldWait', { deadlineMs });
   const left = () => Math.max(0, deadlineMs - (performance.now() - t0));
   // 直接对她说的消息触发的这一轮（D99，实测问题 #5）：关口①第二段没判过的条目，这一轮可以等它到有意回想的截止时间

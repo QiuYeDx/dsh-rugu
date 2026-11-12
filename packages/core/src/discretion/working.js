@@ -62,6 +62,8 @@ const AT_SIGNS = /[@＠]/gu;
 export function withoutAddress(core, p, memo) {
   const text = String(p?.text ?? '');
   if (!text || !(p.addressed === 'to-her' || p.addressed === 'mentions-her')) return text;
+  // 第一眼按意思抬上来的（D158，glances.raised）：结构上是旁听，话里的 @ 不是在叫她，一个都不去掉
+  if (Number.isSafeInteger(p.id) && raisedByGlance(core, p.id)) return text;
   const ats = [...text.matchAll(AT_SIGNS)].map((m) => m.index);
   if (!ats.length) return text;
   let mj = p.mentions_json;
@@ -89,6 +91,11 @@ export function withoutAddress(core, p, memo) {
     if (n) out = `${out.slice(0, at)} ${out.slice(at + 1 + n.length)}`;
   }
   return out;
+}
+
+/** 这句话的 addressed 是第一眼按意思抬上来的（D158）。查不了按不是（结构上的值）。 */
+function raisedByGlance(core, id) {
+  try { return core.store.get('SELECT raised FROM glances WHERE percept_id = ?', id)?.raised != null; } catch { return false; }
 }
 
 /**
