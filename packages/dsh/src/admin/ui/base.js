@@ -782,6 +782,8 @@
 
   // ── 提示条（toast）和延迟提交 ─────────────────────────────────────────────
   let toastEl = null; let toastTimer = 0;
+  // 现在这条提示条带着的延迟操作（有的话）。提示条一被换掉，「撤销」就点不到了，所以那一刻把它立刻提交（D172 评审）
+  let toastJob = null;
   /**
    * 底部的提示条。tone='bad' 是出错（多停一会儿）。有 undo 时带「撤销」按钮，点了调 undo。返回提示条元素。
    * @param {string} text
@@ -790,6 +792,7 @@
   function toast(text, { undo, undoLabel = '撤销', tone = '', duration } = {}) {
     toastEl?.remove();
     clearTimeout(toastTimer);
+    if (toastJob) { const j = toastJob; toastJob = null; j.flush(); }
     const t = h('div', { class: `toast${undo ? '' : ' solo'}${tone ? ` ${tone}` : ''}`, role: tone === 'bad' ? 'alert' : 'status', 'aria-live': 'polite' },
       tone === 'bad' ? icon('alert', 16) : null, h('span', null, text),
       undo ? h('button', { type: 'button', onclick: () => { t.remove(); undo(); } }, undoLabel) : null);
@@ -814,18 +817,21 @@
         if (state !== 'waiting') return;
         state = 'running';
         clearTimeout(timer); pendingCommits.delete(job);
+        if (toastJob === job) toastJob = null;
         try { const r = await commit(); done?.(r); } catch (e) { toast(errorText(e), { tone: 'bad' }); undo?.(); }
       },
       cancel() {
         if (state !== 'waiting') return;
         state = 'cancelled';
         clearTimeout(timer); pendingCommits.delete(job);
+        if (toastJob === job) toastJob = null;
         undo?.();
       },
     };
     const timer = setTimeout(() => job.flush(), delay);
     pendingCommits.add(job);
     toast(text, { undo: () => job.cancel(), duration: delay });
+    toastJob = job;
     return job;
   }
   /** 立刻提交全部还在等的延迟操作。 */
@@ -1021,6 +1027,11 @@
     cur = parseHash(G.location.hash);
     if (!G.location.hash) G.history.replaceState(null, '', buildHash(cur.path));
     render();
+    // 导航上「待处理」的数字：首页和待处理页打开时自己会设；直接打开别的去处时这里读一次（读不到就不显示，不打扰）
+    const dest = String(cur.path ?? '').split('/')[0];
+    if (dest !== 'home' && dest !== 'pending') {
+      api.get('home').then((d) => { if (d?.pending) R.setPendingCount(d.pending.total); }).catch(() => {});
+    }
   }
   R.start = start;
 

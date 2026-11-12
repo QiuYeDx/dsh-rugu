@@ -117,7 +117,7 @@ Rugu.define('home', (R) => {
       ...p.top.slice(0, 3).map((x) => {
         const t = pendingText(d, x);
         return row({ lead: h('span', { class: 'lead sm' }, icon(t.ic, 16)), title: t.title, strong: true,
-          meta: metaLine(t.cap, x.urgent ? h('span', { class: 'home-urgent' }, '要紧') : null, inPlace(d, x.settingKey), fmt.when(x.at, d.now)), onOpen: () => R.go(t.to),
+          meta: metaLine(t.cap, x.urgent ? h('span', { class: 'home-urgent' }, '要紧') : null, inPlace(d, x.settingKey), fmt.when(x.at, d.now)), onOpen: () => R.go(t.to, { params: { open: `${x.source === 'needToKnow' ? 'ntk' : 'rv'}-${x.id}` } }),
           trail: h('span', { 'aria-hidden': 'true' }, icon('right', 16)) });
       }),
     ];
