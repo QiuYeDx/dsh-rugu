@@ -8,6 +8,7 @@
 // 全库最新一条感知的 id（any），她自己开启的一轮只在「别处也没有新的事」时才沿用（elsewhere）——这里没人说话不等于她没有新的经历。
 import { budgetLimits } from '../config/defaults.js';
 import { registerPromptVersion } from '../store/kv.js';
+import { stripThinking, stripFences, jsonValuesIn } from '../ports/llm-text.js';
 import { buildCues, cuesEmpty } from './cues.js';
 import { runRecall } from './pipeline.js';
 import { params } from './params.js';
@@ -226,7 +227,8 @@ const ABOUT_MAX = 3;
  */
 export function parseRewrite(text, opt = {}) {
   const maxCues = Math.max(1, Math.min(3, Number(opt.maxCues) || 3));
-  const raw = typeof text === 'string' ? text : '';
+  // 开头的思考段（<think>…</think>，D169）不算：里面的草稿不当成线索
+  const raw = typeof text === 'string' ? stripThinking(text) : '';
   const empty = { cues: [], about: [], time: null, where: null, shape: null, structured: false };
   try {
     const obj = jsonObjectIn(raw);
@@ -248,25 +250,15 @@ export function parseRewrite(text, opt = {}) {
   } catch { return empty; }
 }
 
-/** 文字里第一段能解析的 JSON 对象（去掉代码块；从一个「{」到与它配对的「}」，解析不了就从下一个「{」再找）。 */
+/**
+ * 文字里第一段能解析的 JSON 对象（去掉代码块；前后多余的文字、数组里的、行尾逗号和中文冒号都认）。D169 起和第一眼、第二段评估共用
+ * ports/llm-text.js 的扫描，不再自己写一份。
+ */
 function jsonObjectIn(text) {
-  const t = text.replace(/```(?:json)?/giu, '');
-  for (let start = t.indexOf('{'); start >= 0; start = t.indexOf('{', start + 1)) {
-    let depth = 0;
-    let inStr = false;
-    for (let i = start; i < t.length; i++) {
-      const c = t[i];
-      if (inStr) { if (c === '\\') i++; else if (c === '"') inStr = false; continue; }
-      if (c === '"') inStr = true;
-      else if (c === '{') depth++;
-      else if (c === '}' && --depth === 0) {
-        try {
-          const v = JSON.parse(t.slice(start, i + 1));
-          if (v && typeof v === 'object' && !Array.isArray(v)) return v;
-        } catch { /* 这一段不是，往后找 */ }
-        break;
-      }
-    }
+  for (const { value } of jsonValuesIn(stripFences(text))) {
+    const list = Array.isArray(value) ? value : [value];
+    const o = list.find((v) => v && typeof v === 'object' && !Array.isArray(v));
+    if (o) return o;
   }
   return null;
 }

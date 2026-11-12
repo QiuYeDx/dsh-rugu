@@ -1,6 +1,8 @@
 // LLMPort（§3.3、§10.6）：自己包宿主的 ctx.llm.stream。宿主没有 purpose 字段（H4），用途、模型选择、排队、计数全在这里。
 //   - 每个用途的模型在配置里写明、必须在允许清单里，不跟随宿主的默认模型；后台模型是精确 id deepseek-flash，思考关（附录 G）；
 //   - 推理强度取模型支持的最低档，temperature 0.2；超时：提炼 60 秒，评估和审视 8 秒；
+//   - 别家模型（D169）：temperature 因「请求参数被拒」失败时不带它立刻重试一次，成了就记住这一对不带；关不掉思考的（输出 token 远多于正文）
+//     记住这一对，之后 maxTokens 乘余量（llm.thinkingHeadroom）；两样都按 provider/model 记在内存里，和思考档缓存放在一起；
 //   - 四条队列：提炼和夜间整理（并发 1、两次至少隔 5 秒、连续失败按 1 / 4 / 16 分钟退避），第二段评估（并发 2），外发审视（单独一条），
 //     第一眼（use='glance'，并发 2，D106）；
 //   - 用量从 usage 块取（未命中 / 命中 / 输出分开），报给 BudgetPort；失败的调用（超时、中止、报错）也报一次（D120），宿主报了用量就带上；宿主报余额用完（402：API key 提供方是 QUOTA，
@@ -16,6 +18,13 @@ const LOW_EFFORTS = ['off', 'none', 'minimal', 'low'];
 const STOP_OF = { stop: 'end', 'max-tokens': 'length', 'tool-calls': 'other' };
 
 const llmError = (code, message = code) => Object.assign(new Error(message), { code });
+/**
+ * 请求参数被拒的错误码（D169）：@deepseek-ai/dsh-llm-deepseek 和 dsh-llm-pi-ai 把服务商的 400 / 413 / invalid_request_error
+ * 都归成 INVALID_REQUEST，pi-ai 不支持的选项是 UNSUPPORTED_OPTION。推理系、开着思考的模型拒收 temperature 时就是这一类。
+ */
+export const PARAM_REJECT_CODES = Object.freeze(['INVALID_REQUEST', 'UNSUPPORTED_OPTION']);
+/** 关不掉思考的检测和余量的默认值（host 配置 llm.thinkingHeadroom 可改）：输出 token ≥ minTokens 且 > ratio × 正文字数 → 之后 maxTokens × factor。 */
+const HEADROOM = Object.freeze({ ratio: 3, factor: 3, minTokens: 64 });
 /** @deepseek-ai/dsh-llm 的 QUOTA_EXCEEDED_CODE 和 ACCOUNT_QUOTA_EXCEEDED_CODE。 */
 export const QUOTA_CODES = Object.freeze(['QUOTA', 'ACCOUNT_QUOTA']);
 
@@ -40,6 +49,10 @@ export function createLlmPort({ getLlm, getDefaultSelection = () => null, hostCo
     glance: new TaskQueue({ concurrency: cfg().concurrency?.glance ?? 2, now }),
   };
   const efforts = new Map();       // provider/model → 档位（undefined = 不传）
+  // D169：别家模型的参数和能力差异，和思考档一样按 provider/model 记在内存里（重启后重新探）
+  const noTemp = new Map();        // provider/model → true：不带 temperature 才成；false：不带也被拒，不再试
+  const thinkHeavy = new Set();    // provider/model：关不掉思考（输出 token 远多于正文），之后 maxTokens 乘余量
+  const headroom = () => ({ ...HEADROOM, ...(cfg().thinkingHeadroom ?? {}) });
   const stats = { calls: 0, failures: 0, byUse: {}, lastError: null, backoffUntil: 0, bgFailures: 0 };
   let closed = false;
 
@@ -89,12 +102,18 @@ export function createLlmPort({ getLlm, getDefaultSelection = () => null, hostCo
     const llm = getLlm();
     if (!llm?.stream) throw llmError('NO_LLM', '宿主没有模型服务');
     const target = { provider: providerOf(), model: modelFor(use) };
+    const k = `${target.provider}/${target.model}`;
+    state.key = k;
     const effort = await effortFor(llm, target);
     const timeoutMs = cfg().timeoutMs?.[use] ?? 20_000;
     const sig = anySignal([signal, AbortSignal.timeout(timeoutMs)]);
+    // D169：拒收 temperature 的不带；关不掉思考的 maxTokens 乘余量（思考也算在输出上限里，短输出的用途会被吃光）
+    state.withTemp = !state.dropTemp && noTemp.get(k) !== true;
+    const baseMax = req.maxTokens ?? 2000;
     const opts = {
       provider: target.provider, model: target.model, system: String(req.system ?? ''), messages: toHostMessages(req.messages, target),
-      maxTokens: req.maxTokens ?? 2000, temperature: cfg().temperature ?? 0.2, signal: sig, ...(effort ? { reasoningEffort: effort } : {}),
+      maxTokens: thinkHeavy.has(k) ? Math.ceil(baseMax * headroom().factor) : baseMax,
+      ...(state.withTemp ? { temperature: cfg().temperature ?? 0.2 } : {}), signal: sig, ...(effort ? { reasoningEffort: effort } : {}),
     };
     let text = '';
     let usage = null;
@@ -122,10 +141,40 @@ export function createLlmPort({ getLlm, getDefaultSelection = () => null, hostCo
     const u = usageOf(usage);
     // 宿主没报用量：按字数估（约 1.5 字一个 token），预算里单独记成 estimated
     if (!usage) { u.in = Math.round((String(req.system ?? '').length + JSON.stringify(req.messages ?? []).length) / 1.5); u.out = Math.round(text.length / 1.5); }
+    // 关不掉思考（D169）：宿主报的输出 token 远多于正文的字数——多出来的是思考。DeepSeek flash 思考关时输出 token 不超过正文字数，不会触发
+    else if (!thinkHeavy.has(k)) {
+      const h = headroom();
+      if (u.out >= h.minTokens && u.out > h.ratio * Math.max(1, [...text].length)) {
+        thinkHeavy.add(k);
+        log.info('llm.thinkingHeavy', { provider: target.provider, model: target.model });
+      }
+    }
     // 为什么停下（D141）：宿主的 finish 块给 stop / max-tokens / tool-calls（各家供应商的 length、max_tokens 都翻成 max-tokens）；
     // 没有 finish 块、或者是不认识的，就不带（核心有退路）
     const stopReason = STOP_OF[kind];
     return { text, usage: u, model: target.model, estimated: !usage, ...(stopReason ? { stopReason } : {}) };
+  }
+
+  /**
+   * 调一次；带着 temperature 因为「请求参数被拒」失败了（PARAM_REJECT_CODES），立刻不带 temperature 再试一次（D169）：成了就记住这一对不带，
+   * 不带也被拒就记住不再试。别的错不重试。被拒的那一次照样报给预算（失败的调用，D120）。
+   */
+  async function callCompat(req, use, signal, state) {
+    try { return await callOnce(req, use, signal, state); } catch (e) {
+      const k = state.key;
+      if (!k || !state.withTemp || noTemp.has(k) || !PARAM_REJECT_CODES.includes(e?.code) || signal?.aborted) throw e;
+      if (state.sent) { try { budget.record?.(use, e?.usage ?? null, { sourceKey: req.meta?.sourceKey, failed: true }); } catch { /* 忽略 */ } }
+      const retry = { sent: false, dropTemp: true };
+      try {
+        const r = await callOnce(req, use, signal, retry);
+        noTemp.set(k, true);
+        log.info('llm.noTemperature', { provider: k.split('/')[0], model: k.slice(k.indexOf('/') + 1) });
+        return r;
+      } catch (e2) {
+        if (PARAM_REJECT_CODES.includes(e2?.code)) noTemp.set(k, false);
+        throw e2;
+      } finally { state.sent = retry.sent; }
+    }
   }
 
   return {
@@ -146,7 +195,7 @@ export function createLlmPort({ getLlm, getDefaultSelection = () => null, hostCo
         stats.byUse[use] = (stats.byUse[use] ?? 0) + 1;
         const state = { sent: false };
         try {
-          const { estimated, ...r } = await callOnce(req, use, signal, state);
+          const { estimated, ...r } = await callCompat(req, use, signal, state);
           if (qn === 'bg') { stats.bgFailures = 0; stats.backoffUntil = 0; }
           try { budget.record?.(use, r.usage, { sourceKey: req.meta?.sourceKey, ...(estimated ? { estimated: true } : {}) }); } catch { /* 计数失败不影响结果 */ }
           return r;

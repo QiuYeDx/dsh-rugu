@@ -1,27 +1,10 @@
-// JSONL 宽进严出（§7.3：DSH 没有 JSON 模式）。纯函数：逐行 JSON.parse，坏行跳过并计数；不认识的 type 丢掉。
+// JSONL 宽进严出（§7.3：DSH 没有 JSON 模式）。纯函数：逐行解析，坏行跳过并计数；不认识的 type 丢掉。
+// 从文字里取 JSON 的那一层（去思考段、去围栏、从前言里抠出对象、行尾逗号、中文冒号）和第一眼、第二段评估共用 ports/llm-text.js（D169）。
+import { stripThinking, jsonValueInLine } from '../ports/llm-text.js';
+
 export const LINE_TYPES = Object.freeze(['header', 'narrative', 'ent', 'fact', 'plan', 'plan_status', 'intent', 'rel', 'norm_update',
   'self', 'emotion', 'confirm', 'future_q', 'boundary']);
 const TYPES = new Set(LINE_TYPES);
-
-/** 一行里如果混着别的文字（「好的：{...}」），取出第一个完整的 {...}。 */
-function extractObject(s) {
-  const i = s.indexOf('{');
-  if (i < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  for (let j = i; j < s.length; j++) {
-    const c = s[j];
-    if (inStr) {
-      if (c === '\\') j += 1;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === '{') depth += 1;
-    else if (c === '}') { depth -= 1; if (depth === 0) return s.slice(i, j + 1); }
-  }
-  return null;
-}
 
 function accept(v, out, types) {
   if (Array.isArray(v)) { let ok = false; for (const x of v) ok = accept(x, out, types) || ok; return ok; }
@@ -41,19 +24,17 @@ export function parseJsonl(text) {
   return parseJsonlWith(text, TYPES);
 }
 
-/** 同样的宽进严出，认的 type 由调用方给（夜间复核的 review 行）。 */
+/**
+ * 同样的宽进严出，认的 type 由调用方给（夜间复核的 review 行）。
+ * 先去掉思考段（<think>…</think>，D169：里面的草稿行不当成结果、也不算坏行）；一行里混着别的文字（「好的：{...}」）取出第一个带对象的值。
+ */
 export function parseJsonlWith(text, types) {
   const lines = [];
   let errors = 0;
-  for (const raw of String(text ?? '').split(/\r?\n/)) {
-    let s = raw.trim();
+  for (const raw of stripThinking(String(text ?? '')).split(/\r?\n/)) {
+    const s = raw.trim();
     if (!s || /^```/.test(s) || s === '[' || s === ']') continue;
-    if (s.endsWith(',')) s = s.slice(0, -1);
-    let v;
-    try { v = JSON.parse(s); } catch {
-      const obj = extractObject(s);
-      if (obj) { try { v = JSON.parse(obj); } catch { v = undefined; } }
-    }
+    const v = jsonValueInLine(s);
     if (v === undefined || !accept(v, lines, types)) errors += 1;
   }
   return { lines, errors };

@@ -8,13 +8,19 @@
 //     听的不只是管理者、这里有人当时没听到而且不在同一场合）；主人定的上限（B4 封顶）照旧走第二段和封顶；其余一律原文进来、带来源标签
 //     （label：核对过原话的叮嘱；渲染时别处的来源按结构写「私聊时 / 在另一个群里」），说不说、说多少由她看着标签自己掂量。
 //     不调第二段，没有 pending、截止时间、暗示、aware_private、限速。第一段的判定照样写一行（reason 'stage1:<rule>:open'）。
+// 第二段没有结论（模型连不上、超时、预算、坏输出，以及这一轮等不到、名额排不上）的条目（D169）：按 discretion.stage2.onFailure 办，
+// 默认照给——给成「能说」、带上面那一套来源标签（判定行 reason '…:give'，返回项 failGive: true）；走整套的目标（上面第一条）、第一段和代码的底线照旧不给；
+// 设成 omit 是原来的做法（不自主回想不给、有意回想给「还在想」）。
 // 想起来了但没说的（aware_private / omit / pending）记分寸日志。
 import { parseRef, refOf } from '../store/index.js';
 import { dcfg, raceDeadline, soft, DAY, metric, stricterVerdict } from './util.js';
 import { managerIds, selfId } from './facts.js';
-import { audienceOf, unknownAudience, refreshMembers, presenceMembers, managerOnly } from './knowledge.js';
+import { audienceOf, unknownAudience, refreshMembers, presenceMembers, strictTarget } from './knowledge.js';
+
+// strictTarget 在 knowledge.js（D169 搬过去：第二段评估不了时照不照给也看它，stage2.js 要用），这里照旧导出
+export { strictTarget };
 import { evaluate } from './stage1.js';
-import { prepareItem, lookupCache, runStage2, writeAppraisal, triggerClass } from './stage2.js';
+import { prepareItem, lookupCache, runStage2, writeAppraisal, triggerClass, failureVerdict, failItem } from './stage2.js';
 import { logDecision } from './told.js';
 import { glancesOf } from './glance.js';
 import { explicitLimit } from './norms.js';
@@ -27,17 +33,6 @@ function stage1Row(core, ev, mref, target, verdict, reason = `stage1:${ev.rule}`
     normVersion: ev.norm?.version ?? null, snapshotId: target.audience.snapshotId, taint: target.taint,
     triggerClass: triggerClass(core, target.triggerEntityId, null), verdict, reason,
   });
-}
-
-/**
- * 这个目标走不走原来的整套（D113）：公开的、受众读不到的（批量目标里有一个这样的也算），以及说出去就收不回的渠道（preSendGate:false）
- * 而听的不只是管理者——那里没有关口②，外发守护也就无从兜底。其余只跑第一段。
- * @param {import('../core-types.js').CoreContext} core
- * @param {import('../core-types.js').DisclosureTarget} target
- */
-export function strictTarget(core, target, memo = new Map()) {
-  const list = [target?.audience, ...(target?.batchTargets ?? [])];
-  return list.some((a) => !a || !a.known || a.publicLike || (a.preSendGate === false && !managerOnly(core, a, memo)));
 }
 
 /** 她以前对这批人说过这件事吗（§5.6 告诉过谁：不把同一件事当新鲜事讲两遍，S14）。 */
@@ -165,7 +160,8 @@ export async function gate(core, candidates, target, opt = {}) {
   if (pending.length) {
     const items = pending.map((p) => ({ ...prepareItem(core, p.ref, p.mref, p.ev, target, memo), i: p.i }));
     const apply = (it, r) => {
-      if (!r || r.failed || r.verdict === 'omit') {
+      // 第二段没有结论的（r.failed）：照给的（D169 discretion.stage2.onFailure = give，r.give）照常给，其余不给
+      if (!r || r.verdict === 'omit' || (r.failed && !r.give) || r.appraisalId == null) {
         log('omit', it.i, it.ev, it.mref, r?.appraisalId ?? null, r?.failed ? `stage2:${r.failed}` : 'stage2:omit');
         return;
       }
@@ -175,6 +171,8 @@ export async function gate(core, candidates, target, opt = {}) {
         hintOk: r.verdict === 'aware_private' ? !!r.hintOk : false, appraisalRef: apRef(r.appraisalId), stage: 2, rule: it.ev.rule,
         ...(r.verdict === 'aware_private' ? { hintSpecific: hintSpecific(core, it.ev, memo) } : {}),
         ...(told ? { told } : {}), ...(r.cached ? { cached: true } : {}),
+        // 评估不了、按设置照给的（D169）：带上和非公开目标原文放进来时同一套来源标签（核对过原话的叮嘱、别处的来源按结构写），由她自己掂量
+        ...(r.give ? { label: openLabel(core, it.mref, it.ev, memo), failGive: true } : {}),
       };
       if (r.verdict === 'aware_private') log('aware_private', it.i, it.ev, it.mref, r.appraisalId, 'stage2:aware_private');
     };
@@ -195,6 +193,11 @@ export async function gate(core, candidates, target, opt = {}) {
     const markPending = (list, why) => {
       core.store.tx(() => {
         for (const it of list) {
+          // 这一轮等不到第二段（截止时间到了、名额排不上）也是「没有结论」（D169）：照给的这一轮就给（不再给「还在想」的提示，
+          // 免得同一条既有内容又说还在想），第二段照常在后台判完、进缓存，下一轮按它的结论办
+          const f = failureVerdict(core, it, target, memo);
+          if (f.give) { apply(it, failItem(core, it, target, why, { memo, f })); continue; }
+          metric(core, 'stage2.failOmit');
           if (mode === 'deliberate') {
             // 有意回想：先给一行不含内容、不点名的暂定提示，下一轮用缓存补上（§9.3.5）
             const id = writeAppraisal(core, {

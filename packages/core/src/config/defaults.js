@@ -449,6 +449,12 @@ export const DEFAULTS = deepFreeze({
       cardChars: 300, reasonChars: 120, vagueChars: 120,   // 卡片里的记忆、一句话理由、「说个大概」的长度
       deliberateMaxCalls: 2,             // 有意回想每轮最多几次第二段调用，再多的先给 pending（§9.3.5）
       neighborChars: 80,                 // 还没评估的感知带上的前后几条，每条多长（§5.6）
+      // 第二段评估这一步没有结论时（模型连不上、超时、预算或限速不允许、输出解析不了、这一轮等不到）这几条给不给（D169）：
+      // 'give' 照给（默认）/ 'omit' 不给（D169 以前的做法）。主人在用户反馈第 40 轮定的：回忆的效果优先，不必太严格——给了以后她自己
+      // 看着来源标签判断说不说，作为聊天对象一般不会有严重的隐私泄露；原来后台模型一出问题，她能想起来的就变少。
+      // 照给只在 D113 的非公开目标上：公开的、受众读不到的、说出去就收不回（没有发出前拦截点）而听的不只是管理者的目标照旧不给；
+      // 第一段挡掉的、sensitive-other / named-deny、主人定的上限和污点上限照旧
+      onFailure: 'give',
     },
     unassessedNeighbors: 3,              // 还没评估的感知带上同一场合前后各 3 条（§5.6）
     thresholds: {                        // §9.3.2，模型标的敏感度只用来收紧
@@ -782,6 +788,7 @@ export const ENUMS = Object.freeze({
   'sleep.growth.mode': ['auto', 'approve'],
   'context.usageStyle': ['guided', 'purpose'],
   'budget.preset': ['loose', 'saving', 'unlimited'],
+  'discretion.stage2.onFailure': ['give', 'omit'],
   'retention.raw': ['1y', '2y', '5y', 'forever'],
   'backup.vectorsIn': PACK_KINDS,
   'backup.offsiteKinds': PACK_KINDS,

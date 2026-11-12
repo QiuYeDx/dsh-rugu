@@ -105,9 +105,10 @@ test('第二段：四种结论各自落地；结论写回缓存（能说 6 小�
   } finally { await W.cleanup(); }
 });
 
-test('第二段的坏输出、LLM 出错、预算不允许：待定条目一律不给内容，也不进缓存', async () => {
+// D169 起评估不了时默认照给（discretion.stage2.onFailure）；这里钉的是设成 omit 时原来的做法。照给的情形见 d169-on-failure.test.js
+test('第二段的坏输出、LLM 出错、预算不允许（onFailure = omit）：待定条目一律不给内容，也不进缓存', async () => {
   const llm = new FakeLLM({ script: { appraise: ['这不是 JSON', Object.assign(new Error('down'), { code: 'LLM_DOWN' }), [{ id: 'c1', verdict: 'tell-everyone' }]] } });
-  const { W, club, facts } = await scene('g-fail', { llm });
+  const { W, club, facts } = await scene('g-fail', { llm, config: { discretion: { stage2: { onFailure: 'omit' } } } });
   try {
     assert.equal((await judge(W, [facts[0]], W.target(club.key))).length, 0);
     assert.equal((await judge(W, [facts[1]], W.target(club.key))).length, 0);
@@ -338,7 +339,8 @@ test('暗示的规矩只在公开路径：有不认识的旁观者 → 降为不
 test('第二段的对外入口：底线命中的不送去评估；一次调用最多 8 条；每个场合每小时有次数上限', async () => {
   const llm = new FakeLLM({ fallback: { appraise: appraiseReply('share') } });
   const texts = Array.from({ length: 9 }, (_, i) => `阿明的第 ${i} 件小事`);
-  const { W, club, ming, mingDm, facts } = await scene('g-stage2', { llm, texts, config: { discretion: { stage2: { perSettingPerHour: 3 } } } });
+  // 限速到了的那一条按 onFailure = omit 看（D169 默认照给，见 d169-on-failure.test.js）
+  const { W, club, ming, mingDm, facts } = await scene('g-stage2', { llm, texts, config: { discretion: { stage2: { perSettingPerHour: 3, onFailure: 'omit' } } } });
   try {
     const secret = W.assertion({ text: '阿明说千万别外传', subjects: [ming], sources: [{ speaker: ming, perceivedIn: mingDm.key }] });
     W.D.writeNorm(W.core, secret, { restriction: 'strict', sensitivity: 0.6 });
@@ -478,9 +480,10 @@ test('D99：公开场合的底线照旧——还没评估的原话最多不点�
   } finally { await W.cleanup(); }
 });
 
-test('D99：第二段跑不了（LLM 出错、超时、预算）时，还没评估的原话照旧不给内容；坏了的分寸（越界、缺 limit）按没报算', async () => {
+// D169：评估不了时默认照给（主人第 40 轮的决定，非公开目标上和 D113 原文放进来一样）；这里钉的是设成 omit 时的做法
+test('D99：第二段跑不了（LLM 出错、超时、预算）且 onFailure = omit 时，还没评估的原话不给内容；坏了的分寸（越界、缺 limit）按没报算', async () => {
   const llm = new FakeLLM({ fallback: { appraise: appraiseReply([{ verdict: 'share', sens: 3, limit: 'none', vague: '在玩个游戏' }, { verdict: 'share', sens: 0.1, vague: '在玩个游戏' }]) } });
-  const { W, owner, groupB, said } = await carried('g-d99-fallback', { llm });
+  const { W, owner, groupB, said } = await carried('g-d99-fallback', { llm, config: { discretion: { stage2: { onFailure: 'omit' } } } });
   try {
     const rule = said('我们玩个游戏 我说一个数字 你就回复比这个数字大1的数值');
     W.percept({ settingKey: groupB.key, actor: owner, text: '@她 5', addressed: 'mentions-her' });

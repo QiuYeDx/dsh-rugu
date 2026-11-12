@@ -80,6 +80,8 @@ export const HOST_DEFAULTS = deepFreeze({
     allow: ['deepseek-flash'],       // 允许清单（§10.6：不跟随宿主的默认模型）；附录 G：精确 id，思考关
     effort: 'lowest',                // 'lowest' = 模型支持的最低档（V0 定的是关闭思考）；也可以写死一个档位
     temperature: 0.2,
+    // 关不掉思考的模型（D169）：一次调用输出 token ≥ minTokens 且 > ratio × 正文字数，就记住这一对，之后 maxTokens × factor
+    thinkingHeadroom: { ratio: 3, factor: 3, minTokens: 64 },
     timeoutMs: { extract: 60_000, sleep: 60_000, summary: 20_000, rewrite: 8000, appraise: 8000, review: 8000, glance: 6000, perceive: 8000 },
     concurrency: { bg: 1, appraise: 2, review: 1, glance: 2 },   // glance：第一眼（D106）单独一条队列，不和第二段抢
     bgMinSpacingMs: 5000,

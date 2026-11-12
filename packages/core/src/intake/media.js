@@ -15,6 +15,7 @@ import { ftsReplace, ensurePerceptShard } from '../store/fts.js';
 import { bumpMetric } from '../store/kv.js';
 import { DEFAULTS } from '../config/defaults.js';
 import { stripInvisible } from './sanitize.js';
+import { stripThinking } from '../ports/llm-text.js';
 import { rebuildWindows } from './windows.js';
 
 export const SEEN_BY = 'self';
@@ -74,8 +75,11 @@ export const hasPlaceholder = (text) => /[［[][^［\]］\n]{0,40}[］\]]/u.test
  * 不留能伪装成提示词结构的东西）；折叠空白；按字数截到 max。只输出 NONE 的 → null。
  */
 export function cleanSummary(raw, max) {
-  let s = stripInvisible(String(raw ?? '')).replace(/```[a-z]*\n?/gi, '');
-  s = s.split('\n').map((l) => l.trim()).find((l) => l) ?? '';
+  // 先去掉思考段（D169：开着思考的模型第一行是「<think>」，原来会存成一句「think」）
+  let s = stripInvisible(stripThinking(String(raw ?? ''))).replace(/```[a-z]*\n?/gi, '');
+  const ls = s.split('\n').map((l) => l.trim()).filter(Boolean);
+  // 第一行只是一句前言（「好的，以下是描述：」，以冒号结尾、后面还有话）：跳过它，取下一行
+  s = (ls.length > 1 && /[:：]$/u.test(ls[0]) ? ls[1] : ls[0]) ?? '';
   if (/^none[。.!！]?$/i.test(s)) return null;
   s = s.replace(/\bhttps?:\/\/\S+/gi, ' ').replace(/[[\]［］【】{}｛｝<>《》`|#*_\\]/g, ' ').replace(/^["'“”「」『』\s]+|["'“”「」『』\s]+$/g, '');
   s = s.replace(/\d{5,}/g, ' ');

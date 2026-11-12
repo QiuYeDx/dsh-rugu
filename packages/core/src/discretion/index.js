@@ -278,7 +278,9 @@ export function placeAllowed(core, settingKey, target) {
 /**
  * 第二段（§9.3.3）：这一轮所有待定的条目（≤ 8 条）放进一次 LLM 调用（use='appraise'，和说话的模型分开），
  * 每条一张信息流卡片；输出四选一（share / share_vague 带含糊版本 / aware_private 带能不能暗示 / omit）+ 一句理由。
- * 先查缓存（appraisals.cache_key，键见 §9.3.3），结果写回缓存。预算不允许或 LLM 失败 → 待定条目不给内容（第一段放行的照常给）。
+ * 先查缓存（appraisals.cache_key，键见 §9.3.3），结果写回缓存。预算不允许或 LLM 失败 → 按 discretion.stage2.onFailure（D169）：默认照给
+ * （给成 share，返回项带 give: true；公开 / 受众读不到 / 说出去就收不回的目标、sensitive-other / named-deny、主人定的上限和污点上限收成 omit 的照旧不给），omit = 待定条目不给内容。
+ * 没有结论的不进缓存。
  * 每个场合每小时 discretion.stage2.perSettingPerHour 次上限。
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../core-types.js').MemoryRef[]} refs
@@ -294,10 +296,12 @@ export async function stage2(core, refs, target, opt) {
 /**
  * 关口①的总入口（context 调用）。D113 起两条路：
  *   - 公开目标、受众读不到、说出去就收不回（preSendGate=false）而听的不只是管理者：每条先 stage1，需要的进 stage2；按 §9.3.5 的时机：
- *     不自主回想到 deadline 还没判完的不给，有意回想先给一行不含内容的 pending 提示；preSendGate=false 收紧（§9.3.4）；带污点的轮里
- *     N 不为空的条目不给「能说」（§9.6）；
+ *     不自主回想到 deadline 还没判完的不给，有意回想先给一行不含内容的 pending 提示；第二段出错、超时、预算不允许的不给；preSendGate=false 收紧（§9.3.4）；
+ *     带污点的轮里 N 不为空的条目不给「能说」（§9.6）；
  *   - 其余目标只跑第一段：block、sensitive-other（给第三方的敏感私事）、named-deny（叮嘱里点名的人可能在场）不进，其余 verdict share、
- *     原文进来（判定行 reason 'stage1:<rule>:open'），不调第二段。
+ *     原文进来（判定行 reason 'stage1:<rule>:open'），不调第二段。只有主人定的上限（B4 封顶）照旧走第二段；那一步没有结论（出错、超时、
+ *     预算、坏输出、这一轮等不到、名额排不上）时按 discretion.stage2.onFailure 办（D169）：默认照给——当作模型说「能说」再过代码的底线，
+ *     没被收成 omit 的给出来，带来源标签 label、failGive: true，判定行 reason 以 ':give' 结尾；omit = 原来的做法。
  * 每条结论（含第一段放行）都写一行 appraisals，返回的 appraisalRef 指向它（§9.3.6）。想起来了但没说（aware_private / omit / pending）记 discretion_log。
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../core-types.js').ScoredCandidate[]} candidates
