@@ -292,3 +292,17 @@ test('演示模式的名字：她、主人、甲乙丙…；场合：私聊 / �
   assert.deepEqual(d.people, ['她', '主人', '甲', '乙']);
   assert.deepEqual(d.places, ['私聊', '群 A', '群 B', '私聊 2', '桌面会话']);
 });
+
+test('按钮里的图标换掉也不丢点击：每帧都调的 updateTimeUi 只在播放状态变了才换图标；图标不接鼠标事件', () => {
+  // 回归（点播放按钮正中的图标没反应）：图标每一帧都重建时，鼠标按下和抬起落在两个不同的元素上，浏览器不发 click。
+  // 真的鼠标点击用 shot.mjs 的 click 选项在无头 Chrome 里验；这里守住两道：换图标有条件，样式上图标不当点击目标
+  const m = /function updateTimeUi\(\) \{([\s\S]*?)\n {4}\}/.exec(SRC);
+  assert.ok(m, '找得到 updateTimeUi');
+  const body = m[1];
+  const guard = body.indexOf('if (playShown !== S.playing)');
+  const swap = body.indexOf('playBtn.replaceChildren(');
+  assert.ok(guard >= 0 && swap > guard, '换图标前先看播放状态变没变');
+  assert.equal(body.split('replaceChildren(').length - 1, 1, 'updateTimeUi 里只有这一处重建子元素');
+  const css = pageTemplate();
+  assert.match(css, /\.pm-sm-sbtn svg,\.pm-sm-max svg\{pointer-events:none\}/);
+});

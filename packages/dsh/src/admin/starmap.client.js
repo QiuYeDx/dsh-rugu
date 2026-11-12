@@ -778,10 +778,18 @@ void main() {
       if (S.live || S.T >= serverNow() - 60_000) S.T = S.m.t0;
       S.live = false; S.playing = true; updateTimeUi(); kick();
     }
+    /** 播放按钮上现在画的是哪个图标（true = 暂停图标）；null = 还没画过。 */
+    let playShown = null;
     function updateTimeUi() {
-      playBtn.replaceChildren(icon(S.playing ? IC.pause : IC.play, 13));
-      playBtn.setAttribute('aria-label', S.playing ? '暂停' : '从头回放');
-      playBtn.title = S.playing ? '暂停' : S.live ? '从最早一颗星开始回放' : '从这里接着回放';
+      // 这个函数每一帧都会被调到：图标只在「播放 / 暂停」变了的时候换。每帧都换的话，鼠标按下和抬起落在两个不同的图标元素上
+      // （按下的那个已经被换掉），浏览器就不发 click——点在图标上没反应，只有点按钮的空白处才行
+      if (playShown !== S.playing) {
+        playShown = S.playing;
+        playBtn.replaceChildren(icon(S.playing ? IC.pause : IC.play, 13));
+        playBtn.setAttribute('aria-label', S.playing ? '暂停' : '回放');
+      }
+      const playTitle = S.playing ? '暂停' : S.live ? '从最早一颗星开始回放' : '从这里接着回放';
+      if (playBtn.title !== playTitle) playBtn.title = playTitle;
       nowBtn.setAttribute('aria-pressed', String(S.live));
       timeLbl.textContent = S.m ? `${S.live ? '此刻 · ' : ''}${fmtWhen(S.T, true)}` : '';
       if (S.m) {

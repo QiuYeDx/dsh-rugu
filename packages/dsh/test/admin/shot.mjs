@@ -2,7 +2,8 @@
 // 用法：node shot.mjs <jobs.json> <outDir>
 //   jobs.json：[{ name, url, width?, height?, full?: boolean, wait?: ms, script?: '(async () => {...})()', clip?: 'css 选择器' }]
 //   script 在截图前跑（切页签、点按钮、打开对话框……），返回值会打印出来。
-//   可选：reduce: true 模拟「减少动态效果」；keys: ['Tab', 'ArrowRight'] 在 script 之后按键；hover: {x, y} 最后把鼠标移到这个位置（看悬停态）。
+//   可选：reduce: true 模拟「减少动态效果」；keys: ['Tab', 'ArrowRight'] 在 script 之后按键；hover: {x, y} 最后把鼠标移到这个位置（看悬停态）；
+//   click: 'css 选择器' 或 {selector, hold?: ms, after?: ms, check?: '表达式'}（可以是数组）在元素正中真的按下、抬起鼠标，打印鼠标下面是什么元素和 check 的值。
 // 只结束命令行里带这个配置目录名的 chrome.exe，不碰用户自己的 Chrome。
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -60,6 +61,23 @@ for (const job of jobs) {
     await sleep(250);
   }
   if (job.hover) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: job.hover.x, y: job.hover.y }); await sleep(400); }
+  // 真的鼠标点击（按下、隔 hold 毫秒、抬起）：点在选择器那个元素的正中，或它里面 at 选择器的元素正中；之后打印 check 表达式的值
+  for (const c of [].concat(job.click ?? [])) {
+    const spec = typeof c === 'string' ? { selector: c } : c;
+    const r = await send('Runtime.evaluate', { returnByValue: true, expression: `(() => { const el = document.querySelector(${JSON.stringify(spec.selector)}); if (!el) return null;
+      const b = el.getBoundingClientRect(); const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2, hit: t ? t.tagName.toLowerCase() : null }; })()` });
+    const p = r.result?.result?.value;
+    if (!p) { console.log('CLICK', job.name, spec.selector, 'not found'); continue; }
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 });
+    await sleep(spec.hold ?? 120);
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(spec.after ?? 400);
+    let checked;
+    if (spec.check) checked = (await send('Runtime.evaluate', { expression: spec.check, awaitPromise: true, returnByValue: true })).result?.result?.value;
+    console.log('CLICK', job.name, spec.selector, `under cursor: <${p.hit}>`, spec.check ? `check: ${JSON.stringify(checked)}` : '');
+  }
   const params = { format: 'png' };
   if (job.full) {
     const r = await send('Runtime.evaluate', { expression: 'JSON.stringify({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight})', returnByValue: true });

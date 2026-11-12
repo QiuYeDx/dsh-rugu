@@ -535,6 +535,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
 .pm-sm-sbtn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 11px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:rgba(232,236,244,.86);font-size:12.5px;cursor:pointer;white-space:nowrap;flex:none;transition:background-color .15s,color .15s,border-color .15s}
 .pm-sm-sbtn:hover{background:rgba(255,255,255,.13);color:#fff}
 .pm-sm-sbtn.icon{width:30px;padding:0}
+/* 按钮里的图标不接鼠标事件：点在图标上，按下和抬起的目标都是按钮本身（图标换掉了也照样算一次点击） */
+.pm-sm-sbtn svg,.pm-sm-max svg{pointer-events:none}
 .pm-sm-sbtn.now .dot{width:7px;height:7px;border-radius:50%;background:rgba(232,236,244,.4)}
 .pm-sm-sbtn.now[aria-pressed=true]{color:#B9F2D4;border-color:rgba(123,227,176,.4);background:rgba(123,227,176,.12)}
 .pm-sm-sbtn.now[aria-pressed=true] .dot{background:#7BE3B0;animation:pm-sm-pulse 1.8s ease-in-out infinite}
