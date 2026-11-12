@@ -3,9 +3,10 @@
 // 每个用例在仓库 .tmp/ 下一个新的临时库里，用真模块把记忆的状态造出来，决定性的那一轮有记忆时真的回想一次、没记忆时只有这个会话自己的聊天记录，
 // 按字面打分（决定性的那句在不在她的上下文里；守护守住了没有）。不调模型（替身端口），免费、确定。用例在 packages/core/test/eval/memory-eval.js。
 // 只碰临时库：不打开线上库，不需要 DSH。
+// 退出码：全对 0；有不对的（出错、有记忆时没拿到、守护没守住；只看守护的用例不算「有记忆」那一列）1；一个用例都没跑（--only 写错了）2。
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runMemoryEval, formatEvalTable } from '../packages/core/test/eval/memory-eval.js';
+import { runMemoryEval, formatEvalTable, evalFailures } from '../packages/core/test/eval/memory-eval.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -18,4 +19,7 @@ if (args.includes('--json')) {
   console.log(formatEvalTable(r));
   if (args.includes('--detail')) for (const c of r.cases) console.log(`\n── ${c.name}（${c.source}）\n${c.error ? `出错：${c.error}` : c.detail}`);
 }
-process.exitCode = r.cases.every((c) => c.on && c.guard !== false && !c.error) ? 0 : 1;
+const bad = evalFailures(r);
+if (!r.cases.length) console.error(`一个用例都没跑${only ? `（--only ${only.join(',')} 一个都没对上）` : ''}`);
+else if (bad.length && !args.includes('--json')) console.error(`\n不对的用例：${bad.map((b) => `${b.id}（${b.why}）`).join('、')}`);
+process.exitCode = !r.cases.length ? 2 : bad.length ? 1 : 0;

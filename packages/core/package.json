@@ -33,7 +33,7 @@
     "src",
     "test/fakes",
     "test/fixtures",
-    "test/eval",
+    "test/eval/memory-eval.js",
     "README.md",
     "LICENSE"
   ],

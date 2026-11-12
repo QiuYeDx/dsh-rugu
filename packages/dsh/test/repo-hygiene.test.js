@@ -13,6 +13,21 @@ test('packages/dsh/README.md 和根目录 README 一致（改了根目录的就�
     '[文档](https://github.com/QiuYeDx/dsh-rugu/blob/main/docs/图解.md#x) ![图](https://raw.githubusercontent.com/QiuYeDx/dsh-rugu/main/a/b.webp) [外](https://x.test) [锚](#y)');
 });
 
+test('同步 README：HTML 的 <img src> 当图片、<a href> 当链接，和 Markdown 同一套规则；绝对地址、锚点、data: 不动', () => {
+  const RAW = 'https://raw.githubusercontent.com/QiuYeDx/dsh-rugu/main/';
+  const BLOB = 'https://github.com/QiuYeDx/dsh-rugu/blob/main/';
+  assert.equal(absoluteLinks('<img src="packages/dsh/assets/banner.webp" width="100%" alt="横幅">'), `<img src="${RAW}packages/dsh/assets/banner.webp" width="100%" alt="横幅">`);
+  assert.equal(absoluteLinks("<IMG alt='x' SRC='./a/b.png'/>"), `<IMG alt='x' SRC='${RAW}a/b.png'/>`);
+  assert.equal(absoluteLinks('<p align="center"><a href="docs/图解.md#链路"><img src="a.svg"></a></p>'),
+    `<p align="center"><a href="${BLOB}docs/图解.md#链路"><img src="${RAW}a.svg"></a></p>`);
+  for (const keep of ['<img src="https://x.test/a.png">', '<img src="//cdn.test/a.png">', '<img src="data:image/png;base64,AA">', '<a href="#y">锚</a>',
+    '<a href="mailto:x@example.com">信</a>', '<img src="/abs.png">', '<abbr title="a.png">缩写</abbr>', '<img data-src="a.png">', '<img src="">']) {
+    assert.equal(absoluteLinks(keep), keep);
+  }
+  // 同步出来的 npm README 里没有剩下相对路径的 <img>
+  for (const m of packageReadme().matchAll(/<img\b[^>]*\ssrc\s*=\s*["']([^"']*)["']/gi)) assert.match(m[1], /^https:\/\//);
+});
+
 test('私有词检查：词大小写不敏感、re: 是正则、注释和空行跳过；报的是第几条规则，不把词打出来', () => {
   const dir = tmpDir('private-words');
   const f = path.join(dir, 'list.txt');

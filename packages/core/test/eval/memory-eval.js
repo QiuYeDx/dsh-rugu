@@ -451,6 +451,21 @@ export async function runMemoryEval(opt = {}) {
   };
 }
 
+/**
+ * 不对的用例（空数组 = 全对）：出错的、有记忆时没拿到决定性内容的（on === false）、守护没守住的（guard === false）。
+ * 只看守护的用例 on 是 null（不算「有记忆 / 没记忆」那一列），不算不对；「没记忆」那一列是基线，不看。
+ * @returns {{id: string, why: string}[]}
+ */
+export function evalFailures(r) {
+  const out = [];
+  for (const c of r.cases) {
+    if (c.error) out.push({ id: c.id, why: `出错：${c.error}` });
+    else if (c.on === false) out.push({ id: c.id, why: '有记忆时没拿到决定性的内容' });
+    else if (c.guard === false) out.push({ id: c.id, why: '守护没守住' });
+  }
+  return out;
+}
+
 /** 一张对比表（文字）：每个用例一行「有记忆 / 没记忆 / 守护」，最后一行合计。 */
 export function formatEvalTable(r) {
   const mark = (b) => (b == null ? '—' : b ? '✓' : '✗');

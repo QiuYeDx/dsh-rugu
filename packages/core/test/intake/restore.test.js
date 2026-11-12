@@ -17,6 +17,18 @@ const metric = (core, name) => readMetrics(core.store).filter((r) => r.name === 
 const count = (core, sql, ...p) => Number(core.store.get(sql, ...p).n);
 const metricTotal = (core) => count(core, 'SELECT coalesce(sum(value), 0) AS n FROM metrics');
 const tick = () => new Promise((r) => setImmediate(r));
+/**
+ * drain 到队列空：drain 一次最多占用 drainBudgetMs，超了就把没做的批次原样留在队列里、排下一个 setImmediate 接着做（不丢）。
+ * 机器忙的时候一次做不完，测试里要「都做完了再看」就反复调。50 次还没空（批次在等场合描述、在等重试）算失败。
+ */
+function drainAll(core) {
+  const pending = () => [...(core.state.intake?.queues?.values() ?? [])].some((q) => q.length);
+  for (let i = 0; i < 50; i++) {
+    core.mods.intake.drain(core);
+    if (!pending()) return;
+  }
+  assert.fail('drain 了 50 次队列还没空');
+}
 
 // ── 彻底删除过的消息 ────────────────────────────────────────────────────────
 
@@ -466,8 +478,9 @@ test('S31（intake 段，真的整体恢复）：恢复期间交来的留在队�
     assert.equal(core.mods.intake.cursor(core, a.id, 'g'), '2');
     assert.equal(a.starts, 1);
 
-    // 恢复结束后的第一次 drain：恢复期间来的那条写进恢复出来的库（不推进游标）；适配器重启一次
-    core.mods.intake.drain(core);
+    // 恢复结束后的第一次 drain：恢复期间来的那条写进恢复出来的库（不推进游标）；适配器重启一次。
+    // 队列里有两批（换库前来的、恢复期间来的）：机器忙时一次 drain 可能只做完一批（超了 drainBudgetMs 就让出，剩下的留在队列里），所以 drain 到空
+    drainAll(core);
     assert.deepEqual(texts(), ['第1条', '换库前来的', '恢复期间来的']);
     assert.equal(core.mods.intake.cursor(core, a.id, 'g'), '2', '游标还是恢复出来的那个');
     assert.equal(a.starts, 2, '适配器重启了，从恢复出来的游标重读');
@@ -475,7 +488,7 @@ test('S31（intake 段，真的整体恢复）：恢复期间交来的留在队�
     // 适配器从游标 2 往后重读：第 3、4 条按历史模式补回；它多给的第 2 条（彻底删过）不回来；恢复期间那条去重
     const during = core.store.get('SELECT * FROM percepts WHERE text = ?', '恢复期间来的');
     a.sink.observe([m[1], m3, m4], { cursor: { key: 'g', value: '4' } });
-    core.mods.intake.drain(core);
+    drainAll(core);
     assert.deepEqual(texts(), ['第1条', '第3条', '第4条', '换库前来的', '恢复期间来的']);
     const rows = core.store.all('SELECT text, historical FROM percepts ORDER BY at, id');
     // 第 3、4 条和换库前来的那条都发生在恢复时刻之前：历史模式（不冒出过期的「回头问问」）

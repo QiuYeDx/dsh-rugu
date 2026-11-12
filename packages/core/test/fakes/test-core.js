@@ -15,7 +15,7 @@ import { normalizePorts } from '../../src/ports/index.js';
 import { createConfig, toConfigHandle } from '../../src/config/defaults.js';
 import { MODULES } from '../../src/api.js';
 import { fakePorts } from './ports.js';
-import { tmpDir, rmDir } from '../helpers.js';
+import { tmpDir, rmDir } from './tmp.js';
 
 /**
  * @param {{name?: string, ports?: object, config?: object, mods?: Record<string, Record<string, Function>>,

@@ -8,7 +8,7 @@ import { runSelfCheck } from '../../src/host/selfcheck.js';
 import { HOST_DEFAULTS } from '../../src/host/config.js';
 import { resolvePaths } from '../../src/host/paths.js';
 import { recallHealthRow } from '../../src/admin/views.js';
-import { tmpDir } from '../fakes/index.js';
+import { tmpDir, rmDir } from '../fakes/index.js';
 
 const WM = { id: 'p77', layer: 'working', rendered: '〔你们俩私聊时 · 20 分钟前〕主人：我下周去杭州出差', verdict: 'share', confidence: 1, provenance: '', appraisalRef: 'ap77' };
 const cachedWm = () => ({ items: [WM], degradeLevel: 1, traceId: 'cached' });
@@ -63,8 +63,11 @@ test('pm.recall 同步抛错（契约校验之类）：不让钩子出错，照�
   } finally { await h.cleanup(); }
 });
 
-test('启动自检的一行：今天出错几处（按步骤）、整轮什么都没给几次、宿主等超时几次；最近一次出错的步骤、错误类型、代码位置', async () => {
+test('启动自检的一行：今天出错几处（按步骤）、整轮什么都没给几次、宿主等超时几次；最近一次出错的步骤、错误类型、代码位置', async (t) => {
   const pm = createFakePm();
+  const homes = [];
+  const home = (name) => { const d = tmpDir(name); homes.push(d); return d; };
+  t.after(() => { for (const d of homes) rmDir(d); });   // 自检只看不写，临时的家目录跑完删掉
   pm.health = {
     days: [
       { day: '2026-11-06', recalls: 153, errors: 37, partial: 37, lost: 0, byStage: { 'working-select': 37 }, byCode: { 'working-select.TypeError': 37 }, ms: {}, host: { timeout: 2 }, embed: {} },
@@ -75,7 +78,7 @@ test('启动自检的一行：今天出错几处（按步骤）、整轮什么�
   };
   const cfg = JSON.parse(JSON.stringify(HOST_DEFAULTS));
   const r = await runSelfCheck({
-    ctx: new FakeDshCtx(), ctxGet: () => null, getPm: () => pm, hostConfig: () => cfg, paths: resolvePaths({ dshHome: tmpDir('ro-sc') }),
+    ctx: new FakeDshCtx(), ctxGet: () => null, getPm: () => pm, hostConfig: () => cfg, paths: resolvePaths({ dshHome: home('ro-sc') }),
     ports: { embedding: null, rerank: null, selfProfile: { status: () => ({ configured: false }) } }, claims: null, tooltable: { status: () => ({ unclassified: [] }) },
     registered: {}, defineToolAvailable: true, adapters: [], skipNetwork: true, now: () => 1000,
   });
@@ -86,7 +89,7 @@ test('启动自检的一行：今天出错几处（按步骤）、整轮什么�
   // 升级前的旧计数（D117 之前的 context.recall.error，没有明细）：写出来，但不当成现在的出错提醒
   pm.health = { days: [{ recalls: 10, errors: 0, legacyErrors: 37, lost: 0, byStage: {}, host: {} }], recent: [], buckets: [] };
   const r2 = await runSelfCheck({
-    ctx: new FakeDshCtx(), ctxGet: () => null, getPm: () => pm, hostConfig: () => cfg, paths: resolvePaths({ dshHome: tmpDir('ro-sc2') }),
+    ctx: new FakeDshCtx(), ctxGet: () => null, getPm: () => pm, hostConfig: () => cfg, paths: resolvePaths({ dshHome: home('ro-sc2') }),
     ports: { embedding: null, rerank: null, selfProfile: { status: () => ({ configured: false }) } }, claims: null, tooltable: { status: () => ({ unclassified: [] }) },
     registered: {}, defineToolAvailable: true, adapters: [], skipNetwork: true, now: () => 1000,
   });

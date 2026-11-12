@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="packages/dsh/assets/banner.webp" width="100%" alt="如故 · dsh-rugu：让 Agent 像一个真实存在的人">
+<img src="https://raw.githubusercontent.com/QiuYeDx/dsh-rugu/main/packages/dsh/assets/banner.webp" width="100%" alt="如故 · dsh-rugu：让 Agent 像一个真实存在的人">
 
 [![npm](https://img.shields.io/npm/v/dsh-rugu)](https://www.npmjs.com/package/dsh-rugu)
 [![license](https://img.shields.io/npm/l/dsh-rugu)](LICENSE)

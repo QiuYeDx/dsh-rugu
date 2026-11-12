@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// QQ 桥接白名单补丁（§11.1、§15.2、B15）：把三个记忆工具的完整名字加进 qq-tool-restrict.mjs 的 SAFE_EXACT。
+// QQ 桥接白名单补丁（§11.1、§15.2、B15）：把四个记忆工具（memory_recall、memory_note、memory_fix、memory_look，见 src/host/bridge-whitelist.js 的 TOOLS）的完整名字加进 qq-tool-restrict.mjs 的 SAFE_EXACT。
 // 照 bili-eyes 这类补丁的规矩（v1:1006-1021）：
 //   - 默认只预演：打印要加 / 删哪几行，不写任何文件；加 --apply 才真的改；
 //   - 锚点精确匹配：SAFE_EXACT 里去掉首尾空白后恰好是 'todo_write', 的那一行，找不到就报错退出，不硬改（桥接版本变了要人看）；
@@ -12,7 +12,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export { MARK, TOOLS, RESTRICT_REL, planPatch, resolveBridgeDir, runPatch } from '../src/host/bridge-whitelist.js';
-import { resolveBridgeDir, runPatch } from '../src/host/bridge-whitelist.js';
+import { TOOLS, resolveBridgeDir, runPatch } from '../src/host/bridge-whitelist.js';
 
 function parseArgs(argv) {
   const a = { apply: argv.includes('--apply'), revert: argv.includes('--revert') };
@@ -34,7 +34,7 @@ function main() {
   const verb = args.revert ? '还原' : '加入';
   console.log(`文件：${r.file}`);
   if (r.already?.length) console.log(`已经在白名单里：${r.already.join('、')}`);
-  if (!r.changes.length) console.log(args.revert ? '没有带标记的行，不用还原。' : '三个工具都已放行，不用改。');
+  if (!r.changes.length) console.log(args.revert ? '没有带标记的行，不用还原。' : `${TOOLS.length} 个记忆工具都已放行，不用改。`);
   for (const c of r.changes) console.log(`${c.op === 'add' ? '+' : '-'} ${c.line.trim()}`);
   if (!args.apply && r.changes.length) console.log(`\n这是预演，什么都没改。确认要${verb}就加 --apply。`);
   if (r.applied) {

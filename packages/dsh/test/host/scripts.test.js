@@ -103,7 +103,7 @@ test('白名单补丁：桥接目录从 --bridge 或配置文件的 host.adapter
 });
 
 // 真的桥接（可选）：PM_QQ_BRIDGE_DIR 指向桥接目录时，只读它的白名单文件，在内存里算一遍补丁和还原（不写任何文件）
-test('白名单补丁对真的桥接文件（可选，只读）：锚点找得到、加三行、还原后和原文一字不差', { skip: !process.env.PM_QQ_BRIDGE_DIR }, () => {
+test('白名单补丁对真的桥接文件（可选，只读）：锚点找得到、补上缺的工具行、还原后和原文一字不差', { skip: !process.env.PM_QQ_BRIDGE_DIR }, () => {
   const src = fs.readFileSync(path.join(process.env.PM_QQ_BRIDGE_DIR, RESTRICT_REL), 'utf8');
   const p = planPatch(src);
   assert.equal(p.ok, true, p.error);
