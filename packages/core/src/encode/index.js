@@ -1,7 +1,7 @@
 // encode 模块（§7.2–§7.5、§5.4、§5.5、§10.8 工具授权、§4.5 ingest）：情节切分、提炼、核验、污点检查、对账，
 // 以及事实、情节、计划、意图的全部写入。
 //   - 一次 LLM 调用（use='extract'），输出 JSONL，逐行宽进严出；说话人由程序编号，账号永远不发给 LLM。
-//   - 核验只检查结构化字段之间是否自洽（§7.4 的 14 条，第 14 条「只记以后用得上的」是 D123），不用词表。
+//   - 核验只检查结构化字段之间是否自洽（§7.4 的 15 条，第 14 条「只记以后用得上的」是 D123，第 15 条「她凭记忆答的话不是别人的事实」是 D157），不用词表。
 //   - 一批提炼的全部输出在一个事务里写入（store.completeJob，§12.8 第 3 条）。
 //   - 计划和事件每一次是独立的一次（occurrence_key），永远不走「重复」快速路径（评审:SC-01）。
 // 拥有的表：episodes、episodes_fts、assertions、assertions_fts、assertion_entities、same_type、sources、
@@ -9,7 +9,7 @@
 // 用到的端口：llm（extract、sleep）、budget、clock、logger；嵌入经 worker，语言经 lang。
 // 契约细节：docs/实现/模块与接口.md §4.4。实现分在同目录的几个文件里：segment（切分）、prompt / parse / verify / taint /
 // reconcile / extract（提炼的各步）、write（情节、事实、来源的写入）、plans（计划和意图）、review（夜间复核）、tools（note、fix、导入）、
-// lessons（她自己的经验，D124）、stalled（提炼一直不成的段，D136）。
+// lessons（她自己的经验，D124）、stalled（提炼一直不成的段，D136）、support（证据撑不撑得住一条关于别人的事实，D157）。
 import * as seg from './segment.js';
 import * as ext from './extract.js';
 import * as pr from './prompt.js';
@@ -23,6 +23,7 @@ import * as pl from './plans.js';
 import * as tl from './tools.js';
 import * as ls from './lessons.js';
 import * as st from './stalled.js';
+import * as sp from './support.js';
 
 /**
  * 一个待提炼的段（切分的产物）。
@@ -183,7 +184,8 @@ export function buildExtractPrompt(core, seg, background) { return pr.buildExtra
 export function parseJsonl(text) { return ps.parseJsonl(text); }
 
 /**
- * 核验（§7.4 的 14 条，纯代码；第 14 条 D123：没挂着别的行的一时的状态 / 事件不成事实，她自己说的关于自己的断言封顶把握）：msgRefs 属于本段、quote 是原文子串、evidential:false / 引用 / 转发不当证据、
+ * 核验（§7.4 的 15 条，纯代码；第 14 条 D123：没挂着别的行的一时的状态 / 事件不成事实，她自己说的关于自己的断言封顶把握；
+ * 第 15 条 D157：关于别人的事实，对方那一侧只是在问或什么都没说、内容出自她自己的话的，是她凭记忆答的、猜的，不写成那个人的事实）：msgRefs 属于本段、quote 是原文子串、evidential:false / 引用 / 转发不当证据、
  * 本人说 vs 听说、关于她自己、非人物实体、时间自洽、self 只来自她的行、confirm 不能是她自己、
  * 指令类内容不成为规则或意图（只记「U3 提过一个要求，没采纳」并报 T1 给 admin.notifyNeedToKnow）、
  * norm_update 放宽要权限、配额、intent 的 origin 和证据一致、ent 的锚点必须出现过、复述不新建。
@@ -195,6 +197,16 @@ export function parseJsonl(text) { return ps.parseJsonl(text); }
  * @returns {{accepted: ExtractLine[], dropped: {line: ExtractLine, rule: number, reason: string}[], rewritten: number}}
  */
 export function verify(core, lines, ctx) { return vf.verify(core, lines, ctx); }
+
+/**
+ * 【D157】库里一条有效事实按核验第 15 条看（只读，夜间整理清查用）：'echo' 内容出自她自己的话、讲的是别人、对方那一侧只是在问或什么都没说；
+ * 'unsure' 对方那一侧也只是在问，但正文的内容大半在问句里、她的话又添了东西；'ok'；'skip' 不归这一条管（关于她自己的、钉住的、
+ * 确认过的、推断的、经验、看法、没有原话的）。her / others 是她的、别人的证据感知 id（echo 时 others 是她在答的那句问话）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} assertionId
+ * @returns {{verdict: 'echo'|'unsure'|'ok'|'skip', her: number[], others: number[], herOnly?: number, fromOthers?: number}}
+ */
+export function echoCheck(core, assertionId) { return sp.echoCheck(core, assertionId); }
 
 /**
  * 污点检查（§7.3，纯代码）：第二组背景（只供理解的）里的区分性词（lang.distinctiveTerms）出现在 header / narrative 里就去掉那一句；
@@ -278,11 +290,11 @@ export function markChanged(core, assertionId, ctx) { wr.markChanged(core, asser
  * 【D122】夜里对照原话纠错的结果写回（consolidate 夜间整理第 2 步、主人撤销改正时调用）。要动的那一版已经被取代了就不动，返回 null。
  * correct：写一条改正后的新版本（主体、种类、时间照旧；来源 = 引用的证据感知，说话人和方式按感知的结构算），旧的被它取代、两条都留着，
  * 规范照旧版本再经 discretion.inheritNorm（quote）；doubt / raise：把握降到 / 升到 confidence（新版本，来源照抄，修改写历史；只降 / 只升）；
- * changed：只标 change_known=1（不加来源、不加痕迹）；restore：照 from 那一版恢复成 confirmed 的新版本（主人撤销改正）。
- * 换版本时还开着的意图跟着指向新版本。extractVer 记出处（'consolidate-correction-v1#…'）。返回之后代表这件事的那条事实的 id。
+ * changed：只标 change_known=1（不加来源、不加痕迹）；withdraw：收回，标过时（D157）；restore：照 from 那一版恢复成 confirmed 的新版本（主人撤销改正）。
+ * 换版本时还开着的意图跟着指向新版本。extractVer 记出处（'consolidate-correction-v2#…'）。返回之后代表这件事的那条事实的 id。
  * @param {import('../core-types.js').CoreContext} core
  * @param {number} assertionId
- * @param {{op: 'correct'|'doubt'|'raise'|'changed'|'restore', text?: string, predicate?: string|null, certainty?: 'stated'|'self_said'|'hearsay', confidence?: number, evidence?: number[], from?: number, extractVer?: string|null, model?: string|null}} correction
+ * @param {{op: 'correct'|'doubt'|'raise'|'changed'|'withdraw'|'restore', text?: string, predicate?: string|null, certainty?: 'stated'|'self_said'|'hearsay', confidence?: number, evidence?: number[], from?: number, extractVer?: string|null, model?: string|null}} correction
  * @param {{at: number}} ctx
  * @returns {number|null}
  */

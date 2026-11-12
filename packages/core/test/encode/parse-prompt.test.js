@@ -63,7 +63,7 @@ test('buildExtractPrompt：静态前缀在前、第一句是数据声明；说�
     assert.equal(pr.bgCodes.get('k1'), 'a1');
     assert.equal(pr.bgCodes.get('p1'), 'a2');
     assert.equal(pr.candidateCodes.get('c1'), 99);
-    assert.ok(pr.promptVer.startsWith('extract-v2#'));
+    assert.ok(pr.promptVer.startsWith('extract-v3#'));
     assert.ok(pr.system.includes('【什么值得写成 fact / self】') && pr.system.includes('kind_hint 写 ability') && pr.system.includes('imp（1–10）是以后用得上的程度'), 'D123：只记以后用得上的、能力要有依据、imp 的刻度');
     // 账号哈希和场合键都不出现
     assert.ok(!body.includes(g.key));

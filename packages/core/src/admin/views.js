@@ -450,6 +450,8 @@ const VIEWS = {
       from: 'memory_checks t', where, params, order: 't.at DESC, t.id DESC',
       map: (c) => ({
         id: c.id, at: c.at, verdict: c.verdict, why: c.why, streak: c.streak, nextAt: c.next_at, beforeConf: c.before_conf, afterConf: c.after_conf,
+        // D157：清查收回的（她凭记忆答的话被记成别人的事实）：记成降低把握、把握 0、没有新版本
+        withdrawn: c.verdict === 'doubted' && c.result_id == null && c.after_conf === 0,
         before: factOf(c.assertion_id), after: factOf(c.result_id),
         // 主人撤销过（D122 评审）：旧版本按确认过恢复成的那一版
         reverted: c.reverted_at != null ? { at: c.reverted_at, by: c.reverted_by, restored: factOf(c.restored_id) } : null,
