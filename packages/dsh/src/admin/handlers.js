@@ -1,9 +1,9 @@
 // 管理接口的 HTTP 层（§13.1）：四条精确的 Fetch 路由，全部经 ctx.connection.fetch.register 注册——
 // DSH 先过自己的 /api 围栏（Host/Origin、Cookie），再要求 principal.kind === 'owner'，否则 403。
-//   GET  /api/persona-memory/admin          管理页（一个自带样式和脚本的 HTML，CSP 带 nonce）
-//   GET  /api/persona-memory/admin.data     只读视图：?view=overview|needToKnow|review|settings|rules|memories|memoryDays|memory|growth|backups|config|diagnostics
-//   POST /api/persona-memory/admin.do       写操作：{action, ...参数, confirm?: {token, typed?}}
-//   GET  /api/persona-memory/admin.export   下载导出的 JSONL：?name=pm-export-….jsonl
+//   GET  /api/rugu/admin          管理页（一个自带样式和脚本的 HTML，CSP 带 nonce）
+//   GET  /api/rugu/admin.data     只读视图：?view=overview|needToKnow|review|settings|rules|memories|memoryDays|memory|growth|backups|config|diagnostics
+//   POST /api/rugu/admin.do       写操作：{action, ...参数, confirm?: {token, typed?}}
+//   GET  /api/rugu/admin.export   下载导出的 JSONL：?name=pm-export-….jsonl
 // 在 DSH 的鉴权之外再加两道（纵深防御）：
 //   - 页面里带一个每个进程随机的令牌，数据、操作、下载三条路由都要求请求头 x-pm-admin 和它一致（只有拿得到页面的主人知道它；
 //     自定义请求头也让跨站请求必须先过预检）；
@@ -20,10 +20,10 @@ import { createActions, exportFileName } from './actions.js';
 import { renderPage, pageCsp } from './page.js';
 
 export const ROUTES = Object.freeze({
-  page: '/api/persona-memory/admin',
-  data: '/api/persona-memory/admin.data',
-  act: '/api/persona-memory/admin.do',
-  file: '/api/persona-memory/admin.export',
+  page: '/api/rugu/admin',
+  data: '/api/rugu/admin.data',
+  act: '/api/rugu/admin.do',
+  file: '/api/rugu/admin.export',
 });
 export const TOKEN_HEADER = 'x-pm-admin';
 const MAX_BODY = 64 * 1024;
@@ -119,7 +119,7 @@ export function createAdminHandlers(deps) {
     try {
       if (!methods.includes(req.method)) res = fail(405, 'METHOD', '不支持这个请求方法');
       else if (badSite(req)) res = fail(403, 'FORBIDDEN', '只接受 DSH 自己页面的请求');
-      else if (needToken && !authed(req)) res = fail(403, 'FORBIDDEN', '缺少管理页令牌（请从 DSH 设置里打开「记忆」）');
+      else if (needToken && !authed(req)) res = fail(403, 'FORBIDDEN', '缺少管理页令牌（请从 DSH 设置里打开「如故」）');
       else res = await fn(meta);
     } catch (e) {
       res = errorResponse(e);

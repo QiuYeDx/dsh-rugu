@@ -1,6 +1,6 @@
 // 管理页的本地预览（不是测试文件）：不启动 DSH，用假 pm / 假 host 跑真的路由处理函数，给无头 Chrome 截图审稿用。
 //   node packages/dsh/test/admin/preview-server.mjs [--port 3471]
-//   http://127.0.0.1:3471/s/<normal|empty|errors|big|old>/api/persona-memory/admin    单独打开的管理页（big：星图 2 万颗星；old：老核心，没有星图）
+//   http://127.0.0.1:3471/s/<normal|empty|errors|big|old>/api/rugu/admin    单独打开的管理页（big：星图 2 万颗星；old：老核心，没有星图）
 //     星图的调试开关：页面地址加 ?starmap=2d 强制走 2D 退路
 //   http://127.0.0.1:3471/shell/<normal|empty|errors|big|old>?theme=dark                       仿 DSH 设置面板，经 client.js 用 iframe 打开
 // 只监听 127.0.0.1；数据全是 fixtures.js 里编的。
@@ -63,7 +63,7 @@ const SHELL = (scenario, theme) => `<!doctype html>
   .options{flex:1;min-height:0;overflow-y:auto;padding:0 28px 20px}
 </style></head>
 <body ${theme === 'dark' ? 'data-ds-dark-theme' : ''}>
-<div class="panel"><nav><div>通用</div><div>模型</div><div>插件</div><div>B站伙伴</div><div class="on">记忆</div></nav>
+<div class="panel"><nav><div>通用</div><div>模型</div><div>插件</div><div>B站伙伴</div><div class="on">如故</div></nav>
 <div class="content"><div class="header"></div><div class="options" id="root"></div></div></div>
 <script>
   // 一个只够 client.js 用的小 React：createElement 直接建 DOM，hook 只跑一次（预览不需要协调）
@@ -103,7 +103,7 @@ const SHELL = (scenario, theme) => `<!doctype html>
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://local');
-    const m = url.pathname.match(/^\/s\/(normal|empty|errors|big|old)(\/api\/persona-memory\/[A-Za-z.]+)$/);
+    const m = url.pathname.match(/^\/s\/(normal|empty|errors|big|old)(\/api\/rugu\/[A-Za-z.]+)$/);
     if (m) {
       const fn = scenarios[m[1]][m[2]];
       if (!fn) { res.writeHead(404); return res.end(); }
@@ -122,4 +122,4 @@ http.createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(500); res.end(String(e?.stack ?? e));
   }
-}).listen(port, '127.0.0.1', () => console.log(`管理页预览：http://127.0.0.1:${port}/s/normal/api/persona-memory/admin  ·  http://127.0.0.1:${port}/shell/normal`));
+}).listen(port, '127.0.0.1', () => console.log(`管理页预览：http://127.0.0.1:${port}/s/normal/api/rugu/admin  ·  http://127.0.0.1:${port}/shell/normal`));

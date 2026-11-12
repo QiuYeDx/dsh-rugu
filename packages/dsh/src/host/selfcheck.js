@@ -39,6 +39,34 @@ export function whitelistState(src) {
   return { found: true, missing: MEMORY_TOOLS.filter((t) => !present.includes(t)), patched };
 }
 
+/** D167 之前插件在 Cordis 里的行 id（改名成 rugu，和别人的同名插件撞了）。 */
+export const LEGACY_ROW_ID = 'persona-memory';
+
+/**
+ * 用户自己的 Cordis 补丁文件里还有没有针对旧行 id 的覆盖项（D167）：家目录的 cordis.patch.yml 和每个 profile 的那一份。
+ * 只按行找 `id: persona-memory`（引号可有可无，块写法、流写法都认，# 后面的注释不算）；只读，读不到的文件跳过。
+ * @param {string} dshHome
+ * @param {typeof fs} [fsx]
+ * @returns {string[]} 找到的文件（相对 DSH 家目录，用 / 分隔）
+ */
+export function legacyRowOverrides(dshHome, fsx = fs) {
+  if (!dshHome) return [];
+  const files = ['cordis.patch.yml'];
+  try {
+    for (const e of fsx.readdirSync(path.join(dshHome, 'profiles'), { withFileTypes: true }) ?? []) {
+      if (e?.isDirectory?.()) files.push(`profiles/${e.name}/cordis.patch.yml`);
+    }
+  } catch { /* 没有 profiles 目录 */ }
+  const re = new RegExp(`(?:^|[\\s{,-])id\\s*:\\s*(["']?)${LEGACY_ROW_ID}\\1\\s*(?:$|[,}])`);
+  const hits = [];
+  for (const rel of files) {
+    let text;
+    try { text = fsx.readFileSync(path.join(dshHome, ...rel.split('/')), 'utf8'); } catch { continue; }
+    if (String(text).split(/\r?\n/).some((line) => re.test(line.replace(/(^|\s)#.*$/, '')))) hits.push(rel);
+  }
+  return hits;
+}
+
 /**
  * 适配器自己的自检项归一成我们的形状。认两种：{id, level, label} 和 {name, ok, detail}（QQ 适配器）。
  * ok:false 默认只是 warn（适配器知道得最清楚的是「哪里读不到」，不一定要停掉它）；写了 critical 或 level:'fail' 才算失败。
@@ -122,6 +150,13 @@ export async function runSelfCheck(d) {
   add('host.connection', 'host', typeof conn?.fetch?.register === 'function' ? 'ok' : 'warn',
     typeof conn?.fetch?.register === 'function' ? 'connection.fetch.register 可用（管理页只给主人）' : '没有 connection.fetch.register：管理页不注册（不会退回不鉴权的 webServer 路由）',
     typeof conn?.fetch?.register === 'function' ? {} : { disables: ['admin'] });
+  // D167：插件的行 id 从 persona-memory 改成了 rugu；用户自己手写的覆盖还指着旧 id 的话就不再生效了。没有就不报
+  let stale = [];
+  try { stale = legacyRowOverrides(d.paths?.dshHome, fsx); } catch { stale = []; }
+  if (stale.length) {
+    add('host.legacyRow', 'host', 'warn', `以前的设置行改名了：${stale.join('、')} 里针对 id: ${LEGACY_ROW_ID} 的覆盖不再生效`,
+      { hint: `如故在 DSH 里的行 id 从 ${LEGACY_ROW_ID} 改成了 rugu（和别人的同名插件撞了）。把那一项的 id 改成 rugu，然后彻底重启 DSH；不需要那项覆盖就删掉它。` });
+  }
 
   // ── 运行时 ──
   const sq = await sqliteChecks();

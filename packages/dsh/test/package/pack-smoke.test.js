@@ -21,6 +21,9 @@ test('dsh-rugu 的包：入口和运行时加载的文件依赖的都在包里�
   for (const f of ['src/admin/page.html', 'src/admin/starmap.client.js', 'src/host/gpu/sampler-worker.js']) assert.ok(r.runtime.includes(f), `应该扫到运行时加载的 ${f}`);
   assert.ok(!r.files.some((f) => f.startsWith('test/')), '插件的测试不进包');
   assert.ok(!r.files.includes('scripts/install.mjs'), 'install.mjs 只在仓库里用');
+  // D167：三个图标都进包；横幅只给 README 用（README 里是 raw 地址），横幅的源文件和渲染脚本也不进包
+  for (const f of ['assets/icon.svg', 'assets/icon-light.svg', 'assets/glyph.svg']) assert.ok(r.files.includes(f), `包里应该有 ${f}`);
+  assert.deepEqual(r.files.filter((f) => /\.webp$/i.test(f) || f.startsWith('assets/brand/')), [], '横幅和它的源文件不进包');
 });
 
 test('对 DSH 的 peer 依赖 @deepseek-ai/dsh-tools 写 *（DSH 只发预发布版；package-lock.json 跟着一致）', async () => {

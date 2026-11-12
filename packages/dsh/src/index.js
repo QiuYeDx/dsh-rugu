@@ -1,4 +1,4 @@
-// DSH 插件入口（§10.1）：一个全局 Cordis 插件 dsh-rugu（行 id persona-memory），服务名 personaMemory。
+// DSH 插件入口（§10.1）：一个全局 Cordis 插件 dsh-rugu（行 id rugu，D167 之前是 persona-memory），服务名 personaMemory。
 // 宿主集成全部在 host/：apply 同步挂好钩子、提供服务外壳，数据库在后台打开（打开之前钩子一律放行）；返回的函数在插件卸载时关库。
 // 别的插件里的适配器（bili-eyes）必须在 ctx.inject(['personaMemory'], (sub) => sub.personaMemory.registerAdapter(a)) 里注册：
 // 记忆插件重载后服务重新提供，回调会再跑一次，注册不会丢（评审:AR-18）。

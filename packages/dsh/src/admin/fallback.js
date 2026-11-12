@@ -1,5 +1,5 @@
 // 核心打不开时的管理页（§13.1、§13.2）：只读、没有脚本、没有任何记忆内容，只有出错的代码和几个状态数字。
-// 和正式的管理页一样只经 ctx.connection.fetch.register 注册（只给主人），同一个路径：主人从 DSH 设置里打开「记忆」就能看到插件没在工作。
+// 和正式的管理页一样只经 ctx.connection.fetch.register 注册（只给主人），同一个路径：主人从 DSH 设置里打开「如故」就能看到插件没在工作。
 import crypto from 'node:crypto';
 import { ROUTES } from './handlers.js';
 
@@ -43,13 +43,13 @@ export function renderFallbackPage(o) {
   ];
   const nonce = crypto.randomBytes(12).toString('base64');
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>记忆插件没有启动</title><style nonce="${nonce}">
+<title>如故没有启动</title><style nonce="${nonce}">
 body{font:14px/1.6 system-ui,sans-serif;margin:24px;color:#1f2328;background:#fff}
 @media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}.box{border-color:#5a1e1e;background:#2a1215}td{border-color:#30363d}}
 .box{border:1px solid #f0b4b4;background:#fff5f5;border-radius:8px;padding:12px 16px;max-width:720px}
 table{border-collapse:collapse;margin-top:12px}td{border-bottom:1px solid #d0d7de;padding:4px 12px 4px 0}code{font-family:ui-monospace,monospace}
 </style></head><body>
-<div class="box"><h2>记忆插件没有启动（<code>${esc(err)}</code>）</h2>
+<div class="box"><h2>如故没有启动（<code>${esc(err)}</code>）</h2>
 <p>${esc(HINTS[err] ?? '数据库没有打开。详细原因看 DSH 日志里 persona-memory 的 core.open 那一行（只有错误类型，没有内容）。')}</p>
 <p>这段时间：不感知、不注入；她在原来的对话里照常聊天。往别的场合说的话审不了：发到群里、私聊、定时任务照常放行（功能优先）；往公开的地方说的（公开评论，宿主读得到是公开的目标）先不说。插件重载、数据库打开之后自动恢复。</p></div>
 <table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(Number(v) || 0)}</td></tr>`).join('')}
@@ -75,7 +75,7 @@ export function registerFallbackAdmin(ctx, opts = {}) {
     const { html, csp } = renderFallbackPage({ error: opts.error, status: status(), at: now() });
     return new Response(html, { status: 200, headers: { ...HEADERS, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': csp } });
   };
-  const data = () => new Response(JSON.stringify({ ok: false, code: 'NOT_READY', error: `记忆插件没有启动（${code(opts.error)}）` }),
+  const data = () => new Response(JSON.stringify({ ok: false, code: 'NOT_READY', error: `如故没有启动（${code(opts.error)}）` }),
     { status: 503, headers: { ...HEADERS, 'content-type': 'application/json; charset=utf-8' } });
   try {
     for (const [p, fn] of [[ROUTES.page, page], [ROUTES.data, data]]) {

@@ -37,6 +37,8 @@
     "scripts/preset-config.mjs",
     "locale",
     "assets/icon.svg",
+    "assets/icon-light.svg",
+    "assets/glyph.svg",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md",

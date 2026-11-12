@@ -28,6 +28,19 @@ test('同步 README：HTML 的 <img src> 当图片、<a href> 当链接，和 Ma
   for (const m of packageReadme().matchAll(/<img\b[^>]*\ssrc\s*=\s*["']([^"']*)["']/gi)) assert.match(m[1], /^https:\/\//);
 });
 
+test('同步 README（D167）：<picture> 里 <source srcset> 的每个地址都当图片改成 raw；描述符、绝对地址不动；<img srcset> 同样', () => {
+  const RAW = 'https://raw.githubusercontent.com/QiuYeDx/dsh-rugu/main/';
+  assert.equal(absoluteLinks('<source media="(prefers-color-scheme: dark)" srcset="packages/dsh/assets/banner-dark.webp">'),
+    `<source media="(prefers-color-scheme: dark)" srcset="${RAW}packages/dsh/assets/banner-dark.webp">`);
+  assert.equal(absoluteLinks("<SOURCE SRCSET='./a.webp 1x, b@2x.webp 2x,https://x.test/c.webp 3x'>"),
+    `<SOURCE SRCSET='${RAW}a.webp 1x, ${RAW}b@2x.webp 2x,https://x.test/c.webp 3x'>`);
+  assert.equal(absoluteLinks('<img srcset="a.webp 640w, b.webp 1280w" src="b.webp" alt="x">'), `<img srcset="${RAW}a.webp 640w, ${RAW}b.webp 1280w" src="${RAW}b.webp" alt="x">`);
+  for (const keep of ['<source srcset="https://x.test/a.webp">', '<source src="a.mp4">', '<source data-srcset="a.webp">']) assert.equal(absoluteLinks(keep), keep);
+  // 同步出来的 npm README 里，<source srcset> 也没有剩下相对路径
+  const pkg = packageReadme();
+  for (const m of pkg.matchAll(/<source\b[^>]*\ssrcset\s*=\s*["']([^"']*)["']/gi)) for (const c of m[1].split(',')) assert.match(c.trim(), /^https:\/\//);
+});
+
 test('私有词检查：词大小写不敏感、re: 是正则、注释和空行跳过；报的是第几条规则，不把词打出来', () => {
   const dir = tmpDir('private-words');
   const f = path.join(dir, 'list.txt');

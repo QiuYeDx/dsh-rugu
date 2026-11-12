@@ -118,7 +118,7 @@ export function createEgress({ getPm, claims, tooltable, guard, assembler, hostC
     return false;
   };
   const frozenReason = () => hostConfig().freeze?.reason || '这些现在由记忆插件负责';
-  const PROTECTED_REASON = '这是记忆插件自己的设置和数据，只能由主人在 DSH 设置里的「记忆」管理页看和改，工具碰不到。';
+  const PROTECTED_REASON = '这是记忆插件自己的设置和数据，只能由主人在 DSH 设置里的「如故」管理页看和改，工具碰不到。';
   const isProtected = (exec) => { try { return touchesProtected(exec, protectedPaths()); } catch { return false; } };
   const stats = { frozenDenied: 0, protectedDenied: 0, appraised: 0, speak: 0, reconsider: 0, hold: 0, failClosed: 0, failOpen: 0, offPassed: 0,
     unclassifiedPassed: 0, adapterAppraised: 0, silent: 0, coreDownDenied: 0, coreDownPassed: 0, tooManyTargets: 0,

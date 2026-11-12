@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="pm-admin-token" content="__PM_TOKEN__">
-<title>记忆 · 管理</title>
+<title>如故</title>
 <style nonce="__PM_NONCE__">
 /* 如故的管理页。颜色、圆角、字体跟 DSH 的主题变量走（DSH 设置里打开时，client.js 把父页面的变量抄进来）；
    下面这些值只是单独打开时的兜底，取自 DSH 自己的浅色 / 深色主题。 */
@@ -583,7 +583,7 @@ html.pm-sm-maxed{overflow:hidden}
 </style>
 </head>
 <body>
-<div id="app" class="pm" aria-busy="true"><div class="pm-loading"><span class="pm-spin"></span>正在打开记忆管理…</div></div>
+<div id="app" class="pm" aria-busy="true"><div class="pm-loading"><span class="pm-spin"></span>正在打开如故…</div></div>
 <noscript>这个页面需要启用脚本。</noscript>
 <!-- 星图（D163）：starmap.client.js 渲染时塞进这里（page.js） -->
 <script nonce="__PM_NONCE__">__PM_STARMAP__</script>
@@ -3574,10 +3574,10 @@ html.pm-sm-maxed{overflow:hidden}
     const embedded = (() => { try { return window.top !== window; } catch { return true; } })();
     if (embedded) document.body.setAttribute('data-pm-embedded', '');
     // 页签栏：外壳 nav 吸顶，里面的页签条横向滚动；两头的箭头只给鼠标用（键盘在页签条里用左右键、Home / End）
-    const list = h('div', { class: 'pm-tabs pm-fx', role: 'tablist', 'aria-label': '记忆管理' });
+    const list = h('div', { class: 'pm-tabs pm-fx', role: 'tablist', 'aria-label': '如故' });
     const prev = h('button', { type: 'button', class: 'pm-nav-arrow l', tabindex: '-1', 'aria-hidden': 'true', title: '往左看' });
     const next = h('button', { type: 'button', class: 'pm-nav-arrow r', tabindex: '-1', 'aria-hidden': 'true', title: '往右看' });
-    const bar = h('nav', { class: 'pm-navbar', 'aria-label': '记忆管理' }, prev, list, next);
+    const bar = h('nav', { class: 'pm-navbar', 'aria-label': '如故' }, prev, list, next);
     const pages = h('div', { style: { display: 'contents' } });
     const defs = [
       ['overview', '总览', Overview], ['starmap', '星图', Starmap], ['needToKnow', '需要你知道', NeedToKnow], ['review', '审核', Review], ['memory', '记忆', Memories],
@@ -3617,7 +3617,7 @@ html.pm-sm-maxed{overflow:hidden}
     }
     // Tab 键进来时，选中的页签可能被渐隐盖住一半：滚进来
     list.addEventListener('focusin', (e) => { const b = e.target.closest?.('.pm-tab'); if (b) revealTab(b, true); });
-    const header = h('header', { class: 'pm-head' }, h('h1', null, '记忆'), headPills, headMeta);
+    const header = h('header', { class: 'pm-head' }, h('h1', null, '如故'), headPills, headMeta);
     const edgeB = h('div', { class: 'pm-edge-b', 'aria-hidden': 'true' });
     clear(app, header, bar, pages);
     document.body.append(edgeB);

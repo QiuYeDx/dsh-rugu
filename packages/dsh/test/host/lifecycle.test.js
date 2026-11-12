@@ -82,16 +82,16 @@ test('打开失败：插件不可用但 DSH 照常——不注入、常驻区空
   assert.equal((await svc.recall({ settingId: 's', trigger: 'message' }, {})).items.length, 0);
   await assert.rejects(() => svc.note({}), (e) => e.code === 'NOT_READY');
   // 只给主人看的状态页（同一个路径），带出错的代码；没有正式管理页的数据接口
-  const page = ctx.connection.fetch.routes.find((r) => r.path === '/api/persona-memory/admin');
+  const page = ctx.connection.fetch.routes.find((r) => r.path === '/api/rugu/admin');
   assert.ok(page, '注册了状态页');
-  const res = await page.fetch(new Request('http://127.0.0.1/api/persona-memory/admin'));
+  const res = await page.fetch(new Request('http://127.0.0.1/api/rugu/admin'));
   assert.equal(res.status, 200);
   const html = await res.text();
-  assert.match(html, /记忆插件没有启动（<code>STORE_LOCKED<\/code>）/);
+  assert.match(html, /如故没有启动（<code>STORE_LOCKED<\/code>）/);
   assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
-  const data = ctx.connection.fetch.routes.find((r) => r.path === '/api/persona-memory/admin.data');
-  assert.equal((await data.fetch(new Request('http://127.0.0.1/api/persona-memory/admin.data?view=overview'))).status, 503);
-  assert.equal(ctx.connection.fetch.routes.some((r) => r.path === '/api/persona-memory/admin.do'), false, '状态页不能做任何操作');
+  const data = ctx.connection.fetch.routes.find((r) => r.path === '/api/rugu/admin.data');
+  assert.equal((await data.fetch(new Request('http://127.0.0.1/api/rugu/admin.data?view=overview'))).status, 503);
+  assert.equal(ctx.connection.fetch.routes.some((r) => r.path === '/api/rugu/admin.do'), false, '状态页不能做任何操作');
   await cleanup();
   assert.equal(ctx.connection.fetch.routes.length, 0, '卸载时撤掉');
 });

@@ -35,8 +35,8 @@ test('库在、密钥文件不在：不新建密钥，核心拒绝打开（IDENT
     assert.equal(fs.existsSync(keyFile), false, '宿主和核心都没有新建密钥');
     assert.equal(sha(db), before, '库没被改动');
     // 状态页（只给主人）说清楚是什么、数据动没动、该怎么办
-    const page = ctx.connection.fetch.routes.find((r) => r.path === '/api/persona-memory/admin');
-    const html = await (await page.fetch(new Request('http://127.0.0.1/api/persona-memory/admin'))).text();
+    const page = ctx.connection.fetch.routes.find((r) => r.path === '/api/rugu/admin');
+    const html = await (await page.fetch(new Request('http://127.0.0.1/api/rugu/admin'))).text();
     assert.match(html, /IDENTITY_KEY_MISSING/);
     assert.match(html, /persona-memory\.key/);
     assert.match(html, /没有改动任何数据/);

@@ -1,4 +1,4 @@
-// 管理页（§13.1、§9.3.7、§12.4、§13.2、§13.3）：DSH 设置侧边栏的「记忆」。
+// 管理页（§13.1、§9.3.7、§12.4、§13.2、§13.3）：DSH 设置侧边栏的「如故」。
 //   registerAdmin(ctx, {pm, host}) → dispose
 // 只注册主人专用的 Fetch 路由（ctx.connection.fetch.register：先过 DSH 的 /api 围栏和 Cookie，再要求 owner），
 // **绝不**用 webServer.register（它不鉴权，还会绕过 /api 的围栏，§10.2 F19、附录 G）。没有 connection 服务就什么都不注册（fail closed）。

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runSelfCheck, whitelistState, normalizeAdapterCheck, failedAdapters, PATCH_MARK } from '../../src/host/selfcheck.js';
+import { runSelfCheck, whitelistState, normalizeAdapterCheck, failedAdapters, legacyRowOverrides, PATCH_MARK } from '../../src/host/selfcheck.js';
 import { HOST_DEFAULTS } from '../../src/host/config.js';
 import { resolvePaths } from '../../src/host/paths.js';
 import { createFakePm, fakeBinding, tmpDir, rmDir, FakeDshCtx } from '../fakes/index.js';
@@ -155,4 +155,32 @@ test('插件预设（D112）：照标准模式注册上是 ok；精简副本、�
   assert.equal((await run(base, [{ id: 'standard', name: '', broken: false }])).level, 'warn', '注册了但 DSH 的列表里看不到');
   assert.equal(byId(await runSelfCheck(deps({ dir })))['host.preset'], undefined, '没有预设（别的宿主）：不报');
   rmDir(dir);
+});
+
+test('D167：用户补丁文件里还有针对旧行 id persona-memory 的覆盖 → 提醒改成 rugu；没有、读不到都不报', async () => {
+  const dir = tmpDir('sc-legacy-row');
+  try {
+    assert.deepEqual(legacyRowOverrides(dir), [], '什么文件都没有：不报');
+    assert.equal(byId(await runSelfCheck(deps({ dir, skipNetwork: true })))['host.legacyRow'], undefined);
+    fs.mkdirSync(path.join(dir, 'profiles', 'desktop'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'profiles', 'web'), { recursive: true });
+    // 只是提到它、注释掉的、别的 id 都不算
+    fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), '# id: persona-memory 以前的\nlocale:\n  preference: zh\n- id: persona-memory-extra\n  name: x\n');
+    fs.writeFileSync(path.join(dir, 'profiles', 'web', 'cordis.patch.yml'), '- id: rugu\n  name: dsh-rugu\n  config: {}\n');
+    assert.deepEqual(legacyRowOverrides(dir), []);
+    fs.writeFileSync(path.join(dir, 'profiles', 'desktop', 'cordis.patch.yml'), '- id: "persona-memory"\r\n  name: dsh-rugu\r\n  config:\r\n    a: 1\r\n');
+    assert.deepEqual(legacyRowOverrides(dir), ['profiles/desktop/cordis.patch.yml']);
+    fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), '- { id: persona-memory, name: dsh-rugu } # 手写的\n');
+    assert.deepEqual(legacyRowOverrides(dir), ['cordis.patch.yml', 'profiles/desktop/cordis.patch.yml']);
+    const it = byId(await runSelfCheck(deps({ dir, skipNetwork: true })))['host.legacyRow'];
+    assert.equal(it.level, 'warn');
+    assert.equal(it.status, 'warn');
+    assert.match(it.label, /以前的设置行改名了：cordis\.patch\.yml、profiles\/desktop\/cordis\.patch\.yml 里针对 id: persona-memory 的覆盖不再生效/);
+    assert.match(it.detail, /改成 rugu/);
+    assert.equal(it.disables, undefined, '只是提醒，不关任何东西');
+    // 读文件出错：跳过，不报错
+    const broken = { readdirSync: () => { throw new Error('EACCES'); }, readFileSync: () => { throw new Error('EACCES'); } };
+    assert.deepEqual(legacyRowOverrides(dir, broken), []);
+    assert.deepEqual(legacyRowOverrides(''), []);
+  } finally { rmDir(dir); }
 });

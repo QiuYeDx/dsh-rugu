@@ -1,6 +1,10 @@
 <div align="center">
 
-<img src="packages/dsh/assets/banner.webp" width="100%" alt="如故 · dsh-rugu：让 Agent 像一个真实存在的人">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/dsh/assets/banner-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="packages/dsh/assets/banner-light.webp">
+  <img src="packages/dsh/assets/banner-light.webp" width="100%" alt="如故 · dsh-rugu：让 Agent 像一个真实存在的人">
+</picture>
 
 [![npm](https://img.shields.io/npm/v/dsh-rugu)](https://www.npmjs.com/package/dsh-rugu)
 [![license](https://img.shields.io/npm/l/dsh-rugu)](LICENSE)
@@ -42,22 +46,24 @@
 
 **你看得见**
 
-- **管理页**（DSH 设置里的「记忆」，只给主人）：看、改、删、撤回她的记忆，按场合开关，备份恢复，每天的后台花费和上限。
+- **管理页**（DSH 设置里的「如故」，只给主人）：看、改、删、撤回她的记忆，按场合开关，备份恢复，每天的后台花费和上限。
 - **对比评测**：同一组用例在「有记忆 / 没记忆」下跑一遍，看它到底帮了多少。
 
 ## 快速开始
 
 **1. 安装**
 
-在 DSH「设置 → 插件」里添加插件，包名填 `dsh-rugu`，装完重启 DSH。或者用命令行：
+在 DSH 侧边栏的「插件」页里添加插件，包名填 `dsh-rugu`，装完重启 DSH。或者用命令行：
 
 ```bash
 dsh plugin --profile desktop add dsh-rugu
 ```
 
+不能和 `dsh-persona-memory` 同时安装：那是另一位作者的插件，名字相近，和如故无关，两个一起装会冲突。
+
 **2. 首次设置**
 
-打开「设置 → 记忆」，走完几步设置（不用手写配置）。设置走完之前，插件不开库、不记任何东西。第一步会说清楚：
+打开「设置 → 如故」，走完几步设置（不用手写配置）。设置走完之前，插件不开库、不记任何东西。第一步会说清楚：
 
 - 接上 QQ 之后，她在的群和私聊里的话都会被记下来（向导里会列出桥接放行的群，默认全选，不想记的取消；之后也能改）；
 - 原文默认保留 2 年（可以改）；

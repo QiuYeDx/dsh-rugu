@@ -16,7 +16,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const NAME = 'dsh-rugu';
-export const ROW = Object.freeze({ id: 'persona-memory', name: NAME });
+export const ROW = Object.freeze({ id: 'rugu', name: NAME });
 /** 改名之前的包名：换名字时摘掉（D130）。 */
 export const LEGACY_NAME = 'dsh-persona-memory';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -171,7 +171,7 @@ function main() {
   if (plan.problems.length) { console.error('有问题，没有动任何文件。'); process.exit(1); }
   for (const l of applyPlan(plan)) console.log(`✓ ${l}`);
   console.log(uninstall ? '已卸载。彻底重启 DSH 后生效（先征得主人同意）。数据和配置都留着。'
-    : '已装好。下一步：彻底重启 DSH 一次（先征得主人同意），然后打开设置里的「记忆」：新装的先走首次设置（QQ 白名单也在那里），已有配置的直接看启动自检。');
+    : '已装好。下一步：彻底重启 DSH 一次（先征得主人同意），然后打开设置里的「如故」：新装的先走首次设置（QQ 白名单也在那里），已有配置的直接看启动自检。');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main();

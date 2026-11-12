@@ -126,7 +126,7 @@ test('安装（预演）：打印 Cordis 行、要建的链接、profile 的 pac
   const before = fs.readFileSync(pkgFile, 'utf8');
   const plan = planInstall({ dshHome: home });
   assert.deepEqual(plan.problems, []);
-  assert.deepEqual(plan.row, { id: 'persona-memory', name: 'dsh-rugu' });
+  assert.deepEqual(plan.row, { id: 'rugu', name: 'dsh-rugu' });
   assert.deepEqual(ROW, plan.row);
   assert.deepEqual(plan.steps.map((s) => s.kind), ['junction', 'junction', 'package.json']);
   assert.equal(plan.pkgChange.next.dependencies[NAME], `link:${path.join(home, 'plugins', NAME).replace(/\\/g, '/')}`);
@@ -144,7 +144,7 @@ test('安装（预演）：打印 Cordis 行、要建的链接、profile 的 pac
   // 命令行：默认预演，退出码 0
   const out = spawnSync(process.execPath, [path.join(SCRIPTS, 'install.mjs'), '--dsh-home', home], { encoding: 'utf8' });
   assert.equal(out.status, 0, out.stderr);
-  assert.match(out.stdout, /id: persona-memory/);
+  assert.match(out.stdout, /id: rugu$/m);
   assert.match(out.stdout, /这是预演/);
   assert.equal(fs.readFileSync(pkgFile, 'utf8'), before);
   // 找不到 profile：报问题
