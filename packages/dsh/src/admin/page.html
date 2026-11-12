@@ -1607,7 +1607,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
         case 'percepts': return entry({
           pick: pick(x), kind: [x.self ? '她' : (entityName(x.actorEntityId) ?? '有人'), x.self ? 'info' : ''], ctx: settingName(x.settingKey), at: x.at,
           body: x.textState === 'expired' ? (x.text ? h('span', null, h('span', { class: 'pm-faint' }, '（原话已过保留期）'), ' ', x.text) : h('span', { class: 'pm-faint' }, '（原话已过保留期）')) : (x.text ?? ''), clamp: true,
-          extra: supBadge, foot: meta(label(ADDR, x.addressed), label(ATTN, x.attention), x.visibleTo === 'her-only' ? '只有她看到' : null, x.textState === 'edited' ? '编辑过' : x.textState === 'retracted' ? '撤回了' : null, x.historical ? '回填' : null),
+          extra: supBadge, foot: meta(x.addressedBy === 'glance' ? `${label(ADDR, x.addressed)}（按意思判断）` : label(ADDR, x.addressed), label(ATTN, x.attention), x.visibleTo === 'her-only' ? '只有她看到' : null, x.textState === 'edited' ? '编辑过' : x.textState === 'retracted' ? '撤回了' : null, x.historical ? '回填' : null),
           actions: supActions(x, state) });
         case 'lessons': {
           // 她的经验（D124）：规则、要避开的坑、怎么知道的、证据；你可以确认（算验证过）、忘掉、彻底删除

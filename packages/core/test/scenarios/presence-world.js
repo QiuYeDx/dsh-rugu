@@ -207,8 +207,9 @@ export function readGlanceCard(req) {
   const content = req.messages.map((x) => x.content).join('\n');
   const lines = [];
   for (const l of content.split('\n')) {
-    const m = /^\[(\d+)\](\*?) (他|你|其他人[A-Z])：(.*)$/.exec(l);
-    if (m) lines.push({ i: Number(m[1]), target: m[2] === '*', who: m[3], text: m[4] });
+    // 〔对你说〕〔提到你〕（D158）：平台标的结构上对她说的
+    const m = /^\[(\d+)\](\*?) (他|你|其他人[A-Z])(?:〔(对你说|提到你)〕)?：(.*)$/.exec(l);
+    if (m) lines.push({ i: Number(m[1]), target: m[2] === '*', who: m[3], mark: m[4] ?? null, text: m[5] });
   }
   return { lines, targets: lines.filter((x) => x.target), oneOnOne: /私聊（只有他和你）/.test(content), content };
 }

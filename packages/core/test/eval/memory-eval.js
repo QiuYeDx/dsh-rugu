@@ -30,7 +30,7 @@ function glanceDouble(req) {
   const content = req.messages.map((x) => x.content).join('\n');
   const out = [];
   for (const l of content.split('\n')) {
-    const m = /^\[(\d+)\](\*?) (他|你|其他人[A-Z])：(.*)$/.exec(l);
+    const m = /^\[(\d+)\](\*?) (他|你|其他人[A-Z])(?:〔(?:对你说|提到你)〕)?：(.*)$/.exec(l);
     if (!m || m[2] !== '*') continue;
     const quote = m[4].match(/(别外传|别告诉[^，。]{0,6})/)?.[0] ?? '';
     out.push({ i: Number(m[1]), sens: quote ? 0.6 : 0.05, limit: quote ? 'strict' : 'none', quote, about: 'speaker', asks: false, gist: m[4].slice(0, 20),

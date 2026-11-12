@@ -8,10 +8,11 @@ const SEED = platformSeeds()[0];
 const LIVE = { mode: { byAttributes: { closed: 'live', public: 'live' } } };
 const G = (w, o) => w.core.mods.discretion.glancesOf(w.core, [w.perceptOf(o).id]).get(w.perceptOf(o).id) ?? null;
 
-test('合格：一对一里的、对她说的、她刚回过的人说的、她回那样一句的；不合格：旁边的人随口说的、回填的', async () => {
+test('合格：一对一里的、对她说的、她刚回过的人说的、她回那样一句的、她在说话的那几分钟里谁说的都看（D158）；不合格：她没在说话时旁边的人随口说的、回填的', async () => {
   const w = await openWorld({ seed: SEED, name: 'gl-elig', config: LIVE, llm: new FakeLLM({ fallback: { glance: glancer() } }) });
   try {
     const dm = w.say('oneOnOne', 'principal', '在吗', { addressed: 'to-her', attention: 'attended' });
+    const quiet = w.say('smallGroup', 'other', '早', { addressed: 'ambient', attention: 'peripheral' });
     const to = w.say('smallGroup', 'friend', '@她 你好', { addressed: 'mentions-her', attention: 'attended' });
     const reply = w.say('smallGroup', 'her', '你好呀');
     const next = w.say('smallGroup', 'friend', '今天好热', { addressed: 'ambient', attention: 'peripheral' });
@@ -23,7 +24,8 @@ test('合格：一对一里的、对她说的、她刚回过的人说的、她�
     assert.equal(G(w, to)?.state, 'done', '对她说的');
     assert.equal(G(w, reply)?.state, 'done', '她回的那一句');
     assert.equal(G(w, next)?.state, 'done', '她刚回过的人接着说的');
-    assert.equal(G(w, amb), null, '旁边的人随口说的：不看');
+    assert.equal(G(w, quiet), null, '她没在说话时旁边的人随口说的：不看');
+    assert.equal(G(w, amb)?.state, 'done', '她刚在这里说过话：旁边的人说的也看一眼（是不是在跟她说按意思判断）');
     assert.equal(G(w, old), null, '回填的：不看');
   } finally { await w.close(); }
 });

@@ -37,6 +37,11 @@ function supOf(core, kind, id) {
   return r ? r.state : null;
 }
 
+/** 这条感知的 addressed 是不是第一眼按意思抬上来的（D158，glances.raised）：是 → 'glance'，否则 null。 */
+function raisedBy(core, id) {
+  try { return core.store.get('SELECT raised FROM glances WHERE percept_id = ?', id)?.raised != null ? 'glance' : null; } catch { return null; }
+}
+
 /** 每一档最多取多少条（搜索结果再多主人也翻不完；分页照常）。 */
 const SEARCH_MAX = 1000;
 const likeOf = (text) => `%${String(text).replace(/[%_\\]/g, '\\$&')}%`;
@@ -241,7 +246,8 @@ const VIEWS = {
       from: 'percepts t', where, params, order: 't.id DESC',
       map: (p) => ({ ref: refOf('percept', p.id), id: p.id, settingKey: p.setting_key, perceivedIn: p.perceived_in, at: p.at, kind: p.kind,
         actorEntityId: p.actor_entity_id, self: !!p.actor_self, text: p.media_json ? core.mods.intake.mediaText(core, p.text, p.media_json, { who: '她' }) || null : p.text, textState: p.text_state, attentionClass: p.attention_class, visibleTo: p.visible_to,
-        addressed: p.addressed, attention: p.attention, standing: p.standing, episodeId: p.episode_id, windowId: p.window_id, historical: !!p.historical,
+        // addressedBy（D158）：'glance' = 结构上是旁听，第一眼按意思判断出是对她说的 / 对大家说的，抬上来的
+        addressed: p.addressed, addressedBy: raisedBy(core, p.id), attention: p.attention, standing: p.standing, episodeId: p.episode_id, windowId: p.window_id, historical: !!p.historical,
         normState: p.norm_state, state: supOf(core, 'percept', p.id) }),
     });
   },

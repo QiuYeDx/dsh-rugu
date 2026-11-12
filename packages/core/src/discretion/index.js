@@ -420,6 +420,17 @@ export function repliedToTrigger(core, ref, triggerEntityId) {
 export function glancesIdle(core) { return GL.whenIdle(core); }
 
 /**
+ * 【D158】回想那一轮开始时：焦点这句话结构上是旁听、第一眼还在排队或在看（它要判断这句话是不是在跟她说），把它排到最前、最多等 ms。
+ * 不用代码规则去猜；等不到就照结构上的值走，看完以后抬高了的，下一次回想自然用上。不合格（没排第一眼）、看完了、失败了的不等。不抛错。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} perceptId
+ * @param {number} ms
+ * @param {AbortSignal|null} [signal]
+ * @returns {Promise<'none'|'done'|'timeout'>}  none：不用等；done：等到它看完了；timeout：没等到
+ */
+export function awaitAddressee(core, perceptId, ms, signal) { return GL.awaitAddressee(core, perceptId, ms, signal ?? null); }
+
+/**
  * 一句对她说的话去掉「叫她」的那一处 @ 以后的文字（工作记忆扫名字、retrieve 算话题相似度用）：只去掉 @ 后面紧跟的、确定是在叫她的
  * 那个名字（她自己的名字、提及里认成她的那个名字；整句只有一处 @ 而这句话是在叫她时，提及里记下的那个名字），别的字一个不动。
  * 不是对她说的、没有 @ 的原样返回。零 LLM、不用词表。

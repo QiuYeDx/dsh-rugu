@@ -934,7 +934,14 @@ function upgradeExisting(core, ctx, ex, o) {
   const attention = (ATTENTION_RANK[o.attention] ?? 0) > (ATTENTION_RANK[ex.attention] ?? 0) ? o.attention : ex.attention;
   const addressed = ex.addressed === 'by-her' || (ADDRESSED_RANK[o.addressed] ?? 0) <= (ADDRESSED_RANK[ex.addressed] ?? 0) ? ex.addressed : o.addressed;
   if (attention === ex.attention && addressed === ex.addressed) return { status: 'duplicates' };
-  const selfId = ctx.selfId();
+  return applyUpgrade(core, ctx.selfId(), ex, attention, addressed, o.perceivedAt);
+}
+
+/**
+ * 升级一条已经在库里的感知（同一条消息又来了一次档更高的、第一眼按意思判断出是对她说的，D158）：改 attention / addressed，
+ * 注意力档和 w_enc 取较强的，给包含它的原文窗口补一条痕迹；新变成对她说的 / 提到她的，提交后做完整预取（reprefetch）。
+ */
+function applyUpgrade(core, selfId, ex, attention, addressed, t) {
   const ac = soft(core, 'attention', () => core.mods.dynamics.attentionClass(core, { kind: ex.kind, addressed, attention },
     { herSpokeRecently: herSpoke(core, ex.setting_key, ex.at, selfId), opened: ex.kind === 'content' && attention === 'attended' }), null);
   const closeness = !ex.actor_self && ex.actor_entity_id != null ? soft(core, 'bond', () => core.mods.entities.bondOf(core, ex.actor_entity_id)?.closeness, undefined) : undefined;
@@ -945,7 +952,7 @@ function upgradeExisting(core, ctx, ex, o) {
   if (stronger) {
     // 感知本身没有 traces 行（§2.2）：又读到一次的痕迹加在包含它的原文窗口上；还没切进窗口的，切的时候按新的 w_enc 算
     for (const win of windowsContaining(core, [ex.id])) {
-      soft(core, 'trace', () => core.mods.dynamics.addTrace(core, { kind: 'window', id: win.id }, { t: o.perceivedAt, w, sourceKey: refOf('percept', ex.id), reason: 'reread' }), null);
+      soft(core, 'trace', () => core.mods.dynamics.addTrace(core, { kind: 'window', id: win.id }, { t, w, sourceKey: refOf('percept', ex.id), reason: 'reread' }), null);
     }
   }
   // 同一条消息后来被标成对她说的 / @ 她的（唤醒的那条路径交上来的）：要做完整预取（§7.1 第 9 步）
@@ -1598,6 +1605,34 @@ function writeInternal(core, p) {
   if (r?.status === 'accepted') return r.inserted;
   if (r?.status === 'duplicates' || r?.status === 'upgraded') return core.store.get('SELECT id FROM percepts WHERE adapter = ? AND ext_key = ?', s.adapter, extKey)?.id ?? 0;
   return 0;
+}
+
+/**
+ * 【D158】按意思抬高一句话的 addressed（第一眼判断出它是对她说的 / 对包括她在内的大家说的）。只从 ambient 往上抬：结构上已经是
+ * 对她说的（@、引用、一对一）、她自己说的、回填的都不动，也从不降低。走和「同一条消息又来了一次、档更高」同一条路（applyUpgrade）：
+ * 注意力档和编码权重跟着变，提交后按「现在是对她说的了」通知 retrieve 做完整预取；工作记忆、回想里「被直接问到」的判断读的都是
+ * 这一列，自然跟上。恢复期间、只读时不抬。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} perceptId
+ * @param {'to-her'|'mentions-her'} addressed
+ * @returns {boolean} 抬了
+ */
+export function raiseAddressed(core, perceptId, addressed) {
+  if (addressed !== 'to-her' && addressed !== 'mentions-her') return false;
+  if (!Number.isSafeInteger(perceptId) || !writable(core) || restoringNow(core)) return false;
+  const notes = { inserted: [], reprefetch: [], retracted: [], edited: [], groups: new Map() };
+  let raised = false;
+  core.store.tx(() => {
+    const ex = core.store.get('SELECT * FROM percepts WHERE id = ?', perceptId);
+    if (!ex || ex.actor_self || ex.historical || ex.addressed !== 'ambient') return;
+    const selfId = core.store.get('SELECT id FROM entities WHERE is_self = 1')?.id ?? null;
+    const r = applyUpgrade(core, selfId, ex, ex.attention, addressed, core.now());
+    raised = true;
+    mergeNotes(notes, r);
+    metric(core, 'intake.addressed.raised');
+    core.store.afterCommit(() => notifyCommitted(core, notes));
+  });
+  return raised;
 }
 
 // ── encode 在批次事务里调的两个写函数 ─────────────────────────────────────
