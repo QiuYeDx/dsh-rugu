@@ -27,7 +27,7 @@ const RIGHTS_DECIDERS = Object.freeze(['platform', 'mutual-claim', 'anchor-confi
 const bad = (what, path, message) => new ContractError(what, [{ path, message }]);
 
 /** 【D118】「需要你知道」现在列哪几种：taint 只在打开 context.taint.notify 时列（关着时那些旧行留在库里，只是不列、不计数）。 */
-function listedKindsSql(core) {
+export function listedKindsSql(core) {
   let notify = false;
   try { notify = core.config.get().context?.taint?.notify === true; } catch { notify = false; }
   return notify ? '1 = 1' : "kind <> 'taint'";

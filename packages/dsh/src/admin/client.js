@@ -60,6 +60,30 @@ window.__ModuleLoader__.load({
       body.style.removeProperty('--pm-page');
     }
 
+    // ── D170：新旧两版管理页并存 + 深浅色同步 ───────────────────────────────
+    // DSH 的界面怎么表示深浅色（dsh-client-ui-layout 的 ThemePresenter）：解析好的配色写在 body 上，深色时有 data-ds-dark-theme；
+    // <html> 上的 data-ds-theme-source 是主人的偏好（light / dark / system）。这里只看 body 的那个属性。
+    const DARK_ATTR = 'data-ds-dark-theme';
+    /** 和页面（ui/base.js 的 THEME_MESSAGE）约定的消息类型。页面只认同源、来自父窗口、这个形状的消息。 */
+    const THEME_MESSAGE = 'rugu:theme';
+    const themeNow = () => (document.body && document.body.hasAttribute(DARK_ATTR) ? 'dark' : 'light');
+    /** 主人上次选的是新版还是旧版（页面里点「回旧版」「试试新版」时记下的；同源的 localStorage）。没选过返回 null：按服务端的配置。 */
+    function chosenUi() {
+      try { const v = window.localStorage.getItem('rugu.admin.ui'); return v === 'next' || v === 'classic' ? v : null; } catch { return null; }
+    }
+    /** iframe 的地址：主题跟着带上（页面一打开就是对的颜色）；主人选过版本就带上 ui。 */
+    function pageUrl() {
+      const q = new URLSearchParams();
+      const ui = chosenUi();
+      if (ui) q.set('ui', ui);
+      q.set('theme', themeNow());
+      return `${PAGE}?${q}`;
+    }
+    /** 主题变了：告诉新版页面（postMessage，只发给同源）。旧版页面靠 syncTheme 直接写属性，不看这条消息。 */
+    function postTheme(frame) {
+      try { frame.contentWindow && frame.contentWindow.postMessage({ type: THEME_MESSAGE, theme: themeNow() }, window.location.origin); } catch { /* iframe 还没好 */ }
+    }
+
     /** iframe 填满设置面板剩下的高度（管理页自己有吸顶的页签栏，在 iframe 里滚动）。 */
     function fit(frame) {
       let scroller = frame.parentElement;
@@ -79,15 +103,28 @@ window.__ModuleLoader__.load({
     function MemoryAdmin() {
       const ref = useRef(null);
       const [failed, setFailed] = useState(false);
+      // 地址只在挂上时算一次（主题之后变了走 postMessage，不重新加载 iframe）
+      const [src] = useState(pageUrl);
       useEffect(() => {
         const frame = ref.current;
         if (!frame) return undefined;
         let raf = 0;
-        const later = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { syncTheme(frame); fit(frame); }); };
+        let lastTheme = themeNow();
+        const later = () => {
+          cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(() => {
+            syncTheme(frame); fit(frame);
+            const t = themeNow();
+            if (t !== lastTheme) { lastTheme = t; postTheme(frame); }
+          });
+        };
         const onLoad = () => {
           let ok = true;
           try { ok = !!frame.contentDocument && frame.contentDocument.title !== '' && !/^\s*\{/.test(frame.contentDocument.body?.textContent ?? ''); } catch { ok = false; }
           setFailed(!ok);
+          // 页面里换了版本（「回旧版」「试试新版」是 iframe 里的链接）以后也对上颜色
+          lastTheme = themeNow();
+          postTheme(frame);
           later();
         };
         frame.addEventListener('load', onLoad);
@@ -111,7 +148,7 @@ window.__ModuleLoader__.load({
       }, []);
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 } },
         failed && h('div', { role: 'alert', style: { fontSize: 13, color: 'var(--dsw-alias-state-error-primary, #ec1313)' } }, '如故的管理页没有打开：插件可能还没加载完，或者这个窗口不是主人身份。彻底重启 DSH 后再试。'),
-        h('iframe', { ref, src: PAGE, title: NAME.zh, style: { width: '100%', height: 640, border: 0, display: 'block', background: 'transparent', colorScheme: 'normal' } }));
+        h('iframe', { ref, src, title: NAME.zh, style: { width: '100%', height: 640, border: 0, display: 'block', background: 'transparent', colorScheme: 'normal' } }));
     }
 
     // 只硬性依赖 slots。locale 不写进 inject：Cordis 的 inject 都是必需的，写进去以后哪个 DSH 版本没有 locale 服务，
@@ -149,6 +186,8 @@ window.__ModuleLoader__.load({
     exports.inject = inject;
     exports.MemoryAdmin = MemoryAdmin;
     exports.PAGE = PAGE;
+    exports.pageUrl = pageUrl;
+    exports.THEME_MESSAGE = THEME_MESSAGE;
     exports.NAME = NAME;
     return module.exports;
   },

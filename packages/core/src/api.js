@@ -438,6 +438,16 @@ function buildApi(core, { startup, files }) {
       get: (ref) => core.mods.admin.get(core, ref),
       /** 【D163】记忆星图：快照 / 实时增量（since）/ 看一眼（peek）。只读，只读库也能用。 */
       starmap: (q) => core.mods.admin.starmap(core, q ?? {}),
+      /** 【D170】管理页首页：今天的计数、要紧的待处理、最近记住的、各入口的状态。只读，只读库也能用。 */
+      home: (q) => {
+        const o = q && typeof q === 'object' ? q : {};
+        return core.mods.admin.home(core, {
+          ...(Number.isFinite(o.dayStart) ? { dayStart: o.dayStart } : {}),
+          ...(Number.isInteger(o.tzOffsetMin) && Math.abs(o.tzOffsetMin) <= 840 ? { tzOffsetMin: o.tzOffsetMin } : {}),
+          ...(Number.isInteger(o.recent) ? { recent: o.recent } : {}),
+          ...(Number.isInteger(o.top) ? { top: o.top } : {}),
+        });
+      },
       simulate: (s) => core.mods.admin.simulate(core, s),
       review: {
         list: () => core.mods.admin.listReview(core, { status: 'pending' }),

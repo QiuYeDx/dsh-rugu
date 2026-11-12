@@ -1,7 +1,8 @@
 // 管理接口的 HTTP 层（§13.1）：四条精确的 Fetch 路由，全部经 ctx.connection.fetch.register 注册——
 // DSH 先过自己的 /api 围栏（Host/Origin、Cookie），再要求 principal.kind === 'owner'，否则 403。
-//   GET  /api/rugu/admin          管理页（一个自带样式和脚本的 HTML，CSP 带 nonce）
-//   GET  /api/rugu/admin.data     只读视图：?view=overview|needToKnow|review|settings|rules|memories|memoryDays|memory|growth|backups|config|diagnostics
+//   GET  /api/rugu/admin          管理页（一个自带样式和脚本的 HTML，CSP 带 nonce）；?ui=next 是重做中的新版（D170，ui/ 下拼出来的），
+//                                 ?ui=classic 或不给是旧版 page.html（默认按配置 host.admin.ui）
+//   GET  /api/rugu/admin.data     只读视图：?view=home|overview|needToKnow|review|settings|rules|memories|memoryDays|memory|growth|backups|config|diagnostics
 //   POST /api/rugu/admin.do       写操作：{action, ...参数, confirm?: {token, typed?}}
 //   GET  /api/rugu/admin.export   下载导出的 JSONL：?name=pm-export-….jsonl
 // 在 DSH 的鉴权之外再加两道（纵深防御）：
@@ -17,7 +18,7 @@ import { InputError, isPlainObject } from './check.js';
 import { ConfirmError, createConfirmStore } from './confirm.js';
 import { createViews, codeOf } from './views.js';
 import { createActions, exportFileName } from './actions.js';
-import { renderPage, pageCsp } from './page.js';
+import { renderPage, renderNextPage, pickUi, pageCsp } from './page.js';
 
 export const ROUTES = Object.freeze({
   page: '/api/rugu/admin',
@@ -137,9 +138,14 @@ export function createAdminHandlers(deps) {
 
     /** GET 管理页。 */
     page(req) {
-      return guarded('page', req, ['GET'], { needToken: false }, async () => {
+      return guarded('page', req, ['GET'], { needToken: false }, async (meta) => {
         const nonce = crypto.randomBytes(18).toString('base64');
-        const html = renderPage({ nonce, token });
+        // D170：新旧两版并存——?ui=next|classic，没给按配置 host.admin.ui（默认旧版）；首次设置一律旧版的向导
+        let configured = null;
+        try { configured = views.config().host?.admin?.ui ?? null; } catch { configured = null; }
+        const ui = pickUi(new URL(req.url).searchParams.get('ui'), configured, setupMode);
+        meta.ui = ui;
+        const html = ui === 'next' ? renderNextPage({ nonce, token }) : renderPage({ nonce, token });
         return new Response(html, { status: 200, headers: { ...BASE_HEADERS, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': pageCsp(nonce) } });
       });
     },

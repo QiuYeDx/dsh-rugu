@@ -2,9 +2,9 @@
 // 每条都带它的隐藏状态。这里只读；读别的模块的表直接写 SQL（schema 就是契约），过滤条件一律参数化。
 import { ContractError } from '../contract/errors.js';
 import { parseRef, refOf, OWNER_TABLES, OWNER_KINDS } from '../store/refs.js';
-import { timeline, dayCounts } from './timeline.js';
+import { timeline, dayCounts, tzOf } from './timeline.js';
 import { activeRules, modeFor, doNotRemember } from './rules.js';
-import { listReview, listNeedToKnow } from './review.js';
+import { listReview, listNeedToKnow, pendingSummary, listedKindsSql } from './review.js';
 import { param } from './params.js';
 
 /** 拦下过话的目标场合里，现在是公开的（publicLike）那些（「被拦下的话」按它分公开路径和旧规则；读不到属性的不算公开）。 */
@@ -563,6 +563,190 @@ function resolve(name, q, path) {
   if (name === 'forgotten' && !opts.state) opts.state = 'forgotten';
   if (name === 'holds' && !opts.holdStatus) opts.holdStatus = 'pending';
   return { view, opts };
+}
+
+// ── 首页（D170） ──────────────────────────────────────────────────────────
+
+const HOME_DAY = 86_400_000;
+/** 首页「需要你看一眼」里，一条审核项离过期不到这么久就算要紧（挂起的发言过期 = 不发）。 */
+const HOME_URGENT_MS = 2 * HOME_DAY;
+/** 按场合算入口状态时最多看多少个场合（最近见过的在前）。 */
+const HOME_MAX_SETTINGS = 500;
+
+function clipText(s, n) {
+  if (typeof s !== 'string') return null;
+  const c = [...s.replace(/\s+/g, ' ').trim()];
+  return c.length > n ? `${c.slice(0, n).join('')}…` : c.join('');
+}
+
+/**
+ * 表里第一条 created_at ≥ since 的行的 id（没有返回 null）。主键是自增的、created_at 是写入时的时刻，两者同序（时钟往回拨过时
+ * 个别行会乱序：调用方在区间里照样按 created_at 再筛一遍，最多漏算乱序的那几行）。按主键二分：约 log₂(行数) 次主键查找，不扫表。
+ * @param {string} table  只给本文件里写死的表名
+ */
+function firstIdSince(core, table, since) {
+  const top = core.store.get(`SELECT id, created_at AS at FROM ${table} ORDER BY id DESC LIMIT 1`);
+  if (!top || top.at < since) return null;
+  let lo = Number(core.store.get(`SELECT id FROM ${table} ORDER BY id LIMIT 1`).id);
+  let hi = Number(top.id);
+  const step = core.store.prepare(`SELECT id, created_at AS at FROM ${table} WHERE id >= ? ORDER BY id LIMIT 1`);
+  while (lo < hi) {
+    const r = step.get(Math.floor((lo + hi) / 2));
+    if (r.at >= since) hi = Number(r.id); else lo = Number(r.id) + 1;
+  }
+  return lo;
+}
+
+/**
+ * 【D170】管理页首页的数据（只读，只读库也能用；不写任何表、不调模型）。只有核心知道的部分，宿主的部分（后台模型、花费、备份、
+ * 嵌入）由集成层补。口径：
+ *   - today.heard：今天（按说话的时间，dayStart 起）进库的话——别人说的（utterance）和她说的（self-utterance）；不含回填的历史消息、
+ *     动作、撤回和编辑通知。走 percepts_at 索引。
+ *   - today.noted：今天新写下的事实（不含她做事的经验）和经历（只算 event，不算「今天到目前为止」、日记）；被取代的旧版本不重复算，
+ *     改写出的新版本算一件。按主键二分找到今天的第一行，只扫今天的行。
+ *   - pending：「需要你知道」（开着的）+「审核」（等着的）的总数，和最要紧的 top 条：要紧（需要你知道的严重程度 ≥ 2，或审核项两天内
+ *     过期）的在前，同样要紧的新的在前。
+ *   - recent：她最近记住的 recent 条（事实、经历、打算；不含原话、经验、日记；隐藏的、忘掉的、被取代的、取消和用不上的打算不要），
+ *     复用记忆列表同一套查询（timeline）。
+ *   - entries：每个入口（注册了的适配器 + 场合表里出现过的）一行：接着没有、几个场合、其中几个在记（生效档是开、没被「别记」）、
+ *     最近一条话的时间。每个场合一次 percepts_setting_at 索引查找，最多看 500 个场合。
+ *   - settings / names：上面用到的场合和人的名字（只给用到的，不列全表）。
+ * @param {object} core
+ * @param {{dayStart?: number, tzOffsetMin?: number, recent?: number, top?: number}} [q]
+ *        dayStart：「今天」从什么时候算（毫秒）；不给按 tzOffsetMin（默认 time.tzOffsetMin / 本机时区）算本地的 0 点
+ */
+export function home(core, q = {}) {
+  const now = core.now();
+  const tz = tzOf(core, q, now);
+  const off = tz * 60_000;
+  const dayStart = Number.isFinite(q.dayStart) && q.dayStart <= now && q.dayStart > now - 2 * HOME_DAY
+    ? q.dayStart : Math.floor((now + off) / HOME_DAY) * HOME_DAY - off;
+  const nRecent = Number.isInteger(q.recent) ? Math.max(1, Math.min(10, q.recent)) : 5;
+  const nTop = Number.isInteger(q.top) ? Math.max(1, Math.min(5, q.top)) : 3;
+  const settingKeys = new Set();
+  const entityIds = new Set();
+
+  // 今天听到的、记下的
+  const heard = { others: 0, hers: 0, total: 0 };
+  for (const r of core.store.all(`SELECT actor_self AS self, count(*) AS n FROM percepts
+                                  WHERE at >= ? AND historical = 0 AND kind IN ('utterance', 'self-utterance') GROUP BY actor_self`, dayStart)) {
+    if (r.self) heard.hers += Number(r.n); else heard.others += Number(r.n);
+  }
+  heard.total = heard.others + heard.hers;
+  const noted = { facts: 0, episodes: 0, total: 0 };
+  const fa = firstIdSince(core, 'assertions', dayStart);
+  if (fa != null) noted.facts = Number(core.store.get("SELECT count(*) AS n FROM assertions WHERE id >= ? AND created_at >= ? AND kind_hint <> 'lesson'", fa, dayStart).n);
+  const fe = firstIdSince(core, 'episodes', dayStart);
+  if (fe != null) noted.episodes = Number(core.store.get("SELECT count(*) AS n FROM episodes WHERE id >= ? AND created_at >= ? AND ep_kind = 'event'", fe, dayStart).n);
+  noted.total = noted.facts + noted.episodes;
+
+  // 需要你看一眼
+  const sum = pendingSummary(core);
+  const ntkRows = core.store.all(`SELECT * FROM need_to_know WHERE status = 'open' AND ${listedKindsSql(core)} ORDER BY severity DESC, created_at DESC, id DESC LIMIT ?`, nTop);
+  const percept = core.store.prepare('SELECT text, at, setting_key, actor_entity_id FROM percepts WHERE id = ?');
+  const top = ntkRows.map((r) => {
+    const p = r.percept_id ? percept.get(r.percept_id) : null;
+    const who = r.source_entity_id ?? p?.actor_entity_id ?? null;
+    return { source: 'needToKnow', id: r.id, kind: r.kind, reason: r.reason, severity: r.severity, urgent: r.severity >= 2, at: r.created_at,
+      settingKey: p?.setting_key ?? null, who, quote: clipText(p?.text, 80) };
+  });
+  const held = core.store.prepare('SELECT held_text, setting_key FROM utterances WHERE token = ?');
+  for (const r of core.store.all("SELECT * FROM review_queue WHERE status = 'pending' ORDER BY created_at DESC, id DESC LIMIT ?", nTop)) {
+    let p = {};
+    try { p = JSON.parse(r.payload_json) ?? {}; } catch { p = {}; }
+    const item = { source: 'review', id: r.id, kind: r.kind, reason: r.reason, severity: null, at: r.created_at, expiresAt: r.expires_at ?? null,
+      urgent: r.expires_at != null && r.expires_at - now < HOME_URGENT_MS, settingKey: null, who: null, quote: null };
+    if (r.kind === 'held_utterance' && typeof p.token === 'string') {
+      const u = held.get(p.token);
+      item.settingKey = u?.setting_key ?? null;
+      item.quote = clipText(u?.held_text, 80);
+    } else if (r.kind === 'merge') {
+      item.who = Number.isSafeInteger(p.a) ? p.a : null;
+      item.other = Number.isSafeInteger(p.b) ? p.b : null;
+    } else if (r.kind === 'growth') item.quote = clipText(p.change?.after ?? p.text, 80);
+    else if (r.kind === 'setting_rule_relax') { item.settingKey = typeof p.settingKey === 'string' ? p.settingKey : null; item.quote = clipText(p.rule?.text, 80); }
+    else if (Number.isSafeInteger(p.entityId)) item.who = p.entityId;
+    top.push(item);
+  }
+  top.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0) || b.at - a.at || b.id - a.id);
+  top.length = Math.min(top.length, nTop);
+  for (const t of top) {
+    if (t.settingKey) settingKeys.add(t.settingKey);
+    if (t.who != null) entityIds.add(t.who);
+    if (t.other != null) entityIds.add(t.other);
+  }
+
+  // 她最近记住的（和记忆列表同一套查询）
+  const recent = [];
+  const firstSource = core.store.prepare("SELECT perceived_in, speaker FROM sources WHERE owner_kind = 'assertion' AND owner_id = ? ORDER BY at, id LIMIT 1");
+  for (const a of VIEWS.assertions(core, { current: true, state: 'active', limit: nRecent * 3, order: 'desc' }).items) {
+    if (a.kindHint === 'lesson' || a.expiredAt != null) continue;
+    const s = firstSource.get(a.id);
+    const subject = a.entities.find((e) => e.role === 'subject')?.entityId ?? null;
+    recent.push({ ref: a.ref, kind: 'fact', text: a.text, at: a.recordedAt, settingKey: s?.perceived_in ?? null, who: s?.speaker ?? subject,
+      certainty: a.certainty, confidence: a.confidence });
+  }
+  for (const e of VIEWS.episodes(core, { epKind: 'event', state: 'active', limit: nRecent, order: 'desc' }).items) {
+    recent.push({ ref: e.ref, kind: 'episode', text: e.title || e.narrative, at: e.tEnd, tStart: e.tStart, settingKey: e.settingKey,
+      participants: (Array.isArray(e.participants) ? e.participants : []).filter(Number.isSafeInteger).slice(0, 6) });
+  }
+  for (const t of VIEWS.intentions(core, { limit: nRecent * 3, order: 'desc' }).items) {
+    if (t.suppression || !['formed', 'armed', 'executed'].includes(t.state) || !t.text) continue;
+    recent.push({ ref: t.ref, kind: 'intent', text: t.text, at: t.formedAt, who: t.targetEntityId ?? null, state: t.state, until: t.windowEnd ?? null });
+  }
+  recent.sort((a, b) => b.at - a.at);
+  recent.length = Math.min(recent.length, nRecent);
+  for (const m of recent) {
+    if (m.settingKey) settingKeys.add(m.settingKey);
+    if (m.who != null) entityIds.add(m.who);
+    for (const p of m.participants ?? []) entityIds.add(p);
+  }
+
+  // 入口
+  const byAdapter = new Map();
+  const entryOf = (id) => {
+    if (!byAdapter.has(id)) {
+      const a = core.adapters?.get?.(id);
+      const name = typeof a?.displayName === 'string' && a.displayName.trim() ? a.displayName.trim().slice(0, 40) : null;
+      byAdapter.set(id, { adapter: id, name, connected: !!a, places: 0, live: 0, lastAt: null });
+    }
+    return byAdapter.get(id);
+  };
+  for (const id of core.adapters?.keys?.() ?? []) entryOf(id);
+  const lastAt = core.store.prepare('SELECT max(at) AS at FROM percepts WHERE setting_key = ?');
+  for (const s of core.store.all('SELECT key, adapter FROM settings ORDER BY last_seen DESC LIMIT ?', HOME_MAX_SETTINGS)) {
+    const e = entryOf(s.adapter);
+    e.places += 1;
+    let mode = null;
+    try { mode = modeFor(core, s.key); } catch { mode = null; }
+    if (mode === 'live' && !doNotRemember(core, { settingKey: s.key })) e.live += 1;
+    const t = lastAt.get(s.key)?.at ?? null;
+    if (t != null && (e.lastAt == null || t > e.lastAt)) e.lastAt = Number(t);
+  }
+  const entries = [...byAdapter.values()].sort((a, b) => Number(b.connected) - Number(a.connected) || (b.lastAt ?? 0) - (a.lastAt ?? 0) || a.adapter.localeCompare(b.adapter));
+
+  // 用到的场合和人的名字
+  const settings = {};
+  const sq = core.store.prepare('SELECT key, label, label_kind, label_hint, owner_label FROM settings WHERE key = ?');
+  for (const k of settingKeys) {
+    const r = sq.get(k);
+    if (!r) continue;
+    const owner = typeof r.owner_label === 'string' && r.owner_label ? r.owner_label : null;
+    settings[k] = { label: owner ?? r.label ?? '', labelKind: owner ? 'name' : r.label_kind === 'description' ? 'description' : 'name', hint: r.label_hint ?? null };
+  }
+  const names = {};
+  const eq = core.store.prepare('SELECT id, display_name, is_self, authority FROM entities WHERE id = ?');
+  for (const id of entityIds) {
+    const r = eq.get(id);
+    if (r) names[id] = { name: r.display_name ?? null, self: !!r.is_self, principal: r.authority === 'principal' };
+  }
+
+  return {
+    now, dayStart, tzOffsetMin: tz, readOnly: !!core.readOnly,
+    today: { heard, noted },
+    pending: { total: sum.reviews + sum.needToKnow, needToKnow: sum.needToKnow, review: sum.reviews, top },
+    recent, entries, settings, names,
+  };
 }
 
 // ── 一条的详情 ────────────────────────────────────────────────────────────

@@ -89,6 +89,7 @@ export const API_MAP = [
   ['admin.evalResult.set', [{ cases: [] }], 'admin.setEvalResult'],
   // D163：记忆星图
   ['admin.starmap', [{}], 'admin.starmap'],
+  ['admin.home', [{}], 'admin.home'],
   ['admin.backup.now', [], 'backup.createPack'],
   ['admin.backup.verify', ['p'], 'backup.verifyPack'],
   ['admin.backup.preview', ['p'], 'backup.previewRestore'],

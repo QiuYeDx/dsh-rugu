@@ -230,7 +230,7 @@ export function timeline(core, q, spec) {
 }
 
 /** 本地时间的偏移（分钟，东正）：页面给的（±840 内），否则 time.tzOffsetMin，再否则本机时区。 */
-function tzOf(core, q, at) {
+export function tzOf(core, q, at) {
   if (Number.isInteger(q.tzOffsetMin) && Math.abs(q.tzOffsetMin) <= 840) return q.tzOffsetMin;
   const v = core.config.get().time?.tzOffsetMin;
   return typeof v === 'number' ? v : -new Date(at).getTimezoneOffset();

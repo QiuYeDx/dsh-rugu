@@ -415,6 +415,40 @@ export function createViews(deps) {
       return out;
     },
 
+    // ── 首页（D170）：一句话状态、要你看一眼的、她最近记住的、入口、四行健康、今天的花费。工程数字一个都不给 ──────────
+    async home(q) {
+      const tz = q.tz != null && q.tz !== '' ? tzMin(q.tz, 'tz') : null;
+      const cfg = config();
+      const hasHome = typeof pm?.admin?.home === 'function';
+      const [core, st, backup, embedding, spaces, retention, budget, hs, llm] = await Promise.all([
+        hasHome ? part(() => pm.admin.home(tz != null ? { tzOffsetMin: tz } : {})) : { error: 'UNSUPPORTED' },
+        part(() => pm.status()),
+        part(() => pm.admin.backup.overview()),
+        part(() => pm.admin.embedding.health()),
+        part(() => pm.admin.embedding.spaces()),
+        part(() => pm.admin.retention.get()),
+        part(async () => budgetSummary(await hostOf('budget')?.status?.(), { embedding: cfg.host?.embedding })),
+        hostStatus(),
+        part(async () => (hostOf('llmSetup') ? llmHealthRow(await hostOf('llmSetup').status()) : null)),
+      ]);
+      // 总览的提醒照样算一遍（同一套判断），首页按 key 分到标题、健康行和「需要你看一眼」里
+      const host = hs == null ? null : hs.error ? hs : hostSummary(hs, now());
+      const o = {
+        now: now(),
+        mode: modeConfig(cfg.core),
+        store: st.error ? st : { readOnly: !!st.readOnly, readOnlyReason: st.readOnlyReason ?? null, schemaVersion: st.schemaVersion ?? null, codeSchemaVersion: st.codeSchemaVersion ?? null },
+        backup: backup?.error ? backup : trimBackupOverview(backup),
+        embedding: embedding?.error ? embedding : healthRow(embedding),
+        spaces: Array.isArray(spaces) ? spaces.map(spaceRow) : spaces,
+        retention, budget, host, llm,
+        config: { warnings: cfg.warnings, loadError: cfg.loadError, pendingRisky: cfg.pendingRisky.length },
+        embeddingOff: cfg.host?.embedding?.provider === 'none',
+        selfCheck: hs && !hs.error && isObj(hs.selfCheck) ? selfCheckSummaryOf(hs.selfCheck) : null,
+      };
+      const alerts = alertsOf(o);
+      return homeView({ core, o, alerts, hostCfg: cfg.host });
+    },
+
     // ── 需要你知道（§9.3.7） ────────────────────────────────────────────
     needToKnow(q) {
       const status = q.status == null || q.status === '' ? 'open' : oneOf(q.status, NTK_STATUS, 'status');
@@ -1070,57 +1104,206 @@ const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padS
 /** 总览顶部的提醒（只有状态，不带内容）。level: bad 红 / warn 黄 / info 灰。 */
 function alertsOf(o) {
   const out = [];
-  const add = (level, text, tab) => out.push({ level, text, tab: tab ?? null });
-  if (o.store?.error) add('bad', '记忆库的状态读不出来', 'diagnostics');
+  const add = (level, text, tab, key) => out.push({ level, text, tab: tab ?? null, key });
+  if (o.store?.error) add('bad', '记忆库的状态读不出来', 'diagnostics', 'store.error');
   else if (o.store?.readOnly) add('bad', o.store.readOnlyReason === 'newer-schema' || (o.store.schemaVersion ?? 0) > (o.store.codeSchemaVersion ?? Infinity)
-    ? '数据库的版本比插件新（插件被回退过）：现在只读，不注入、不记新东西' : '数据库现在是只读的：不注入、不记新东西', 'diagnostics');
-  if (o.host?.error) add('warn', '宿主的状态读不出来', 'diagnostics');
-  else if (o.host && !o.host.ready && o.host.error) add('bad', `记忆插件没有启动好（${o.host.error}）：这段时间不感知、不注入，聊天照常`, 'diagnostics');
-  if (o.host && !o.host.error && o.host.breakersOpen > 0) add('bad', `有 ${o.host.breakersOpen} 个会话的钩子因为连续出错暂时关掉了（10 分钟后自动恢复）`, 'diagnostics');
-  if (o.host && !o.host.error && o.host.conflicts > 0) add('warn', `有 ${o.host.conflicts} 个会话两个入口都说是自己的，没有认领（fail closed）`, 'diagnostics');
-  if (o.host && !o.host.error && o.host.unclassified > 0) add('warn', `有 ${o.host.unclassified} 个工具没有分类：记忆开着的场合带长文本的调用会被拒绝`, 'diagnostics');
-  if (o.config?.loadError) add('bad', `配置文件读不了（${o.config.loadError}）：现在用的是默认值，管理页也改不了设置`, 'config');
-  if (o.config?.pendingRisky > 0) add('bad', `配置文件被直接改过，有 ${o.config.pendingRisky} 项有风险的改动还没生效：到「设置」里确认或丢弃`, 'config');
+    ? '数据库的版本比插件新（插件被回退过）：现在只读，不注入、不记新东西' : '数据库现在是只读的：不注入、不记新东西', 'diagnostics', 'store.readOnly');
+  if (o.host?.error) add('warn', '宿主的状态读不出来', 'diagnostics', 'host.error');
+  else if (o.host && !o.host.ready && o.host.error) add('bad', `记忆插件没有启动好（${o.host.error}）：这段时间不感知、不注入，聊天照常`, 'diagnostics', 'host.down');
+  if (o.host && !o.host.error && o.host.breakersOpen > 0) add('bad', `有 ${o.host.breakersOpen} 个会话的钩子因为连续出错暂时关掉了（10 分钟后自动恢复）`, 'diagnostics', 'host.breakers');
+  if (o.host && !o.host.error && o.host.conflicts > 0) add('warn', `有 ${o.host.conflicts} 个会话两个入口都说是自己的，没有认领（fail closed）`, 'diagnostics', 'host.conflicts');
+  if (o.host && !o.host.error && o.host.unclassified > 0) add('warn', `有 ${o.host.unclassified} 个工具没有分类：记忆开着的场合带长文本的调用会被拒绝`, 'diagnostics', 'host.unclassified');
+  if (o.config?.loadError) add('bad', `配置文件读不了（${o.config.loadError}）：现在用的是默认值，管理页也改不了设置`, 'config', 'config.loadError');
+  if (o.config?.pendingRisky > 0) add('bad', `配置文件被直接改过，有 ${o.config.pendingRisky} 项有风险的改动还没生效：到「设置」里确认或丢弃`, 'config', 'config.pendingRisky');
   const b = o.backup;
   if (b && !b.error) {
-    if (!b.offsite?.configured) add('warn', '备份只在这块盘上，硬盘坏了会全部丢失。建议在「备份与恢复」里设一个异地目录', 'backups');
-    else if (!b.offsite?.encrypted) add('warn', '设了异地目录，但还没开备份加密：异地副本要先设恢复码', 'backups');
-    if (b.lowDisk) add('bad', `备份所在的盘剩余空间不足${b.diskFreeGb != null ? `（${b.diskFreeGb} GB）` : ''}`, 'backups');
-    if (b.failed > 0) add('bad', `有 ${b.failed} 份备份没通过验证`, 'backups');
-    if (!b.lastOk) add('warn', '还没有一份验证过的备份', 'backups');
-    else if (o.now - b.lastOk > 2 * DAY) add('warn', '最近两天没有验证过的新备份', 'backups');
-    if (b.lastDrill && !b.lastDrill.ok) add('bad', '最近一次恢复演练没通过', 'backups');
-    if (Array.isArray(b.replay) && b.replay.length) add('info', '刚恢复过备份，正在从各入口补回快照之后的经历', 'backups');
-    if (Array.isArray(b.gaps) && b.gaps.length) add('warn', `恢复后有 ${b.gaps.length} 段经历补不回来`, 'backups');
-  } else if (b?.error) add('warn', '备份状态读不出来', 'backups');
+    if (!b.offsite?.configured) add('warn', '备份只在这块盘上，硬盘坏了会全部丢失。建议在「备份与恢复」里设一个异地目录', 'backups', 'backup.offsite');
+    else if (!b.offsite?.encrypted) add('warn', '设了异地目录，但还没开备份加密：异地副本要先设恢复码', 'backups', 'backup.encrypt');
+    if (b.lowDisk) add('bad', `备份所在的盘剩余空间不足${b.diskFreeGb != null ? `（${b.diskFreeGb} GB）` : ''}`, 'backups', 'backup.disk');
+    if (b.failed > 0) add('bad', `有 ${b.failed} 份备份没通过验证`, 'backups', 'backup.failed');
+    if (!b.lastOk) add('warn', '还没有一份验证过的备份', 'backups', 'backup.none');
+    else if (o.now - b.lastOk > 2 * DAY) add('warn', '最近两天没有验证过的新备份', 'backups', 'backup.stale');
+    if (b.lastDrill && !b.lastDrill.ok) add('bad', '最近一次恢复演练没通过', 'backups', 'backup.drill');
+    if (Array.isArray(b.replay) && b.replay.length) add('info', '刚恢复过备份，正在从各入口补回快照之后的经历', 'backups', 'backup.replay');
+    if (Array.isArray(b.gaps) && b.gaps.length) add('warn', `恢复后有 ${b.gaps.length} 段经历补不回来`, 'backups', 'backup.gaps');
+  } else if (b?.error) add('warn', '备份状态读不出来', 'backups', 'backup.error');
   const e = o.embedding;
   if (e && !e.error) {
-    if (e.breakerOpen) add('warn', '嵌入服务连续失败，暂时熔断：检索降级（只用词法和实体）', 'diagnostics');
-    else if (!e.dense && !o.embeddingOff) add('warn', '向量检索暂时不可用：检索降级（只用词法和实体）', 'diagnostics');
+    if (e.breakerOpen) add('warn', '嵌入服务连续失败，暂时熔断：检索降级（只用词法和实体）', 'diagnostics', 'embedding.breaker');
+    else if (!e.dense && !o.embeddingOff) add('warn', '向量检索暂时不可用：检索降级（只用词法和实体）', 'diagnostics', 'embedding.degraded');
   }
-  if (Array.isArray(o.spaces) && o.spaces.some((s) => s.status === 'suspect')) add('bad', '向量空间被标成可疑（嵌入模型可能被悄悄换过）', 'diagnostics');
+  if (Array.isArray(o.spaces) && o.spaces.some((s) => s.status === 'suspect')) add('bad', '向量空间被标成可疑（嵌入模型可能被悄悄换过）', 'diagnostics', 'embedding.suspect');
   const r = o.retention;
-  if (r && !r.error && r.pending) add('info', `原文保留期将缩短为 ${retentionLabel(r.pending.to)}：冷静期还剩 ${r.pending.daysLeft} 天，随时可以取消`, 'config');
-  if (o.selfCheck && !o.selfCheck.error && o.selfCheck.failed > 0) add('bad', `启动自检有 ${o.selfCheck.failed} 项没通过（对应的功能已关掉，聊天不受影响）`, 'diagnostics');
+  if (r && !r.error && r.pending) add('info', `原文保留期将缩短为 ${retentionLabel(r.pending.to)}：冷静期还剩 ${r.pending.daysLeft} 天，随时可以取消`, 'config', 'retention.pending');
+  if (o.selfCheck && !o.selfCheck.error && o.selfCheck.failed > 0) add('bad', `启动自检有 ${o.selfCheck.failed} 项没通过（对应的功能已关掉，聊天不受影响）`, 'diagnostics', 'selfCheck.failed');
   const bud = o.budget;
-  if (bud && !bud.error && bud.paused) add('warn', '余额保护已启动：后台提炼和整理暂停，聊天照常', 'diagnostics');
+  if (bud && !bud.error && bud.paused) add('warn', '余额保护已启动：后台提炼和整理暂停，聊天照常', 'diagnostics', 'budget.paused');
   // 后台模型（D168）：不工作 / 不稳定 / 在用聊天的模型顶着，说清楚是什么、为什么、去哪儿处理
   const lm = o.llm;
   if (lm && !lm.error) {
     const pt = (p) => `${p.provider} / ${p.model}`;
     if (lm.state === 'down' && lm.fallback) {
-      add('warn', `后台模型不工作（${lm.reason ?? lm.code ?? '配置有问题'}），临时在用你聊天的模型（${pt(lm.fallback)}），可能更贵；修好以后自动换回。到「设置 → 后台模型」换一个或者点「试一下」`, 'config');
+      add('warn', `后台模型不工作（${lm.reason ?? lm.code ?? '配置有问题'}），临时在用你聊天的模型（${pt(lm.fallback)}），可能更贵；修好以后自动换回。到「设置 → 后台模型」换一个或者点「试一下」`, 'config', 'llm.fallback');
     } else if (lm.state === 'down') {
-      add('bad', `后台模型${lm.since ? `从 ${hhmm(lm.since)} 起` : ''}不工作（${lm.reason ?? lm.code ?? '配置有问题'}）。这段时间她记不住新的事、回想变少，聊天照常。到「设置 → 后台模型」换一个或者点「试一下」`, 'config');
+      add('bad', `后台模型${lm.since ? `从 ${hhmm(lm.since)} 起` : ''}不工作（${lm.reason ?? lm.code ?? '配置有问题'}）。这段时间她记不住新的事、回想变少，聊天照常。到「设置 → 后台模型」换一个或者点「试一下」`, 'config', 'llm.down');
     } else if (lm.state === 'flaky') {
-      add('warn', `后台模型最近不稳定（最近半小时一半的调用没成${lm.code ? `，${lm.code}` : ''}）：会自己重试；一直这样就到「设置 → 后台模型」换一个`, 'config');
+      add('warn', `后台模型最近不稳定（最近半小时一半的调用没成${lm.code ? `，${lm.code}` : ''}）：会自己重试；一直这样就到「设置 → 后台模型」换一个`, 'config', 'llm.flaky');
     } else if (lm.state === 'off') {
-      add('info', '选的是「不用后台模型」：她照常记原话，能按原话、人、时间找回来，但不会自己整理出事实和经历', 'config');
+      add('info', '选的是「不用后台模型」：她照常记原话，能按原话、人、时间找回来，但不会自己整理出事实和经历', 'config', 'llm.off');
     }
-    if (lm.state !== 'down' && lm.state !== 'off' && lm.catchUp > 0) add('info', `后台模型恢复了，正在补之前没整理的 ${lm.catchUp} 段（受花费上限管）`, 'config');
+    if (lm.state !== 'down' && lm.state !== 'off' && lm.catchUp > 0) add('info', `后台模型恢复了，正在补之前没整理的 ${lm.catchUp} 段（受花费上限管）`, 'config', 'llm.catchUp');
   }
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.sort((x, y) => rank[x.level] - rank[y.level]);
+}
+
+// ── 首页（D170） ──────────────────────────────────────────────────────────
+
+/** 中文和数字之间留空格的数字（首页的句子用）。 */
+const n0 = (n) => String(Math.max(0, Math.round(Number(n) || 0)));
+/** 首页健康行、提示的去处（新页面的路由：去处/分段）。 */
+const HOME_TO = Object.freeze({ diagnostics: 'settings/diag', config: 'settings/basic', backups: 'settings/backup' });
+/** 这些提醒已经由健康行或标题说了，不再进「需要你看一眼」。 */
+const HOME_COVERED = /^(store\.|host\.down$|llm\.|embedding\.|backup\.|budget\.paused$)/;
+/** 首页「需要你看一眼」里系统提醒的说法（短、不用内部说法）；没列的照总览的原话。 */
+const NOTICE_TEXT = Object.freeze({
+  'host.error': () => '记忆插件的状态读不出来',
+  'host.breakers': (o) => `有 ${n0(o.host?.breakersOpen)} 个对话里的记忆暂停了，10 分钟后自己恢复`,
+  'host.conflicts': (o) => `有 ${n0(o.host?.conflicts)} 个对话分不清是从哪个入口来的，先没记`,
+  'host.unclassified': (o) => `有 ${n0(o.host?.unclassified)} 个工具还没分类，用它们说的话没经过检查`,
+  'config.loadError': () => '配置文件读不了，现在用的是默认设置',
+  'config.pendingRisky': (o) => `配置文件被直接改过，有 ${n0(o.config?.pendingRisky)} 项改动等你确认`,
+  'selfCheck.failed': (o) => `启动时的自查有 ${n0(o.selfCheck?.failed)} 项没通过，相关的功能先关了`,
+});
+const TIER_LABEL = Object.freeze({ standard: '4B', light: '0.6B' });
+const PRESET_LABEL = Object.freeze({ loose: '平衡档', saving: '节省档', unlimited: '效果优先档' });
+
+/** 四行健康：记忆库、后台模型、想起来的方式、备份。state：ok 正常 / warn / bad / dim（灰字，不算问题）/ plain（只是一句说明）。 */
+export function homeHealth(o, hostCfg = null) {
+  const out = [];
+  const row = (key, label, state, text, to) => out.push({ key, label, state, text, to });
+  // 记忆库
+  const s = o.store;
+  if (s?.error) row('store', '记忆库', 'bad', '读不出来', 'settings/diag');
+  else if (s?.readOnly) row('store', '记忆库', 'bad', '只读', 'settings/diag');
+  else if (o.host && o.host.ready === false && o.host.error) row('store', '记忆库', 'bad', '没启动好', 'settings/diag');
+  else row('store', '记忆库', 'ok', '正常', 'settings/diag');
+  // 后台模型（D168）
+  const lm = o.llm;
+  if (!lm) row('llm', '后台模型', 'dim', '没有这一项', 'settings/models');
+  else if (lm.error) row('llm', '后台模型', 'warn', '读不出来', 'settings/models');
+  else if (lm.state === 'down' && lm.fallback) row('llm', '后台模型', 'warn', '在用聊天模型顶着', 'settings/models');
+  else if (lm.state === 'down') row('llm', '后台模型', 'bad', '不工作', 'settings/models');
+  else if (lm.state === 'flaky') row('llm', '后台模型', 'warn', '不稳定', 'settings/models');
+  else if (lm.state === 'off') row('llm', '后台模型', 'dim', '没用', 'settings/models');
+  else if (lm.catchUp > 0) row('llm', '后台模型', 'ok', `正常 · 在补 ${n0(lm.catchUp)} 段`, 'settings/models');
+  else if (lm.state === 'unknown') row('llm', '后台模型', 'dim', '还没用过', 'settings/models');
+  else row('llm', '后台模型', 'ok', '正常', 'settings/models');
+  // 想起来的方式（嵌入）
+  const e = o.embedding;
+  const emb = hostCfg?.embedding ?? {};
+  if (o.embeddingOff) row('embedding', '想起来的方式', 'dim', '只按字面找', 'settings/models');
+  else if (!e || e.error) row('embedding', '想起来的方式', 'warn', '读不出来', 'settings/models');
+  else if (Array.isArray(o.spaces) && o.spaces.some((x) => x.status === 'suspect')) row('embedding', '想起来的方式', 'bad', '模型可能被换过', 'settings/models');
+  else if (e.breakerOpen) row('embedding', '想起来的方式', 'warn', '连不上，先按字面找', 'settings/models');
+  else if (!e.dense) row('embedding', '想起来的方式', 'warn', '暂时只按字面找', 'settings/models');
+  else {
+    let local = false;
+    try { local = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(new URL(String(emb.url ?? '')).hostname); } catch { local = false; }
+    const tier = TIER_LABEL[emb.tier] ?? null;
+    row('embedding', '想起来的方式', 'plain', [local ? '本机' : '在线服务', tier].filter(Boolean).join(' · '), 'settings/models');
+  }
+  // 备份
+  const b = o.backup;
+  if (!b || b.error) row('backup', '备份', 'warn', '读不出来', 'settings/backup');
+  else if (b.failed > 0) row('backup', '备份', 'bad', `${n0(b.failed)} 份没通过验证`, 'settings/backup');
+  else if (b.lowDisk) row('backup', '备份', 'bad', '盘快满了', 'settings/backup');
+  else if (b.lastDrill && !b.lastDrill.ok) row('backup', '备份', 'bad', '恢复演练没通过', 'settings/backup');
+  else if (!b.last) row('backup', '备份', 'dim', '今晚第一次', 'settings/backup');
+  else if (!b.lastOk) row('backup', '备份', 'warn', '还没有验证过的', 'settings/backup');
+  else if (o.now - b.lastOk > 2 * DAY) row('backup', '备份', 'warn', '两天没有新的', 'settings/backup');
+  else if (!b.offsite?.configured) row('backup', '备份', 'warn', '只在这块盘上', 'settings/backup');
+  else if (!b.offsite?.encrypted) row('backup', '备份', 'warn', '异地的没加密', 'settings/backup');
+  else row('backup', '备份', 'ok', '正常', 'settings/backup');
+  return out;
+}
+
+/**
+ * 首页最上面的一句话：有问题时是最要紧的那个问题（标题 + 一句说明 + 一个按钮），没问题时「她在记着。」+ 今天的数，
+ * 全新安装、什么都还没听到时是空状态（告诉人下一步做什么）。level：bad / warn / ok / quiet。
+ * 先后：记忆库读不出来 > 只读 > 插件没启动好 > 总开关关着 > 后台模型不工作 > 在用聊天模型顶着 > 余额保护停了后台 > 没有一个入口在记。
+ * @param {{o: any, entries: any[], today: any, fresh: boolean}} x
+ */
+export function homeHeadline({ o, entries, today, fresh }) {
+  const s = o.store;
+  const lm = o.llm && !o.llm.error ? o.llm : null;
+  const go = (label, to) => ({ label, to });
+  if (s?.error) return { level: 'bad', key: 'store.error', title: '记忆库读不出来。', text: '她现在不记新的事、也想不起以前的事，聊天照常。', action: go('去看看', 'settings/diag') };
+  if (s?.readOnly) {
+    const newer = s.readOnlyReason === 'newer-schema' || (s.schemaVersion ?? 0) > (s.codeSchemaVersion ?? Infinity);
+    return { level: 'bad', key: 'store.readOnly', title: '记忆库现在是只读的，她不记新的事。',
+      text: newer ? '数据的版本比插件新，可能是插件被换回了旧版本。装回新版本就好。' : '聊天照常，她还想得起以前的事。', action: go('去看看', 'settings/diag') };
+  }
+  if (o.host && o.host.ready === false && o.host.error) return { level: 'bad', key: 'host.down', title: '记忆插件没有启动好。', text: '这段时间她不记、也想不起来，聊天照常。', action: go('去看看', 'settings/diag') };
+  if (o.mode?.global === 'off') return { level: 'warn', key: 'mode.off', title: '总开关关着，她现在什么都不记。', text: '聊天照常；打开以后从那时起接着记。', action: go('去打开', 'settings/basic') };
+  if (lm?.state === 'down' && !lm.fallback) {
+    // 样稿把这一条画成「要留意」（黄）：聊天照常、原话都在，修好会补上；原因写在「设置 → 模型」里，这里不放错误码
+    return { level: 'warn', key: 'llm.down', title: '后台模型不工作，她现在只记原话。',
+      text: `${lm.since ? `从 ${hhmm(lm.since)} 开始。` : ''}聊天照常，原话都存着；修好以后，这段时间的会补上整理。`, action: go('去看看', 'settings/models') };
+  }
+  if (lm?.state === 'down' && lm.fallback) {
+    return { level: 'warn', key: 'llm.fallback', title: '后台模型不工作，在用聊天的模型顶着。',
+      text: '整理照常，但可能更贵；修好以后自动换回。', action: go('去看看', 'settings/models') };
+  }
+  if (o.budget && !o.budget.error && o.budget.paused) return { level: 'warn', key: 'budget.paused', title: '余额快用完了，后台整理先停了。', text: '聊天照常，原话都存着；余额够了会接着整理。', action: go('看花费', 'settings/cost') };
+  const on = entries.filter((e) => e.state === 'on').length;
+  if (fresh) {
+    return { level: 'quiet', key: 'fresh', title: '刚装好，她还没听到什么。', text: '在 QQ 群里或 DSH 的「人设聊天」里和她说几句，她记住的事会出现在这里。' };
+  }
+  if (!on) return { level: 'warn', key: 'entries.none', title: '没有一个入口在记。', text: '场合都关着，或者入口没接上。聊天照常，只是她记不住新的事。', action: go('去看看', 'places/list') };
+  const all = entries.filter((e) => e.state !== 'gone');
+  const lead = on === all.length ? `${n0(on)} 个入口都通着。` : `${n0(on)} 个入口在记。`;
+  const t = today ? `今天听到 ${n0(today.heard.total)} 句话，记下了 ${n0(today.noted.total)} 件事。` : '';
+  return { level: 'ok', key: 'ok', title: '她在记着。', text: `${lead}${t}` };
+}
+
+/**
+ * 核心的 home + 宿主的状态 → 首页要的样子。纯函数（测试直接喂数据）。
+ * @param {{core: any, o: any, alerts: any[], hostCfg: any}} x
+ */
+export function homeView({ core, o, alerts, hostCfg }) {
+  const ok = core && !core.error;
+  const settings = {};
+  if (ok) for (const [k, s] of Object.entries(core.settings ?? {})) settings[k] = settingTitle(s);
+  const names = ok && isObj(core.names) ? core.names : {};
+  // 入口的状态：gone 没接着（适配器没加载）/ none 还没有场合 / paused 整体停着（记忆库只读、读不出来，或总开关关着）/ off 场合都关着 / on 在记
+  const pausedBy = o.store?.error ? 'store' : o.store?.readOnly ? 'readOnly' : o.mode?.global === 'off' ? 'master' : null;
+  const entries = (ok ? arr(core.entries) : []).map((e) => {
+    const state = !e.connected ? 'gone' : !e.places ? 'none' : pausedBy ? 'paused' : e.live > 0 ? 'on' : 'off';
+    return { adapter: short(e.adapter, 40), name: short(e.name, 40) ?? adapterTitle(e.adapter), connected: !!e.connected, places: num(e.places) ?? 0, live: num(e.live) ?? 0,
+      lastAt: num(e.lastAt), state, ...(state === 'paused' ? { pausedBy } : {}) };
+  });
+  const recent = ok ? arr(core.recent) : [];
+  const today = ok ? core.today : null;
+  const fresh = ok && !recent.length && entries.every((e) => e.lastAt == null) && !(today?.heard?.total > 0);
+  const health = homeHealth(o, hostCfg);
+  const headline = homeHeadline({ o, entries, today, fresh });
+  // 标题和健康行没说到的提醒，进「需要你看一眼」的最前面（只给一句话和去处，不带内容）
+  const notices = alerts.filter((a) => a.level !== 'info' && a.key !== headline.key && !HOME_COVERED.test(a.key ?? ''))
+    .map((a) => ({ level: a.level, key: a.key ?? null, text: NOTICE_TEXT[a.key]?.(o) ?? a.text, to: HOME_TO[a.tab] ?? 'settings/diag' }));
+  const bud = o.budget && !o.budget.error ? o.budget : null;
+  const spend = bud ? {
+    preset: bud.preset, presetLabel: bud.custom ? '自定义' : PRESET_LABEL[bud.preset] ?? null,
+    yuan: bud.today?.bgYuan ?? null, calls: bud.today?.calls ?? null, priceKnown: bud.priceKnown !== false,
+    daysLeft: bud.balance?.known ? bud.balance.days : null, paused: !!bud.paused,
+  } : null;
+  return {
+    now: o.now, dayStart: ok ? num(core.dayStart) : null, readOnly: !!o.store?.readOnly,
+    headline, today, fresh,
+    pending: ok ? { total: num(core.pending?.total) ?? 0, needToKnow: num(core.pending?.needToKnow) ?? 0, review: num(core.pending?.review) ?? 0, top: arr(core.pending?.top) } : null,
+    notices, recent, entries, health, spend, settings, names,
+    ...(ok ? {} : { error: core?.error ?? 'UNAVAILABLE' }),
+  };
 }
 
 export const retentionLabel = (v) => ({ '1y': '1 年', '2y': '2 年', '5y': '5 年', forever: '永久' })[v] ?? String(v);

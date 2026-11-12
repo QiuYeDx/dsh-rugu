@@ -373,6 +373,8 @@ export {};
  * @property {(principalOnly: boolean) => number} pendingCount
  * @property {(q?: {maxStars?: number, recallDays?: number}|{since: {inj: number, trace: number, told: number}}|{peek: string[]}) => object} starmap
  *           【D163】记忆星图（只读）：快照 / 实时增量 / 看一眼，返回的形状见 admin/index.js 的 starmap
+ * @property {(q?: {dayStart?: number, tzOffsetMin?: number, recent?: number, top?: number}) => object} home
+ *           【D170】管理页首页（只读）：今天听到几句、记下几件，要紧的待处理，最近记住的，各入口的状态；形状见 admin/index.js 的 home
  */
 
 /**

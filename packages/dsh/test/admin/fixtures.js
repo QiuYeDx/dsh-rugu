@@ -126,6 +126,11 @@ function dayCounts(all0, q, spec) {
   const ts = all.map((x) => x[spec.time]);
   return { items: [...by].sort().map(([day, n]) => ({ day, n })), first: ts.length ? Math.min(...ts) : null, last: ts.length ? Math.max(...ts) : null };
 }
+/**
+ * 首页（D170）几种状态的假数据：数据同 normal，只是 llmdown 后台模型不工作、没有顶着；fallback 在用聊天模型顶着；
+ * readonly 记忆库只读；off 总开关关着。
+ */
+export const HOME_VARIANTS = new Set(['llmdown', 'fallback', 'readonly', 'off']);
 const err = (code, message) => Object.assign(new Error(message ?? code), { code, name: code === 'CONTRACT' ? 'ContractError' : code === 'READ_ONLY' ? 'ReadOnlyError' : 'Error' });
 
 const NAMES = ['阿明', '小刚', '阿杰', '小雨', '老周', '可乐', '阿青', '小鹿', '团子', '大宇', '小北', '阿洛', '星星', '木木', '十一', '小满', '阿远', '豆豆', '七七', '阿哲'];
@@ -153,7 +158,8 @@ const LONG = '他说下个月要搬去另一个城市工作，房子已经在看
  *   clock：星图的「现在」（预览里用真的时间往前走，实时增量才看得到新的想起）；不给就是固定的 now
  */
 export function makeFakePm(o = {}) {
-  const scenario = o.scenario ?? 'normal';
+  const variant = o.scenario ?? 'normal';
+  const scenario = HOME_VARIANTS.has(variant) ? 'normal' : variant;
   const now = o.now ?? Date.UTC(2026, 10, 4, 6, 30);
   const clock = o.clock ?? (() => now);
   let sky = null;
@@ -305,7 +311,7 @@ export function makeFakePm(o = {}) {
   ] : [];
   let retention = { current: '2y', pending: null };
   let encrypted = full;
-  let readOnly = scenario === 'errors';
+  let readOnly = scenario === 'errors' || variant === 'readonly';
 
   const VIEWS = {
     needToKnow: (q) => ntk.filter((x) => (q.status ? x.status === q.status : x.status !== 'withdrawn')),
@@ -397,6 +403,52 @@ export function makeFakePm(o = {}) {
         }
         if (!q || typeof q.view !== 'string' || !Object.hasOwn(VIEWS, q.view)) throw err('CONTRACT', `admin.list 不合契约：view 不认识的列表：${q?.view}`);
         return Object.hasOwn(TIMED, q.view) ? timeline(VIEWS[q.view](q), q, TIMED[q.view]) : page(VIEWS[q.view](q), q);
+      },
+      /** 【D170】首页（照核心 admin.home 的形状，从上面这些编的数据算出来）。 */
+      home(q = {}) {
+        rec('admin.home', q);
+        if (scenario === 'errors') throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' });
+        const tz = Number.isInteger(q.tzOffsetMin) ? q.tzOffsetMin : 480;
+        const off = tz * 60_000;
+        const dayStart = Math.floor((now + off) / DAY) * DAY - off;
+        const heard = { others: 0, hers: 0, total: 0 };
+        for (const p of percepts) if (p.at >= dayStart && !p.historical && (p.kind === 'utterance' || p.kind === 'self-utterance')) { if (p.self) heard.hers++; else heard.others++; }
+        heard.total = heard.others + heard.hers;
+        const facts = assertions.filter((a) => a.recordedAt >= dayStart).length;
+        const eps = episodes.filter((e) => e.epKind === 'event' && e.tEnd >= dayStart).length;
+        const top = [
+          ...ntk.filter((x) => x.status === 'open').map((x) => ({ source: 'needToKnow', id: x.id, kind: x.kind, reason: x.reason, severity: x.severity, urgent: x.severity >= 2, at: x.createdAt,
+            settingKey: x.settingKey, who: x.sourceEntityId, quote: x.quote ? (x.quote.length > 80 ? `${x.quote.slice(0, 80)}…` : x.quote) : null })),
+          ...review.filter((x) => x.status === 'pending').map((x) => ({ source: 'review', id: x.id, kind: x.kind, reason: x.reason, severity: null, at: x.createdAt, expiresAt: x.expiresAt,
+            urgent: x.expiresAt != null && x.expiresAt - now < 2 * DAY,
+            settingKey: x.kind === 'held_utterance' ? holds[0]?.settingKey ?? null : x.payload?.settingKey ?? null,
+            who: x.kind === 'merge' ? x.payload.a : x.payload?.entityId ?? null, ...(x.kind === 'merge' ? { other: x.payload.b } : {}),
+            quote: x.kind === 'held_utterance' ? holds[0]?.heldText ?? null : x.kind === 'growth' ? x.payload.change.after : x.payload?.rule?.text ?? null })),
+        ].sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0) || b.at - a.at).slice(0, 3);
+        const recent = [
+          ...assertions.filter((a) => !a.state && a.supersededBy == null && a.expiredAt == null).map((a) => ({ ref: a.ref, kind: 'fact', text: a.text, at: a.recordedAt,
+            settingKey: SETTINGS[a.id % 4].key, who: a.entities[0]?.entityId ?? null, certainty: a.certainty, confidence: a.confidence })),
+          ...episodes.filter((e) => !e.state && e.epKind === 'event').map((e) => ({ ref: e.ref, kind: 'episode', text: e.title, at: e.tEnd, tStart: e.tStart, settingKey: e.settingKey, participants: e.participants })),
+          ...intentions.filter((t) => !t.suppression && ['formed', 'armed', 'executed'].includes(t.state)).map((t) => ({ ref: t.ref, kind: 'intent', text: t.text, at: t.formedAt, who: t.targetEntityId, state: t.state, until: t.windowEnd })),
+        ].sort((a, b) => b.at - a.at).slice(0, Number.isInteger(q.recent) ? q.recent : 5);
+        const reg = full ? ['qq', 'dsh-web', 'bili'] : ['qq', 'dsh-web'];
+        const byAdapter = new Map(reg.map((id) => [id, { adapter: id, name: ADAPTER_NAMES[id] ?? (id === 'bili' ? 'B站' : null), connected: true, places: 0, live: 0, lastAt: null }]));
+        for (const s of settings) {
+          const e = byAdapter.get(s.adapter) ?? byAdapter.set(s.adapter, { adapter: s.adapter, name: null, connected: false, places: 0, live: 0, lastAt: null }).get(s.adapter);
+          e.places++;
+          if (s.mode === 'live' && !s.doNotRemember) e.live++;
+          if (s.lastPerceptAt != null && (e.lastAt == null || s.lastPerceptAt > e.lastAt)) e.lastAt = s.lastPerceptAt;
+        }
+        const keys = new Set([...top, ...recent].map((x) => x.settingKey).filter(Boolean));
+        const ids = new Set([...top.flatMap((x) => [x.who, x.other]), ...recent.flatMap((x) => [x.who, ...(x.participants ?? [])])].filter((x) => x != null));
+        const outSettings = {};
+        for (const s of settings) if (keys.has(s.key)) outSettings[s.key] = { label: s.ownerLabel ?? s.label, labelKind: s.labelKind, hint: s.hint };
+        const names = {};
+        for (const e of entities) if (ids.has(e.id)) names[e.id] = { name: e.name, self: !!e.isSelf, principal: e.authority === 'principal' };
+        return { now, dayStart, tzOffsetMin: tz, readOnly, today: { heard, noted: { facts, episodes: eps, total: facts + eps } },
+          pending: { total: ntk.filter((x) => x.status === 'open').length + review.filter((x) => x.status === 'pending').length,
+            needToKnow: ntk.filter((x) => x.status === 'open').length, review: review.filter((x) => x.status === 'pending').length, top },
+          recent, entries: [...byAdapter.values()], settings: outSettings, names };
       },
       get(ref) {
         rec('admin.get', ref);
@@ -616,10 +668,11 @@ const getPath = (o, p) => p.split('.').reduce((v, k) => (v && typeof v === 'obje
  * @param {{scenario?: 'normal'|'empty'|'errors', now?: number}} [o]
  */
 export function makeFakeHost(o = {}) {
-  const scenario = o.scenario ?? 'normal';
+  const variant = o.scenario ?? 'normal';
+  const scenario = HOME_VARIANTS.has(variant) ? 'normal' : variant;
   const now = o.now ?? Date.UTC(2026, 10, 4, 6, 30);
   const calls = [];
-  const core = { mode: { global: 'live', byAttributes: { principalOneOnOne: 'live', closed: 'live', public: 'live' } }, budget: { preset: 'loose' },
+  const core = { mode: { global: variant === 'off' ? 'off' : 'live', byAttributes: { principalOneOnOne: 'live', closed: 'live', public: 'live' } }, budget: { preset: 'loose' },
     sleep: { growth: { mode: 'auto' } }, context: { usageStyle: 'guided' }, backup: { offsiteDir: scenario === 'normal' ? 'D:\\备份\\记忆' : '', retention: { daily: 7, weekly: 4, monthly: 12, preOp: 10 } },
     retention: { raw: '2y', coolingOffDays: 7 } };
   const hostCfg = { embedding: { provider: 'ollama-native', url: 'http://127.0.0.1:11434' }, budget: { dailyOutputTokens: { ...HOST_DEFAULTS.budget.dailyOutputTokens } }, gpu: { policy: 'adaptive', gameMode: { until: scenario === 'empty' ? now + 2 * HOUR : 0 } } };
@@ -738,8 +791,8 @@ export function makeFakeHost(o = {}) {
       suggest: { provider: 'deepseek-account', model: 'deepseek-flash', why: 'deepseek' }, defaultSelection: { provider: 'deepseek-account', model: 'deepseek-v4-pro' } }),
     test: async (p) => { calls.push({ name: 'llm.test', args: [p] }); return { at: now, ok: true, level: 'ok', verdict: '能用，第一眼 0.9 秒，提炼 7.0 秒', pair: p ?? llmTarget, steps: { glance: { ok: true, ms: 900, valid: 2, bad: 0, reported: true }, extract: { ok: true, ms: 7000, valid: 3, bad: 0, reported: true } } }; },
     save: (p) => { calls.push({ name: 'llm.save', args: [p] }); return { ok: true, warnings: [] }; },
-    status: () => (scenario === 'errors'
-      ? { state: 'down', mode: 'chosen', code: 'UNKNOWN_MODEL', since: now - HOUR, pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, fallback: { provider: 'deepseek-account', model: 'deepseek-v4-pro', since: now - HOUR }, fallbackToChat: true, pairs: [], catchUp: null }
+    status: () => (scenario === 'errors' || variant === 'fallback' || variant === 'llmdown'
+      ? { state: 'down', mode: 'chosen', code: 'UNKNOWN_MODEL', since: now - HOUR, pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, fallback: variant === 'llmdown' ? null : { provider: 'deepseek-account', model: 'deepseek-v4-pro', since: now - HOUR }, fallbackToChat: variant !== 'llmdown', pairs: [], catchUp: null }
       : { state: 'ok', mode: llmTarget ? 'chosen' : 'unchosen', code: null, pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, fallback: null, fallbackToChat: true,
         pairs: [{ use: 'extract', pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, state: 'ok', lastOkAt: now - 60_000, byCode: {} }], catchUp: 0 }),
     summary: () => ({ plugin: '0.0.0', state: 'ok', providerKind: 'deepseek-account', model: 'deepseek-flash', effort: 'off', errors24h: {}, compat: {} }),

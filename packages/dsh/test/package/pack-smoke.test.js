@@ -19,6 +19,10 @@ test('dsh-rugu 的包：入口和运行时加载的文件依赖的都在包里�
     'locale/zh.json', 'locale/en.json', 'assets/icon.svg', 'dsh.plugin.json', 'cordis.patch.yml']) assert.ok(r.files.includes(f), `包里应该有 ${f}`);
   // 运行时按路径加载的几个确实被扫到了（不是碰巧在清单里）
   for (const f of ['src/admin/page.html', 'src/admin/starmap.client.js', 'src/host/gpu/sampler-worker.js']) assert.ok(r.runtime.includes(f), `应该扫到运行时加载的 ${f}`);
+  // D170：新版管理页的骨架、地基、各模块和样式也是 page.js 按路径读的
+  for (const n of ['shell.html', 'base.js', 'home.js', 'memory.js', 'pending.js', 'places.js', 'settings.js', 'wizard.js', 'home.css', 'memory.css', 'pending.css', 'places.css', 'settings.css', 'wizard.css']) {
+    assert.ok(r.runtime.includes(`src/admin/ui/${n}`), `应该扫到 ui/${n}`);
+  }
   assert.ok(!r.files.some((f) => f.startsWith('test/')), '插件的测试不进包');
   assert.ok(!r.files.includes('scripts/install.mjs'), 'install.mjs 只在仓库里用');
   // D167：三个图标都进包；横幅只给 README 用（README 里是 raw 地址），横幅的源文件和渲染脚本也不进包

@@ -141,6 +141,8 @@ export const HOST_DEFAULTS = deepFreeze({
     quotaProbeMs: 20 * MIN,          // 宿主报了余额用完（402）、又没有余额来源时：停这么久再试一次（成功就恢复，再失败再停）
   },
   self: { coreSelfFile: '', principalLabel: '', locale: 'zh' },
+  // 管理页（D170）：重做的新版在 'next' 后面；全部搬完、切成默认以后，这一项和旧版 page.html 一起删
+  admin: { ui: 'classic' },
   // 插件自己的 Agent 预设（D112，preset/）：DSH「新建任务」下拉里的一项，选了它就是在跟她聊。id 固定（写进会话记录），这里只配显示。
   //   name 空 = 通用的默认名（人设的名字写在私有 kit 的配置里，scripts/preset-config.mjs）；personaPrefix 空 = 人设行照标准模式；
   //   enabled:false 会让用它开过的旧会话打不开（要确认）
@@ -158,6 +160,7 @@ const ENUMS = {
   'gpu.policy': ['off', 'on', 'adaptive'],
   'embedding.tier': ['standard', 'light', 'custom'],
   'embedding.provider': ['ollama-native', 'openai-compat', 'none'],
+  'admin.ui': ['classic', 'next'],
 };
 
 /** 一对「服务商 + 模型」（D168）：两个非空字符串，没有别的键。 */

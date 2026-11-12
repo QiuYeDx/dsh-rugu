@@ -1,0 +1,47 @@
+/* 首页（home.js）。类名都带 home- 前缀；公共的列表行、小节、按钮用 shell.html 里的。 */
+.home-hero { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 48px; }
+.home-orb { width: 52px; height: 52px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--gold-soft); color: var(--gold-ink); }
+:root[data-theme="dark"] .home-orb.ok { box-shadow: var(--shadow-glow); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .home-orb.ok { box-shadow: var(--shadow-glow); } }
+.home-orb.warn { background: var(--secondary); color: var(--warning); }
+.home-orb.bad { background: var(--secondary); color: var(--destructive); }
+.home-orb.quiet { background: var(--secondary); color: var(--muted-foreground); }
+.home-hero h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: 0.02em; }
+.home-hero h1:focus { outline: none; }
+.home-hero p { margin-top: 4px; font-size: 15px; color: var(--muted-foreground); max-width: 680px; }
+.home-hero .btn { margin-top: 16px; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 56px; align-items: start; }
+.home-side .sec + .sec { margin-top: 40px; }
+
+/* 右栏的一行：图标 + 名字 + 右边的状态 + 箭头；整行是一个按钮 */
+.home-mini { border-top: 1px solid var(--border); }
+.home-mini:first-child { border-top: 0; }
+.home-mini > button { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 0; cursor: pointer; border-radius: 6px; font-size: 14px; line-height: 20px; }
+.home-mini:first-child > button { padding-top: 0; }
+.home-mini > button:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.home-mini > button > svg:first-child { color: var(--muted-foreground); }
+.home-mini .l { flex: 1; min-width: 0; }
+.home-mini .l small { display: block; margin-top: 1px; font-size: 12px; line-height: 17px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.home-mini .r { color: var(--muted-foreground); font-size: 13px; text-align: right; flex: none; }
+.home-mini .chev { color: var(--muted-foreground); flex: none; transition: transform var(--duration-fast) var(--ease-out-quint); }
+@media (hover: hover) and (pointer: fine) { .home-mini > button:hover .l { color: var(--foreground); } .home-mini > button:hover .chev { transform: translateX(2px); color: var(--foreground); } }
+
+.home-spend { font-size: 14px; color: var(--muted-foreground); }
+.home-spend b { color: var(--foreground); font-weight: 600; font-size: 20px; line-height: 28px; display: block; font-variant-numeric: tabular-nums; }
+.home-spend .go { margin-top: 10px; }
+.home-quiet { color: var(--muted-foreground); font-size: 14px; line-height: 22px; }
+.home-next { margin-top: 12px; display: flex; flex-direction: column; gap: 14px; }
+.home-next > div { display: flex; gap: 12px; }
+.home-next > div > svg { margin-top: 3px; color: var(--muted-foreground); }
+.home-next b { display: block; font-weight: 500; font-size: 15px; }
+.home-next span { display: block; margin-top: 2px; font-size: 14px; line-height: 22px; color: var(--muted-foreground); }
+
+/* 首页在 DSH 设置面板里常常只有 800 多像素宽：右栏窄一点，晚一点才叠成一栏 */
+@media (max-width: 1000px) { .home-grid { grid-template-columns: minmax(0, 1fr) 260px; gap: 40px; } }
+@media (max-width: 760px) { .home-grid { grid-template-columns: minmax(0, 1fr); gap: 48px; } }
+@media (max-width: 560px) {
+  .home-hero { gap: 16px; }
+  .home-orb { width: 44px; height: 44px; }
+  .home-hero h1 { font-size: 20px; line-height: 28px; }
+}
+.home-urgent { color: var(--warning); font-weight: 500; }

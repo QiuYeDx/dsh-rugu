@@ -1,6 +1,8 @@
 // 管理页的本地预览（不是测试文件）：不启动 DSH，用假 pm / 假 host 跑真的路由处理函数，给无头 Chrome 截图审稿用。
 //   node packages/dsh/test/admin/preview-server.mjs [--port 3471]
 //   http://127.0.0.1:3471/s/<normal|empty|errors|big|old>/api/rugu/admin    单独打开的管理页（big：星图 2 万颗星；old：老核心，没有星图）
+//   …/api/rugu/admin?ui=next&theme=dark#/home    重做中的新版（D170）；场景另有 llmdown / fallback / readonly / off（首页的几种状态）
+//     截图：node packages/dsh/test/admin/ui-shots.mjs（按去处 / 状态 / 主题 / 宽度批量截，用法见那个文件）
 //     星图的调试开关：页面地址加 ?starmap=2d 强制走 2D 退路
 //   http://127.0.0.1:3471/shell/<normal|empty|errors|big|old>?theme=dark                       仿 DSH 设置面板，经 client.js 用 iframe 打开
 // 只监听 127.0.0.1；数据全是 fixtures.js 里编的。
@@ -24,11 +26,14 @@ fs.writeFileSync(path.join(exportDir, 'pm-export-20261104T063000Z.jsonl'), '{"ty
 // PM_PREVIEW_NOW=<毫秒>：假数据以这一刻为「现在」（看「今天」「昨天」这类相对时间时用真的现在）；不给用 fixtures 的固定时刻
 const previewNow = Number(process.env.PM_PREVIEW_NOW) || undefined;
 const scenarios = {};
+// 首页（D170）的几种状态：llmdown 后台模型不工作、fallback 在用聊天模型顶着、readonly 只读、off 总开关关着（数据同 normal）
+const SCENARIOS = ['normal', 'empty', 'errors', 'big', 'old', 'llmdown', 'fallback', 'readonly', 'off'];
+const SC = SCENARIOS.join('|');
 // 星图的「现在」跟着真的时间往前走（从假数据的那一刻起），实时增量才看得到新的想起
 const started = Date.now();
 const skyClock = () => (previewNow ?? Date.UTC(2026, 10, 4, 6, 30)) + (Date.now() - started);
-for (const s of ['normal', 'empty', 'errors', 'big', 'old']) {
-  const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow, clock: skyClock }), host: makeFakeHost({ scenario: s }), exportDir, log: { info() {}, warn() {}, error() {} } });
+for (const s of SCENARIOS) {
+  const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow, clock: skyClock }), host: makeFakeHost({ scenario: s, now: previewNow }), exportDir, now: skyClock, log: { info() {}, warn() {}, error() {} } });
   scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
 }
 
@@ -66,6 +71,8 @@ const SHELL = (scenario, theme) => `<!doctype html>
 <div class="panel"><nav><div>通用</div><div>模型</div><div>插件</div><div>B站伙伴</div><div class="on">如故</div></nav>
 <div class="content"><div class="header"></div><div class="options" id="root"></div></div></div>
 <script>
+  // ?ui=next|classic：当作主人在页面里选过这一版（client.js 读同一个 localStorage 键）
+  { const ui = new URLSearchParams(location.search).get('ui'); if (ui) try { localStorage.setItem('rugu.admin.ui', ui); } catch {} }
   // 一个只够 client.js 用的小 React：createElement 直接建 DOM，hook 只跑一次（预览不需要协调）
   const React = (() => {
     let hooks = []; let idx = 0; const effects = []; let root = null; let comp = null;
@@ -86,7 +93,7 @@ const SHELL = (scenario, theme) => `<!doctype html>
     return {
       createElement,
       useRef: (v) => { const i = idx++; return hooks[i] ??= { current: v ?? null }; },
-      useState: (v) => { const i = idx++; if (!(i in hooks)) hooks[i] = { v }; const slot = hooks[i]; return [slot.v, (nv) => { if (nv !== slot.v) { slot.v = nv; render(); } }]; },
+      useState: (v) => { const i = idx++; if (!(i in hooks)) hooks[i] = { v: typeof v === 'function' ? v() : v }; const slot = hooks[i]; return [slot.v, (nv) => { if (nv !== slot.v) { slot.v = nv; render(); } }]; },
       useEffect: (fn) => { const i = idx++; if (!(i in hooks)) { hooks[i] = true; effects.push(fn); } },
       mount: (c, el) => { comp = c; root = el; render(); },
     };
@@ -103,13 +110,13 @@ const SHELL = (scenario, theme) => `<!doctype html>
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://local');
-    const m = url.pathname.match(/^\/s\/(normal|empty|errors|big|old)(\/api\/rugu\/[A-Za-z.]+)$/);
+    const m = url.pathname.match(new RegExp(`^/s/(${SC})(/api/rugu/[A-Za-z.]+)$`));
     if (m) {
       const fn = scenarios[m[1]][m[2]];
       if (!fn) { res.writeHead(404); return res.end(); }
       return send(res, await fn(await toRequest(req, `${m[2]}${url.search}`)));
     }
-    const s = url.pathname.match(/^\/shell\/(normal|empty|errors|big|old)$/);
+    const s = url.pathname.match(new RegExp(`^/shell/(${SC})$`));
     if (s) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(SHELL(s[1], url.searchParams.get('theme')));

@@ -50,6 +50,19 @@ export function list(core, q) { return views.list(core, q); }
 export function get(core, ref) { return views.get(core, ref); }
 
 /**
+ * 【D170】管理页首页的数据：今天听到几句、记下几件，「需要你看一眼」的总数和最要紧的几条，她最近记住的几条，各入口的状态，
+ * 和这些用到的场合、人的名字。同步、只读（只读库也能用）；口径和每个查询的代价见 views.js 的 home。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{dayStart?: number, tzOffsetMin?: number, recent?: number, top?: number}} [q]
+ * @returns {{now: number, dayStart: number, tzOffsetMin: number, readOnly: boolean,
+ *   today: {heard: {others: number, hers: number, total: number}, noted: {facts: number, episodes: number, total: number}},
+ *   pending: {total: number, needToKnow: number, review: number, top: object[]}, recent: object[],
+ *   entries: {adapter: string, name: string|null, connected: boolean, places: number, live: number, lastAt: number|null}[],
+ *   settings: Record<string, {label: string, labelKind: string, hint: string|null}>, names: Record<string, {name: string|null, self: boolean, principal: boolean}>}}
+ */
+export function home(core, q) { return views.home(core, q ?? {}); }
+
+/**
  * 【D163】记忆星图（管理页「星图」）。同步、只读（不写任何表、不调模型，只读库也能用），参数不合契约抛 ContractError。
  * 星 = 事实（全部，含被取代、过时的）、经历 / 日记 / 导入的情节、意图；隐藏、忘掉、彻底删除的不出现，它们的痕迹、想起、说起也不出现。
  * 快照里没有记忆的正文。三种调用：
