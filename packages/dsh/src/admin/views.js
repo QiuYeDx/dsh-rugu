@@ -2,7 +2,7 @@
 // 主人看得到全部记忆（§9.3.7 第 3 条），所以记忆列表照原样给；宿主的状态、预算、显卡只给数字和短状态（§13.3）。
 // 每个视图各自兜错：某一块出错只让那一块显示「读不出来」，别的照常（总览不能因为备份目录读不了就整页空白）。
 import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride } from 'rugu-core';
-import { InputError, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
+import { InputError, nonNegInt, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
 
 const DAY = 86_400_000;
 /** 今天 0 点（北京时间，UTC+8；管理页的「今天」只用来数次数）。 */
@@ -74,6 +74,10 @@ function memoryQuery(q, { paging }) {
   }
   return query;
 }
+/** 星图（D163）的快照缓存多久：同一个 rev 在这段时间里直接给缓存（now 换成新的），快照不在每次打开页签时重算。 */
+export const STARMAP_TTL_MS = 15_000;
+/** 看一眼（starmapPeek）一次最多几条。 */
+export const STARMAP_PEEK_MAX = 24;
 /** 自检结果缓存多久（宿主的自检会探一次嵌入服务，不在每次打开页面时重跑）。 */
 const SELFCHECK_TTL_MS = 60_000;
 
@@ -226,6 +230,9 @@ export function createViews(deps) {
   const { pm, host, now } = deps;
   const hostOf = (k) => (host && typeof host === 'object' ? host[k] : undefined);
   let selfCheckCache = null;
+  /** 星图快照的缓存：{at, rev, data}。 */
+  let starmapCache = null;
+  const hasStarmap = () => typeof pm?.admin?.starmap === 'function';
 
   /** 全部场合的键 → 名字（列表页把场合键翻成名字用；最多 1000 个）。 */
   function settingLabels() {
@@ -543,6 +550,46 @@ export function createViews(deps) {
       };
     },
 
+    // ── 星图（D163）：三个只读视图，数字数组原样过，只把场合和人名换成页面要的样子 ─────────
+    /** 快照：全部星、痕迹、想起、说起、心境、听到的话。老核心没有 admin.starmap → {unsupported: true}。 */
+    starmap() {
+      if (!hasStarmap()) return { unsupported: true };
+      const t = now();
+      if (starmapCache && t - starmapCache.at < STARMAP_TTL_MS) {
+        const c = starmapCache;
+        return { ...c.data, now: (num(c.data.now) ?? c.at) + (t - c.at) };
+      }
+      const data = starmapSnapshot(pm.admin.starmap({}));
+      starmapCache = { at: t, rev: data.rev, data };
+      return data;
+    },
+    /** 实时增量：从游标之后的痕迹、想起、说起。 */
+    starmapLive(q) {
+      if (!hasStarmap()) return { unsupported: true };
+      const since = { inj: nonNegInt(q.inj, 'inj'), trace: nonNegInt(q.trace, 'trace'), told: nonNegInt(q.told, 'told') };
+      const r = pm.admin.starmap({ since });
+      // 星的集合变了（rev 不同），下一次快照不能再给缓存
+      if (starmapCache && typeof r?.rev === 'string' && r.rev !== starmapCache.rev) starmapCache = null;
+      return {
+        now: num(r?.now), rev: typeof r?.rev === 'string' ? r.rev.slice(0, 200) : null, cursor: cursorOf(r?.cursor),
+        traces: arr(r?.traces), recalls: arr(r?.recalls), tells: arr(r?.tells),
+      };
+    },
+    /** 看一眼：几颗星的一句话内容（悬停、详情卡用）。 */
+    starmapPeek(q) {
+      if (!hasStarmap()) return { unsupported: true };
+      if (typeof q.refs !== 'string' || !q.refs) throw new InputError('refs', '应为逗号分隔的记忆引用');
+      const parts = q.refs.split(',');
+      if (parts.length > STARMAP_PEEK_MAX) throw new InputError('refs', `一次最多 ${STARMAP_PEEK_MAX} 条`);
+      const refs = [...new Set(parts.map((x, i) => opaque(x, `refs[${i}]`)))];
+      const r = pm.admin.starmap({ peek: refs });
+      return {
+        items: arr(r?.items).filter(isObj).slice(0, STARMAP_PEEK_MAX).map((x) => ({
+          ref: typeof x.ref === 'string' ? x.ref.slice(0, 128) : null, title: clip(x.title, 80), text: clip(x.text, 200), at: num(x.at),
+        })),
+      };
+    },
+
     // ── 诊断（§13.2 启动自检、§13.3 数字） ──────────────────────────────
     async diagnostics(q) {
       const force = q.refresh === '1';
@@ -594,6 +641,40 @@ export function createViews(deps) {
     selfCheck,
     settingLabels,
     config,
+  };
+}
+
+// ── 星图（D163） ──────────────────────────────────────────────────────────
+const arr = (v) => (Array.isArray(v) ? v : []);
+const cursorOf = (c) => ({ inj: num(c?.inj) ?? 0, trace: num(c?.trace) ?? 0, told: num(c?.told) ?? 0 });
+/**
+ * 核心的星图快照 → 页面要的样子：场合换成 {key, title, adapter, oneOnOne}（名字照管理页别处的叫法），人名截到 60 字，
+ * 其余的数字数组原样给（页面按 §3.1 的列读）。
+ * @param {any} r
+ */
+export function starmapSnapshot(r) {
+  if (!isObj(r)) return { unsupported: false, now: null, rev: null, stars: { cols: [], rows: [] }, people: [], places: [] };
+  const stars = isObj(r.stars) ? { cols: arr(r.stars.cols).map(String).slice(0, 32), rows: arr(r.stars.rows) } : { cols: [], rows: [] };
+  return {
+    now: num(r.now), rev: typeof r.rev === 'string' ? r.rev.slice(0, 200) : String(r.rev ?? ''), cursor: cursorOf(r.cursor),
+    params: { ageFloorMs: num(r.params?.ageFloorMs) ?? 180_000, timeUnitMs: num(r.params?.timeUnitMs) ?? 3_600_000 },
+    t0: num(r.t0),
+    people: arr(r.people).filter(isObj).map((p) => ({
+      // 她自己的档案没名字时核心给 ''（页面显示「她」）
+      id: num(p.id), name: typeof p.name === 'string' && p.name ? clip(p.name, 60) : p.self === true ? '' : '（没有名字）', self: p.self === true, principal: p.principal === true,
+      closeness: num(p.closeness), n: num(p.n) ?? 0,
+    })),
+    places: arr(r.places).filter(isObj).map((s) => ({
+      key: typeof s.key === 'string' ? s.key.slice(0, 128) : '',
+      title: settingTitle(s.ownerLabel ? { label: s.ownerLabel, labelKind: 'name' } : s),
+      adapter: typeof s.adapter === 'string' ? s.adapter.slice(0, 40) : null,
+      oneOnOne: typeof s.oneOnOne === 'boolean' ? s.oneOnOne : null,
+      n: num(s.n) ?? 0,
+    })),
+    stars,
+    traces: arr(r.traces), recalls: arr(r.recalls), tells: arr(r.tells), mood: arr(r.mood), heard: arr(r.heard), nights: arr(r.nights).filter((x) => num(x) != null),
+    dropped: num(r.dropped) ?? 0,
+    counts: isObj(r.counts) ? numbersOnly(r.counts) : {},
   };
 }
 

@@ -442,6 +442,119 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
 .pm-mono{font-family:var(--mono);font-size:12px}
 .pm-1l{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .pm-tight{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;font-size:13px}
+/* ── 星图（D163）：星空永远是深色的（深浅主题都一样），工具条和详情卡跟主题 ── */
+/* 星图要更宽：单独打开时这个页签放宽版心（别的页签不变） */
+.pm:has(>div>#page-starmap:not([hidden])){max-width:1320px}
+.pm-sm{display:flex;flex-direction:column;gap:10px;min-width:0}
+.pm-sm-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.pm-sm-grow{flex:1 1 0;min-width:0}
+.pm-sm-view{align-self:center}
+/* 右边这一组（场合、搜索、演示、放大）一起换行，不拆散 */
+.pm-sm-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:0 0 auto;min-width:0;max-width:100%}
+.pm-sm-kinds{display:flex;flex-wrap:wrap;gap:4px}
+.pm-sm-kind{appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px 0 9px;border-radius:999px;border:1px solid var(--bd);background:var(--b1);color:var(--t1);font-size:12.5px;cursor:pointer;white-space:nowrap;transition:background-color .15s,color .15s,border-color .15s}
+.pm-sm-kind:hover{background:var(--hover)}
+.pm-sm-kind i{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
+.pm-sm-kind b{font-weight:400;color:var(--t3);font-variant-numeric:tabular-nums;font-size:12px}
+.pm-sm-kind[aria-pressed=false]{color:var(--t3);background:transparent;border-style:dashed}
+.pm-sm-kind[aria-pressed=false] i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--c)}
+.pm-sm-kind:focus-visible,.pm-sm-sbtn:focus-visible,.pm-sm-track:focus-visible,.pm-sm-cap-link:focus-visible{outline:2px solid color-mix(in srgb,var(--link) 60%,transparent);outline-offset:1px}
+.pm-sm-place{height:30px;max-width:170px}
+.pm-sm-search{flex:none;width:180px;min-width:0;max-width:none}
+.pm-sm-search .pm-input{height:30px}
+.pm-sm-hits{display:inline-flex;align-items:center;gap:2px;font-size:12.5px;color:var(--t2);white-space:nowrap}
+.pm-x.sm{width:22px;height:22px;font-size:15px}
+.pm-sm-demo[aria-pressed=true]{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.pm-sm-max svg{flex:none}
+.pm-sm-state .pm-sm-msg{pointer-events:auto}
+.pm-sm-state .pm-sm-msg-in.col{max-width:380px;gap:8px}
+.pm-sm-state .pm-sm-sbtn{margin-top:6px}
+/* 天空 */
+.pm-sm-sky{position:relative;height:max(400px,calc(100vh - 236px));max-height:900px;min-height:0;border-radius:14px;overflow:hidden;color:#E8ECF4;
+  background:radial-gradient(120% 90% at 50% 38%,#0E1424 0%,#080B14 55%,#05070D 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+  user-select:none;-webkit-user-select:none;touch-action:none;outline:none;font-size:13px;line-height:1.5}
+.pm-sm-sky:focus-visible{box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 0 0 2px color-mix(in srgb,var(--link) 60%,transparent)}
+.pm-sm-sky.grab{cursor:grabbing}
+.pm-sm-cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+.pm-sm-cap{position:absolute;left:16px;top:12px;right:16px;display:flex;flex-direction:column;gap:1px;pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.7)}
+.pm-sm-cap>b{font-size:13.5px;font-weight:600;letter-spacing:.2px;color:#F2F4F8}
+.pm-sm-cap-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
+.pm-sm-cap small{font-size:12px;color:rgba(232,236,244,.66)}
+.pm-sm-cap-link{pointer-events:auto;appearance:none;border:0;background:none;padding:0;font-size:12px;color:#9DBCFF;cursor:pointer;white-space:nowrap}
+.pm-sm-cap-link:hover{text-decoration:underline}
+.pm-sm-key{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;margin-top:3px;font-size:11.5px;color:rgba(232,236,244,.6)}
+.pm-sm-key .it{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.pm-sm-key .ln{width:18px;border-top:2px solid var(--c)}
+.pm-sm-key .ln.dash{border-top-style:dashed}
+.pm-sm-key .ring{width:9px;height:9px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--c)}
+.pm-sm-sky.narrow .pm-sm-key{display:none}
+.pm-sm-sky.narrow .pm-sm-note{top:auto;bottom:92px}
+.pm-sm-note{position:absolute;right:12px;top:12px;max-width:min(420px,calc(100% - 24px));padding:5px 10px;border-radius:8px;background:rgba(255,196,120,.14);border:1px solid rgba(255,196,120,.3);color:#FFE2BD;font-size:12px}
+.pm-sm-msg{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;pointer-events:none}
+.pm-sm-msg-in{display:inline-flex;align-items:center;gap:10px;color:rgba(232,236,244,.8);font-size:13px}
+.pm-sm-msg-in.col{flex-direction:column;gap:6px;max-width:340px}
+.pm-sm-msg-in.col b{font-size:15px;color:#F2F4F8}
+.pm-sm-msg-in.col span{color:rgba(232,236,244,.66);line-height:1.6}
+.pm-sm-msg .pm-spin{border-color:rgba(255,255,255,.2);border-top-color:rgba(255,255,255,.8)}
+/* 悬停提示（在深色天空上） */
+.pm-sm-tip{position:absolute;z-index:3;max-width:320px;padding:8px 11px;border-radius:10px;background:rgba(14,17,27,.95);border:1px solid rgba(255,255,255,.11);box-shadow:0 8px 28px rgba(0,0,0,.45);pointer-events:none;font-size:12.5px;line-height:1.55;color:#E8ECF4}
+.pm-sm-tip .m{display:flex;align-items:center;gap:6px;color:rgba(232,236,244,.7);font-size:12px}
+.pm-sm-tip .m.s{margin-top:3px;color:rgba(232,236,244,.55)}
+.pm-sm-tip .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.pm-sm-tip .x{margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;color:#F2F4F8}
+/* 详情卡（跟主题） */
+.pm-sm-card{position:absolute;z-index:4;top:12px;right:12px;width:328px;max-height:calc(100% - 108px);overflow:auto;overscroll-behavior:contain;user-select:text;-webkit-user-select:text;
+  background:var(--b1);color:var(--t1);border:1px solid var(--bd);border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.42);padding:12px 14px 12px;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.55}
+.pm-sm-sky.narrow .pm-sm-card{left:8px;right:8px;width:auto;top:auto;bottom:90px;max-height:min(56%,calc(100% - 100px))}
+.pm-sm-card-h{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--t2);margin-right:-6px}
+.pm-sm-card-h .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.pm-sm-card-h>span{flex:1;min-width:0}
+.pm-sm-card-txt{margin:0;display:flex;flex-direction:column;gap:3px;overflow-wrap:anywhere}
+.pm-sm-card-txt b{font-size:14px;font-weight:600}
+.pm-sm-card-txt p{margin:0;font-size:14px}
+.pm-sm-card-txt.muted{color:var(--t3);font-size:13px}
+.pm-sm-dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;font-size:12.5px}
+.pm-sm-dl dt{color:var(--t3)}
+.pm-sm-dl dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.pm-sm-sec{display:flex;flex-direction:column;gap:6px}
+.pm-sm-sec-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12.5px;font-weight:600}
+.pm-sm-sec-h .v{font-weight:400;color:var(--t3);font-size:12px;font-variant-numeric:tabular-nums}
+.pm-sm-curve{display:block;width:100%;height:78px;border-radius:8px;background:#0A0E18}
+.pm-sm-recs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:12px}
+.pm-sm-recs li{display:grid;grid-template-columns:14px auto minmax(0,1fr);align-items:center;gap:6px;color:var(--t2)}
+.pm-sm-recs .ln{width:12px;border-top:1.5px dashed var(--c)}
+.pm-sm-recs .p{color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pm-sm-card-f{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:2px}
+/* 时间轴（在天空底部） */
+.pm-sm-tl{position:absolute;z-index:2;left:0;right:0;bottom:0;padding:8px 14px 8px;display:flex;flex-direction:column;gap:4px;background:linear-gradient(rgba(5,7,13,0),rgba(5,7,13,.82) 34%,rgba(5,7,13,.94))}
+.pm-sm-tl-row{display:flex;align-items:center;gap:8px;min-width:0}
+.pm-sm-time{font-size:12.5px;color:#E8ECF4;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pm-sm-speeds{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:rgba(255,255,255,.06)}
+.pm-sm-speeds .pm-sm-sbtn{border-color:transparent;background:none;height:24px;padding:0 9px}
+.pm-sm-speeds .pm-sm-sbtn[aria-pressed=true]{background:rgba(255,255,255,.16);color:#fff}
+.pm-sm-sbtn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 11px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:rgba(232,236,244,.86);font-size:12.5px;cursor:pointer;white-space:nowrap;flex:none;transition:background-color .15s,color .15s,border-color .15s}
+.pm-sm-sbtn:hover{background:rgba(255,255,255,.13);color:#fff}
+.pm-sm-sbtn.icon{width:30px;padding:0}
+.pm-sm-sbtn.now .dot{width:7px;height:7px;border-radius:50%;background:rgba(232,236,244,.4)}
+.pm-sm-sbtn.now[aria-pressed=true]{color:#B9F2D4;border-color:rgba(123,227,176,.4);background:rgba(123,227,176,.12)}
+.pm-sm-sbtn.now[aria-pressed=true] .dot{background:#7BE3B0;animation:pm-sm-pulse 1.8s ease-in-out infinite}
+@keyframes pm-sm-pulse{0%,100%{box-shadow:0 0 0 0 rgba(123,227,176,.55)}50%{box-shadow:0 0 0 4px rgba(123,227,176,0)}}
+.pm-sm-track{position:relative;height:32px;cursor:pointer;border-radius:6px;touch-action:none}
+.pm-sm-track-cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* 放大：填满整个页面（DSH 的 iframe 里没有全屏权限时就填满 iframe） */
+html.pm-sm-maxed{overflow:hidden}
+.pm-sm.max{position:fixed;inset:0;z-index:30;padding:10px;background:var(--page)}
+.pm-sm.max .pm-sm-sky{flex:1;height:auto;max-height:none}
+.pm-sm:fullscreen{padding:10px;background:var(--page)}
+@media (max-width:620px){
+  .pm-sm-search{flex:1 1 160px;width:auto}
+  .pm-sm-tools{flex:1 1 100%}
+  .pm-sm-place{max-width:none;flex:1 1 140px}
+}
+@media (prefers-reduced-motion:reduce){
+  .pm-sm-kind,.pm-sm-sbtn{transition:none}
+  .pm-sm-sbtn.now[aria-pressed=true] .dot{animation:none}
+}
 @media (max-width:620px){
   .pm{--pm-pb:24px;padding:16px 16px var(--pm-pb)}
   .pm-fields{grid-template-columns:1fr}
@@ -470,6 +583,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
 <body>
 <div id="app" class="pm" aria-busy="true"><div class="pm-loading"><span class="pm-spin"></span>正在打开记忆管理…</div></div>
 <noscript>这个页面需要启用脚本。</noscript>
+<!-- 星图（D163）：starmap.client.js 渲染时塞进这里（page.js） -->
+<script nonce="__PM_NONCE__">__PM_STARMAP__</script>
 <script nonce="__PM_NONCE__">
 (() => {
   'use strict';
@@ -1013,6 +1128,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     // 已经吸顶就停在刚吸顶的位置：新页面从头看，页签栏也不从指针下面跑开（原来滚回 0 会让它往下掉一截）。
     // 为此新页面临时撑满一屏（.hold），等滚回最上面或下次没吸顶时切页签再去掉
     const stuck = se.scrollTop >= stickAt() - 1;
+    // 离开的页签：有后台动画、轮询的（星图）先停下
+    for (const x of tabs) if (x !== t && x.loaded && !x.page.hidden) x.view.hide?.();
     for (const x of tabs) { x.btn.setAttribute('aria-selected', String(x === t)); x.btn.tabIndex = x === t ? 0 : -1; x.page.hidden = x !== t; x.page.classList.toggle('hold', stuck && x === t); }
     try { localStorage.setItem(TAB_KEY, t.id); } catch { /* 隐私模式 */ }
     if (!t.loaded) { t.loaded = true; t.view.load(opts); } else t.view.show?.(opts);
@@ -1117,6 +1234,19 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     }
     return { load, show: load };
   }
+  // ════════════════════════════════════════════════════════════════════════
+  // 星图（D163）：画和交互都在 starmap.client.js 里，这里只把页面现成的工具交过去
+  // ════════════════════════════════════════════════════════════════════════
+  function Starmap(el) {
+    let inst = null;
+    const open = () => {
+      if (!window.__pmStarmap) { clear(el, errorBox(new Error('星图的脚本没有加载'))); return; }
+      if (!inst) inst = window.__pmStarmap.mount(el, { h, add, clear, api, openMemory, errorBox, loading, toast, go, reduce });
+      inst.show();
+    };
+    return { load: open, show: open, hide: () => inst?.hide(), get instance() { return inst; } };
+  }
+
   function startupLine(s) {
     const xs = Object.entries(s ?? {});
     if (!xs.length) return '—';
@@ -3421,7 +3551,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     const bar = h('nav', { class: 'pm-navbar', 'aria-label': '记忆管理' }, prev, list, next);
     const pages = h('div', { style: { display: 'contents' } });
     const defs = [
-      ['overview', '总览', Overview], ['needToKnow', '需要你知道', NeedToKnow], ['review', '审核', Review], ['memory', '记忆', Memories],
+      ['overview', '总览', Overview], ['starmap', '星图', Starmap], ['needToKnow', '需要你知道', NeedToKnow], ['review', '审核', Review], ['memory', '记忆', Memories],
       ['settings', '场合与规则', Settings], ['discretion', '分寸', Discretion], ['growth', '成长', Growth], ['backups', '备份与恢复', Backups], ['config', '设置', Config], ['diagnostics', '诊断', Diagnostics],
     ];
     for (const [id, text, View] of defs) {

@@ -1,7 +1,8 @@
 // 管理页的本地预览（不是测试文件）：不启动 DSH，用假 pm / 假 host 跑真的路由处理函数，给无头 Chrome 截图审稿用。
 //   node packages/dsh/test/admin/preview-server.mjs [--port 3471]
-//   http://127.0.0.1:3471/s/<normal|empty|errors>/api/persona-memory/admin            单独打开的管理页
-//   http://127.0.0.1:3471/shell/<normal|empty|errors>?theme=dark                       仿 DSH 设置面板，经 client.js 用 iframe 打开
+//   http://127.0.0.1:3471/s/<normal|empty|errors|big|old>/api/persona-memory/admin    单独打开的管理页（big：星图 2 万颗星；old：老核心，没有星图）
+//     星图的调试开关：页面地址加 ?starmap=2d 强制走 2D 退路
+//   http://127.0.0.1:3471/shell/<normal|empty|errors|big|old>?theme=dark                       仿 DSH 设置面板，经 client.js 用 iframe 打开
 // 只监听 127.0.0.1；数据全是 fixtures.js 里编的。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -23,8 +24,11 @@ fs.writeFileSync(path.join(exportDir, 'pm-export-20261104T063000Z.jsonl'), '{"ty
 // PM_PREVIEW_NOW=<毫秒>：假数据以这一刻为「现在」（看「今天」「昨天」这类相对时间时用真的现在）；不给用 fixtures 的固定时刻
 const previewNow = Number(process.env.PM_PREVIEW_NOW) || undefined;
 const scenarios = {};
-for (const s of ['normal', 'empty', 'errors']) {
-  const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow }), host: makeFakeHost({ scenario: s }), exportDir, log: { info() {}, warn() {}, error() {} } });
+// 星图的「现在」跟着真的时间往前走（从假数据的那一刻起），实时增量才看得到新的想起
+const started = Date.now();
+const skyClock = () => (previewNow ?? Date.UTC(2026, 10, 4, 6, 30)) + (Date.now() - started);
+for (const s of ['normal', 'empty', 'errors', 'big', 'old']) {
+  const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow, clock: skyClock }), host: makeFakeHost({ scenario: s }), exportDir, log: { info() {}, warn() {}, error() {} } });
   scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
 }
 
@@ -99,13 +103,13 @@ const SHELL = (scenario, theme) => `<!doctype html>
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://local');
-    const m = url.pathname.match(/^\/s\/(normal|empty|errors)(\/api\/persona-memory\/[A-Za-z.]+)$/);
+    const m = url.pathname.match(/^\/s\/(normal|empty|errors|big|old)(\/api\/persona-memory\/[A-Za-z.]+)$/);
     if (m) {
       const fn = scenarios[m[1]][m[2]];
       if (!fn) { res.writeHead(404); return res.end(); }
       return send(res, await fn(await toRequest(req, `${m[2]}${url.search}`)));
     }
-    const s = url.pathname.match(/^\/shell\/(normal|empty|errors)$/);
+    const s = url.pathname.match(/^\/shell\/(normal|empty|errors|big|old)$/);
     if (s) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(SHELL(s[1], url.searchParams.get('theme')));
