@@ -694,6 +694,84 @@ export function createViews(deps) {
         memoryEvalCanRun: typeof hostOf('memoryEval')?.run === 'function',
       };
     },
+
+    // ── 新管理页「待处理」（D172）：需要你知道（开着的 + 最近读过的）、等你批准、被拦下的话，一个视图给全 ──────────
+    // 数字的口径和首页（core admin.home 的 pending）一样：需要你知道开着的 + 审核等着的；被拦下的话只是记录，不算进去
+    async inbox(q) {
+      const tz = q.tz != null && q.tz !== '' ? tzMin(q.tz, 'tz') : 480;
+      const st = await part(() => pm.status());
+      const open = pm.admin.list({ view: 'needToKnow', status: 'open', limit: 200 });
+      const read = await part(() => pm.admin.list({ view: 'needToKnow', status: 'read', limit: 20 }));
+      const rv = VIEWS.review({ limit: 200 });
+      const memo = (ref) => {
+        try {
+          const d = ref ? pm.admin.get(ref) : null;
+          const row = d?.row ?? null;
+          return row ? { ref, text: clip(row.text ?? row.narrative ?? row.title ?? row.display_name ?? null, 200) } : null;
+        } catch { return null; }
+      };
+      // 忘掉请求、分寸要改：那条记忆的一句话；只有你能做的操作：那条消息的原话（核心批准时也是从这条消息取文字）
+      const items = (rv.items ?? []).map((r) => {
+        const p = r.payload ?? {};
+        if ((r.kind === 'forget_request' || r.kind === 'norm_change') && typeof p.ref === 'string') return { ...r, memo: memo(p.ref) };
+        if (r.kind === 'owner_op' && Number.isSafeInteger(p.perceptId)) return { ...r, memo: memo(`p${p.perceptId}`) };
+        return r;
+      });
+      const disc = await part(() => VIEWS.discretion({ limit: 50 }));
+      const off = tz * 60_000;
+      const today = Math.floor((now() + off) / DAY) * DAY - off;
+      return {
+        now: now(),
+        readOnly: !!(st && !st.error && st.readOnly),
+        counts: { needToKnow: Number(open.total ?? 0), review: Number(rv.total ?? 0), total: Number(open.total ?? 0) + Number(rv.total ?? 0),
+          blocked: disc?.error ? null : Number(disc.blocked?.total ?? 0) },
+        needToKnow: { items: open.items ?? [], total: Number(open.total ?? 0) },
+        read: read?.error ? read : { items: read.items ?? [], total: Number(read.total ?? 0) },
+        review: { items, total: Number(rv.total ?? 0) },
+        blocked: disc?.error ? disc : { items: disc.blocked?.items ?? [], total: Number(disc.blocked?.total ?? 0), legacy: disc.legacy ?? null },
+        // 误拦观察（原来在总览）：今天外发守护挡下了几句、公开渠道挂起了几句
+        today: { guard: countOf({ view: 'blocked', basis: 'guard', from: today }), publicHold: countOf({ view: 'blocked', basis: 'public', verdict: 'hold', from: today }) },
+        settings: rv.settings ?? settingLabels(), names: rv.names ?? entityNames(),
+      };
+    },
+
+    // ── 新管理页「场合」（D172）：场合（属性、生效档、覆盖、别记）、规则、她在守的叮嘱、新场合的默认，一个视图给全 ──────
+    async places() {
+      const st = await part(() => pm.status());
+      const items = [];
+      let next;
+      let total = 0;
+      for (let i = 0; i < 5; i++) {
+        const p = VIEWS.settings({ limit: 200, ...(next ? { next } : {}) });
+        items.push(...(p.items ?? []));
+        total = Number(p.total ?? items.length);
+        next = p.next;
+        if (!next) break;
+      }
+      const rules = VIEWS.rules({ limit: 200 });
+      const lim = await part(() => pm.admin.list({ view: 'limits', limit: 100 }));
+      // 叮嘱在哪儿说的、什么时候、那件事是什么（核心的 limits 只给引用、原话、谁叮嘱的、别告诉谁）
+      const limits = lim?.error ? lim : {
+        total: Number(lim.total ?? 0),
+        items: (lim.items ?? []).map((x) => {
+          let row = null;
+          try { row = pm.admin.get(x.ref)?.row ?? null; } catch { row = null; }
+          return { ...x, settingKey: row?.settingKey ?? row?.setting_key ?? null, at: num(row?.at ?? row?.recordedAt ?? row?.recorded_at ?? row?.created_at),
+            about: clip(row?.text ?? row?.narrative ?? row?.title ?? null, 120) };
+        }),
+      };
+      const retention = await part(() => pm.admin.retention.get());
+      return {
+        now: now(),
+        readOnly: !!(st && !st.error && st.readOnly),
+        places: { items, total },
+        defaults: modeConfig(config().core),
+        rules: { items: (rules.items ?? []).filter((r) => r.kind !== 'mode'), total: (rules.items ?? []).filter((r) => r.kind !== 'mode').length },
+        limits,
+        retention: retention?.error ? null : retention?.current ?? null,
+        settings: rules.settings, names: rules.names, pickable: rules.pickable, people: rules.people,
+      };
+    },
   };
 
   return {

@@ -11,7 +11,7 @@ test('总览：只有数字和短状态；宿主状态里的路径、长字符�
   const r = await s.view('overview');
   assert.equal(r.status, 200);
   const o = r.body.data;
-  assert.deepEqual(o.pending, { review: 6, needToKnow: 6, holds: 1, growth: 1 });
+  assert.deepEqual(o.pending, { review: 8, needToKnow: 7, holds: 1, growth: 1 });
   assert.deepEqual(o.mode, { global: 'live', byAttributes: { principalOneOnOne: 'live', closed: 'live', public: 'live' } });
   assert.equal(o.store.schemaVersion, 12);
   assert.equal(o.backup.last.path, 'pm-daily-20261104T0430Z-rs.pmpack', '备份路径只留文件名');
@@ -251,9 +251,9 @@ test('审核队列：挂起的发言按令牌对上原文、她的转念和命�
   assert.equal((await s.view('review', { kind: 'merge' })).body.data.items.length, 1);
   assert.equal((await s.view('review', { kind: 'bogus' })).status, 400);
   const n = (await s.view('needToKnow')).body.data;
-  assert.equal(n.total, 6);
+  assert.equal(n.total, 7);
   assert.ok(n.items.every((x) => x.status === 'open'));
-  assert.equal((await s.view('needToKnow', { status: 'all' })).body.data.total, 7);
+  assert.equal((await s.view('needToKnow', { status: 'all' })).body.data.total, 8);
 });
 
 test('场合视图：给出适配器报上来的属性、生效档和覆盖、别记；不带账号', async () => {

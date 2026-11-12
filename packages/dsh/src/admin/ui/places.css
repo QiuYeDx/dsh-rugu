@@ -1,2 +1,45 @@
-/* 场合（places.js）的样式。类名都带 plc- 前缀；公共组件的样式在 shell.html，不要另起一套。
-   确认过的样稿里这一页的样式可以照搬过来，改成 plc- 前缀。 */
+/* 场合（D172）：一行一个场合（公共的 .row / .list）、行尾「⌄」展开的细项、规则和叮嘱。类名带 plc- 前缀。 */
+.plc-intro { margin-bottom: 32px; }
+.plc-body > .note { margin-bottom: 24px; }
+.plc-intro .sdesc { margin: 0 0 8px; }
+.plc-intro .note { margin: 12px 0; }
+.plc-defaults { display: flex; align-items: center; flex-wrap: wrap; row-gap: 4px; }
+.plc-defaults .link { font-size: 13px; }
+.plc-toolbar { margin: -8px 0 24px; }
+.plc-toolbar .search { flex: 1 1 280px; max-width: 360px; }
+.plc-groups > .sec:first-child { margin-top: 0; }
+.plc-none { padding: 24px 0; }
+
+.plc-hint { color: var(--muted-foreground); font-size: 13px; font-weight: 400; }
+.plc-st.off, .plc-st.master { color: var(--muted-foreground); }
+.plc-st.recall { color: var(--foreground); }
+.plc-row .trail { gap: 12px; align-self: center; }
+.plc-exp { color: var(--muted-foreground); }
+.plc-exp svg { transition: transform var(--duration-base) var(--ease-out-quint); }
+.plc-exp[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* 展开的细项：和行的正文对齐（行内留白 12 + 图标 32 + 间距 14） */
+.plc-detail { padding: 0 12px 12px 58px; }
+.plc-detail .form > .frow:first-child { padding-top: 8px; }
+.plc-detail .frow { padding: 12px 0; }
+.plc-item.open + .plc-item > .row::before { opacity: 1; }
+.plc-item + .plc-item > .row::before { content: ""; position: absolute; left: 12px; right: 12px; top: 0; border-top: 1px solid var(--border); }
+.plc-facts .ftitle { font-size: 14px; }
+.plc-warn { color: var(--warning); }
+.plc-link { font-size: 13px; }
+
+.plc-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.plc-bar .sdesc { margin: 4px 0 0; }
+.plc-bar .btn { flex: none; }
+
+/* 加规则的对话框 */
+.plc-form { margin-top: 16px; }
+.plc-form .field label { color: var(--foreground); }
+.plc-form .seg { display: flex; width: max-content; max-width: 100%; }
+.plc-select { appearance: auto; padding-right: 8px; color: var(--foreground); }
+.plc-people { display: flex; flex-wrap: wrap; gap: 8px 16px; max-height: 168px; overflow: auto; padding: 4px 2px; }
+
+@media (max-width: 560px) {
+  .plc-detail { padding-left: 12px; }
+  .plc-bar { flex-direction: column; gap: 12px; }
+  .plc-toolbar .search { max-width: none; flex-basis: 100%; }
+}

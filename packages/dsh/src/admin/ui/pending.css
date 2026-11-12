@@ -1,2 +1,48 @@
-/* 待处理（pending.js）的样式。类名都带 pend- 前缀；公共组件的样式在 shell.html，不要另起一套。
-   确认过的样稿里这一页的样式可以照搬过来，改成 pend- 前缀。 */
+/* 待处理（D172）：一条 = 一张卡。样式照样稿的 .pcard，类名带 pend- 前缀。公共的 .card / .cards / .meta / .btn 在 shell.html。 */
+.pend-card { padding: 20px 24px; overflow: hidden; scroll-margin: 96px;
+  transition: opacity var(--duration-base), transform var(--duration-base) var(--ease-out-quint), height var(--duration-base) var(--ease-out-quint),
+    margin var(--duration-base), padding var(--duration-base), border-width var(--duration-base); }
+@supports (corner-shape: superellipse(2)) { .pend-card { corner-shape: superellipse(1.8553); border-radius: calc(var(--radius-2xl) * 1.68); } }
+.pend-card:focus { outline: none; }
+.pend-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* 收起：先淡出，再把高度收掉（下面的卡片顺着补上） */
+.pend-card.pend-out { opacity: 0; transform: translateY(-6px) scale(0.99); }
+.pend-card.pend-gone { height: 0 !important; padding-top: 0; padding-bottom: 0; margin-top: -16px; border-width: 0; }
+/* 从首页点过来：亮一下 */
+.pend-card.pend-hl { animation: pendHl 2.4s var(--ease-out-quint); }
+@keyframes pendHl { 0%, 30% { box-shadow: 0 0 0 2px var(--blue), var(--shadow-card); } 100% { box-shadow: 0 0 0 0 transparent, var(--shadow-card); } }
+
+.pend-k { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; color: var(--muted-foreground); }
+.pend-k svg { flex: none; }
+.pend-k .pend-when { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pend-urgent { color: var(--warning); font-weight: 500; white-space: nowrap; }
+.pend-t { margin-top: 8px; font-size: 15px; line-height: 24px; font-weight: 500; overflow-wrap: anywhere; }
+.pend-d { margin-top: 2px; font-size: 14px; line-height: 22px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.pend-q { margin: 12px 0 0; padding: 12px 16px; border-radius: 12px; background: var(--secondary); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.pend-q .who { display: block; margin-top: 4px; font-size: 13px; color: var(--muted-foreground); }
+.pend-diff { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 22px; }
+.pend-diff > div { display: flex; gap: 10px; padding: 6px 12px; border-radius: 8px; background: var(--secondary); overflow-wrap: anywhere; }
+.pend-diff .sign { width: 10px; flex: none; color: var(--muted-foreground); font-family: var(--font-mono); }
+.pend-diff .del { color: var(--muted-foreground); }
+.pend-diff .del span:last-child { text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--muted-foreground) 60%, transparent); }
+.pend-f { margin-top: 16px; display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.pend-f > .meta { flex: 1 1 200px; min-width: 0; margin: 0; }
+.pend-acts { display: flex; gap: 8px; margin-left: auto; }
+.pend-link { font-size: 13px; }
+.pend-link[disabled] { opacity: 0.5; pointer-events: none; }
+
+.pend-desc { margin: 0 0 16px; }
+.pend-today { margin: -8px 0 16px; }
+.pend-read, .pend-legacy { margin-top: 24px; }
+.pend-read .list { margin-top: 12px; }
+.pend-legacy .cards { margin-top: 16px; }
+.pend-body > .note { margin-bottom: 32px; }
+.pend-body > .note + .sec { margin-top: 0; }
+
+/* 窄屏（DSH 设置面板里的 iframe、手机）：两个按钮各占一半，留白收一点 */
+@media (max-width: 560px) {
+  .pend-card { padding: 16px 18px; }
+  .pend-acts { width: 100%; }
+  .pend-acts .btn { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .pend-card.pend-hl { animation: none; outline: 2px solid var(--blue); outline-offset: 2px; } }

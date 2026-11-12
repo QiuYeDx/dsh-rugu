@@ -281,6 +281,16 @@ export function makeFakePm(o = {}) {
     { id: 5, kind: 'do_not_remember', target: { ref: 'a29' }, value: null, createdBy: 'system', at: now - DAY, note: null, revokedAt: null },
   ] : [];
   settings.forEach((s) => { if (s.key === 'sk-group-small') s.mode = 'live'; if (s.key === 'sk-thread') s.doNotRemember = true; });
+  // D172（新管理页的待处理、场合）：每种待处理条目至少一条——补上「新规矩」「分寸要改」「只有你能做的操作」；一个你关掉的场合
+  if (full) {
+    ntk.push({ id: 8, kind: 'foreign_write', status: 'open', severity: 1, reason: 'learned-setting-rule', createdAt: now - 4 * DAY, ref: null, perceptId: null, quote: null, quoteAt: null,
+      settingKey: null, sourceEntityId: null, sourceName: null, forwardedBy: null, growth: null, withdraw: null });
+    review.push(
+      { id: 17, kind: 'norm_change', reason: 'unauthorized-relax', status: 'pending', createdAt: now - 7 * DAY, payload: { ref: 'a20', direction: 'relax', change: { restriction: 'none' } }, expiresAt: null },
+      { id: 18, kind: 'owner_op', reason: 'tool-by-non-principal', status: 'pending', createdAt: now - 8 * DAY, payload: { tool: 'memory_note', op: 'note', perceptId: 70 }, expiresAt: null });
+    rules.push({ id: 6, kind: 'mode', target: { settingKey: 'sk-group-noname2' }, value: 'off', createdBy: 'owner', at: now - 2 * DAY, note: null, revokedAt: null });
+    settings.forEach((s) => { if (s.key === 'sk-group-noname2') s.mode = 'off'; });
+  }
   const growth = full ? [
     { version: 1, text: '喜欢安静地听大家聊天', change: { op: 'add', before: null, after: '喜欢安静地听大家聊天' }, evidenceRefs: ['e1', 'e2', 'e3', 'e5', 'e8'], createdAt: now - 40 * DAY, createdBy: 'sleep', revokedAt: null },
     { version: 2, text: '喜欢安静地听大家聊天\n说话直来直去', change: { op: 'add', before: null, after: '说话直来直去' }, evidenceRefs: ['e4', 'e6', 'e9', 'e10', 'e11'], createdAt: now - 25 * DAY, createdBy: 'sleep', revokedAt: null },
