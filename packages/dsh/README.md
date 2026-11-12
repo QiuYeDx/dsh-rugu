@@ -90,7 +90,7 @@ dsh plugin --profile desktop add dsh-rugu
 ## 使用条件
 
 - DeepSeek Harness，插件运行需要 Node ≥ 22.16（DSH 自带）。
-- 后台提炼和整理走 DSH 的模型通道，花的是你 DSH 账号的余额，默认有每日上限，管理页能看到每一笔。详见[花费](https://github.com/QiuYeDx/dsh-rugu/blob/main/docs/花费.md)。
+- 后台提炼和整理走 DSH 的模型通道，用你在 DSH 里已经配好的服务商和模型：有 DeepSeek 的就建议它的 deepseek-flash（又快又便宜），别家的也能选；在管理页「设置 → 后台模型」里选一对、点「试一下」，配错了总览会直接告诉你。花的是那个服务商的余额，默认有每日上限，管理页能看到每一笔。详见[花费](https://github.com/QiuYeDx/dsh-rugu/blob/main/docs/花费.md)。
 - 数据都在你自己的电脑上（`~/.dsh/persona-memory/`）。卸载插件不会删数据。
 - QQ 这条路线依赖第三方桥接，账号风险请自己掂量，也请告诉群友他们的发言会被记录。
 

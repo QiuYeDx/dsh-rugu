@@ -12,7 +12,7 @@ import { textHash, APPRAISAL_VERDICTS } from '../contract/index.js';
 import { parseRef, refOf, registerPromptVersion, getMeta, setMeta } from '../store/index.js';
 import { MODE_RANK } from '../config/defaults.js';
 import {
-  dcfg, newToken, clip, promptText, placeText, fence, parseJsonlObjects, timeoutSignal, metric, warn, errCode, soft, softAsync, hkey, parseJson, raceDeadline,
+  dcfg, newToken, clip, promptText, placeText, fence, parseJsonlObjects, timeoutSignal, metric, warn, errCode, soft, softAsync, hkey, parseJson, raceDeadline, llmReady,
   TURN_TAINT_MARK, HOUR, DAY,
 } from './util.js';
 import { selfId, isIndividual, actorEntity, settingInfo, settingChain, memoryFacts, displayName, rightsEquivalents, relatedEntities } from './facts.js';
@@ -464,7 +464,8 @@ function describeAudience(core, a) {
 async function review(core, q, pre, signal) {
   const cfg = dcfg(core);
   const llm = core.ports.llm;
-  if (!llm) return null;
+  // 没有模型、或者端口说现在用不了（D168）：审不了（调用方 fail closed），不占外发审视的预留
+  if (!llmReady(core, 'review')) return null;
   const memo = new Map();
   const say = promptText(core, q.text, 600);
   let selfText = '';

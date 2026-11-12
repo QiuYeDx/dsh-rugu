@@ -24,6 +24,7 @@ import * as tl from './tools.js';
 import * as ls from './lessons.js';
 import * as st from './stalled.js';
 import * as sp from './support.js';
+import * as tr from './trial.js';
 
 /**
  * 一个待提炼的段（切分的产物）。
@@ -151,6 +152,23 @@ export function segment(core, opt) { return seg.segment(core, opt); }
  *            truncated: number, splits: number}}
  */
 export function stalledSummary(core) { return st.stalledSummary(core); }
+
+/**
+ * 【D168】后台模型恢复了（配错的修好了、换了模型并试通、从「不用后台模型」切回来）：因为它推迟的提炼任务提到现在；
+ * 搁置着的段里最后一次错误是 errorCodes 里的（集成层给的配置类错误码）也提到现在。补的时候照常受预算和后台队列的间隔管。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{errorCodes?: string[], at?: number}} [opt]
+ * @returns {{jobs: number, stalled: number}}
+ */
+export function resumeExtraction(core, opt) { return st.resumeExtraction(core, opt ?? {}); }
+
+/**
+ * 【D168】「试一下」后台模型用的提炼形状的请求（真实的提炼提示词 + 编的几句对话）和它的解析（真实的解析器）。纯函数，不碰库。
+ * @returns {{system: string, messages: {role: 'user', content: string}[], maxTokens: number}}
+ */
+export function extractTrialRequest() { return tr.extractTrialRequest(); }
+/** @param {string} text @returns {{valid: number, bad: number}} */
+export function parseExtractTrial(text) { return tr.parseExtractTrial(text); }
 
 /**
  * 跑一个提炼任务（maintenance.runJobs 调用，kind='extract'）：取背景（retrieve.backgroundForExtraction，分两组）→

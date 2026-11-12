@@ -24,7 +24,7 @@
 // 拥有的表：glances（迁移 013、014、021）。
 import { registerPromptVersion } from '../store/index.js';
 import {
-  dcfg, promptText, fence, parseJsonlObjects, timeoutSignal, metric, warn, errCode, soft, clamp01, hkey, raceDeadline,
+  dcfg, promptText, fence, parseJsonlObjects, timeoutSignal, metric, warn, errCode, soft, clamp01, hkey, raceDeadline, llmReady,
 } from './util.js';
 import { selfId } from './facts.js';
 import { tightenNorm } from './norms.js';
@@ -430,6 +430,8 @@ async function look(core, key, targets, teller, me) {
   };
   const llm = core.ports.llm;
   if (!llm) { fail('failed'); return; }
+  // 端口说后台模型现在用不了（D168：配错了又没有顶上的、主人关了）：按没看成算，不占预算名额
+  if (!llmReady(core, 'glance')) { fail('unavailable'); return; }
   // 卡片：每一行要看的 + 前面 contextLines 行（按条数）；按 id 排好
   const ctxN = Math.max(0, Math.floor(cfg.contextLines ?? 6));
   const lineIds = new Set(ids);

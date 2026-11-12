@@ -769,7 +769,7 @@ html.pm-sm-maxed{overflow:hidden}
   const HOOK = { 'agent/pre-step': '回合前（注入）', 'tools/pre-execute': '工具执行前（外发审视）', 'tools/post-execute': '工具执行后（入库）', 'session/event': '会话事件',
     'agent/created': '会话创建', 'compaction/start': '压缩开始', 'compaction/end': '压缩结束', 'systemPrompt.context': '常驻区' };
   // 插件自己的后台模型调用（ports/budget.js 的 BG_USES 顺序）
-  const USE = { glance: '第一眼', extract: '提炼', sleep: '夜间整理', summary: '摘要', appraise: '第二段评估', review: '外发审视', rewrite: '改写', perceive: '看过的媒体' };
+  const USE = { glance: '第一眼', extract: '提炼', sleep: '夜间整理', summary: '摘要', appraise: '第二段评估', review: '外发审视', rewrite: '改写', perceive: '看过的媒体', test: '试一下（后台模型）' };
   const USE_ORDER = Object.keys(USE);
   // 用途认不出（别的宿主、以后加的）就写「其他」，不显示代码
   const useName = (k) => USE[k] ?? '其他';
@@ -1258,6 +1258,9 @@ html.pm-sm-maxed{overflow:hidden}
   const dur = (ms) => (ms == null ? '—' : ms < 3600_000 ? `${Math.max(1, Math.round(ms / 60_000))} 分钟` : ms < 2 * 86400_000 ? `${Math.round(ms / 3600_000)} 小时` : `${Math.round(ms / 86400_000)} 天`);
   const fmtMb = (mb) => (mb == null ? '—' : mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
   const yuan = (x) => (x == null ? '—' : x === 0 ? '¥0' : x < 0.005 ? '不到 ¥0.01' : `¥${x >= 10 ? x.toFixed(1) : x.toFixed(2)}`);
+  // D168：后台用的不是内置价目认识的那一对（价目只有 DeepSeek flash 的）时不显示元——显示错的元比不显示更糟；次数和 token 照常
+  const moneyOf = (bud) => (bud?.priceKnown === false ? () => '—' : yuan);
+  const UNPRICED = '后台用的不是插件认识价目的模型（内置的价目只有 DeepSeek flash 的）：不知道价目，只记用量；按次数和 token 的上限照常管。';
   // 三档对外的名字（D165）：节省 / 平衡（默认）/ 效果优先；内部键不变（loose 原来叫「宽松」、unlimited 原来叫「不设上限」）
   const PRESET = { loose: '平衡', saving: '节省', unlimited: '效果优先' };
   const BUDGET_PRESETS = ['saving', 'loose', 'unlimited'];
@@ -1288,12 +1291,13 @@ html.pm-sm-maxed{overflow:hidden}
   function budgetBlock(bud, compact) {
     if (bud == null) return h('div', { class: 'pm-faint' }, '宿主没提供预算状态');
     if (bud.error) return h('div', { class: 'pm-err' }, errText(bud));
+    const yuan = moneyOf(bud);
     const t = bud.today ?? {};
     const lim = bud.limits ?? {};
     const toCost = h('button', { type: 'button', class: 'pm-link', onclick: () => go('config', { focus: 'cost' }) }, '看明细');
     if (compact) {
       return [
-        h('div', null, h('div', { class: 'pm-big' }, yuan(t.bgYuan), h('small', null, '今天，估算')),
+        h('div', null, h('div', { class: 'pm-big' }, yuan(t.bgYuan), h('small', null, bud.priceKnown === false ? '不知道价目，只记用量' : '今天，估算')),
           h('div', { class: 'pm-faint' }, t.mainYuan != null ? `她的聊天约 ${yuan(t.mainYuan)}${bud.ratioToMain != null ? `，后台相当于 ${pct(bud.ratioToMain)}` : ''}` : '她的聊天还没有用量')),
         meter('后台调用（次）', t.calls, lim.dailyCalls),
         kv([['余额还够', balanceText(bud)], t.denied ? ['被护栏挡下', badge(`${fmtNum(t.denied)} 次`, 'warn')] : null,
@@ -1324,6 +1328,7 @@ html.pm-sm-maxed{overflow:hidden}
   function costCard(bud) {
     const desc = '只算记忆插件自己在后台调的模型（第一眼、提炼、夜间整理……）。调用都走 DSH 的模型通道、用的是 DSH 账号余额；向量在本机算，不花钱。她回你的话是 DSH 自己的会话，花费算在「她的聊天」里，不在后台里。';
     if (bud == null || bud.error) return card({ title: '后台花费', id: 'pm-cost', desc }, h('div', { class: bud?.error ? 'pm-err' : 'pm-faint' }, bud?.error ? errText(bud) : '宿主没提供预算状态'));
+    const yuan = moneyOf(bud);
     const t = bud.today ?? {};
     const rec = bud.recent ?? { days: [], total: {} };
     const tot = rec.total ?? {};
@@ -1356,7 +1361,8 @@ html.pm-sm-maxed{overflow:hidden}
       t.bgPeakYuan ? `其中高峰时段约 ${yuan(t.bgPeakYuan)}` : null,
       t.failed ? `失败的调用 ${fmtNum(t.failed)} 次（超时、中止、出错；DSH 报了用量的照样算钱）` : null,
       estimated ? `${fmtNum(estimated)} 次 DSH 没报用量，按字数估的` : null,
-      partial ? '今天升级以前的那部分只记了次数，token 和钱只在合计里' : null].filter(Boolean);
+      partial ? '今天升级以前的那部分只记了次数，token 和钱只在合计里' : null,
+      bud.priceKnown === false ? UNPRICED : null].filter(Boolean);
     const p = bud.prices;
     const peak = p?.peakHours?.length ? p.peakHours.map(([a, b]) => `${a}–${b}`).join('、') : null;
     return card({ title: '后台花费', id: 'pm-cost', aside: '元是估算的', desc },
@@ -3001,6 +3007,8 @@ html.pm-sm-maxed{overflow:hidden}
               more: h('div', { class: 'pm-faint' }, '常驻区和每一轮的记忆块下一条消息起换；三个记忆工具的说明在新开的会话里生效。'),
               control: d.usageStyle ? seg([['guided', '详细指引'], ['purpose', '只讲目的']], d.usageStyle, (v) => setKey('context.usageStyle', v), { small: true, label: '用法说明的写法' }) : h('span', { class: 'pm-faint' }, '读不到配置') }))),
         // D127、D129：嵌入三档和 QQ 桥接（什么都不配也能用，这里决定要不要接）
+        // D168：后台模型选哪一对、试一下、不工作时顶上
+        card({ title: '后台模型', id: 'pm-llm', desc: '记忆插件在后台调的模型：第一眼、提炼成事实和经历、夜间整理、说话前的细看。走 DSH 的模型通道，花的是 DSH 里那个服务商的余额。' }, LlmCard()),
         card({ title: '嵌入', desc: '给记忆算「意思」的向量。三档都能用，差别在换个说法时想不想得起来。' }, EmbeddingCard()),
         card({ title: 'QQ 桥接' }, BridgeCard()),
         // 【D120】后台花费和护栏：看得见花了多少、在这里就能换预设
@@ -3164,7 +3172,12 @@ html.pm-sm-maxed{overflow:hidden}
               h('td', { class: k.breakerOpened ? '' : 'dim' }, fmtNum(k.breakerOpened ?? 0)),
               h('td', { class: k.openSessions ? 'hot' : 'dim' }, fmtNum(k.openSessions ?? 0))))))))) : null,
         h('div', { class: 'pm-grid' },
-          card({ title: '后台模型', aside: '这次启动以来' }, llmBlock(x?.llm)),
+          card({ title: '后台模型', aside: '这次启动以来' }, llmBlock(x?.llm),
+            // D168：一键复制不含内容的状态摘要（插件版本、服务商类型、模型名、思考档、上次试调、最近 24 小时按错误码的计数），报问题时贴出来
+            h('div', { class: 'pm-row end' }, btn('复制后台模型状态', async () => {
+              const r = await api.get('llmSetup');
+              try { await navigator.clipboard.writeText(JSON.stringify(r?.summary ?? null, null, 2)); toast('已复制（不含聊天内容、地址和 Key）'); } catch { toast('复制不了，浏览器不让读写剪贴板', true); }
+            }, { kind: 'sm', busy: '读取中…' }))),
           card({ title: '后台预算', aside: d.budget?.preset ? presetShort(d.budget.preset, d.budget.custom) : '' }, budgetBlock(d.budget, false)),
           card({ title: '嵌入服务' }, embedBlock(x?.embedPort, x?.rerank)),
           card({ title: '会话' }, x == null ? h('div', { class: 'pm-faint' }, '宿主没提供状态') : x.error && !('ready' in x) ? h('div', { class: 'pm-err' }, errText(x)) : kv([
@@ -3448,6 +3461,101 @@ html.pm-sm-maxed{overflow:hidden}
     return root;
   }
 
+  // ── 后台模型（D168）：选哪一对、试一下、不工作时顶上的开关；最小的界面，正式的等管理页重做 ─────────
+  function LlmCard({ wizard = false } = {}) {
+    const root = h('div');
+    let list = null; let st = null; let test = null; let pick = { provider: '', model: '' };
+    const pairText = (p) => (p ? `${p.provider} / ${p.model}` : '—');
+    const same = (a, b) => !!a && !!b && a.provider === b.provider && a.model === b.model;
+    async function load(fresh) {
+      if (fresh || !list) clear(root, loading('读 DSH 里有哪些模型…'));
+      let r; let s;
+      try { [r, s] = await Promise.all([api.act('llm.list'), api.get('llmSetup')]); } catch (e) { clear(root, errorBox(e, () => load(true))); return; }
+      list = r; st = s?.status && !s.status.error ? s.status : null;
+      const cur = list?.current?.target && typeof list.current.target === 'object' ? list.current.target : null;
+      const start = cur ?? (list?.current?.effective?.provider ? list.current.effective : null) ?? list?.suggest ?? null;
+      if (!pick.provider && start) pick = { provider: start.provider, model: start.model };
+      render();
+    }
+    /** 保存（主人在只给主人的页面上点的，就是确认）；换了一对就顺手试一下。 */
+    async function save(body, { andTest = false } = {}) {
+      await api.act('llm.save', body);
+      toast('已保存，马上生效');
+      if (andTest) test = await api.act('llm.test', {});
+      await load(false);
+    }
+    function statusLine() {
+      if (!st) return h('div', { class: 'pm-faint' }, '读不到状态');
+      if (st.state === 'off') return h('div', { class: 'pm-alert info' }, h('span', null, '现在不用后台模型。'));
+      if (st.state === 'down') return h('div', { class: `pm-alert ${st.fallback ? 'warn' : 'bad'}` }, h('span', null,
+        `不工作${st.since ? `（${when(st.since)} 起）` : ''}：${st.reason ?? st.code ?? '配置有问题'}。`,
+        st.fallback ? `临时在用你聊天的模型（${pairText(st.fallback)}），可能更贵；修好以后自动换回。` : '这段时间她记不住新的事、回想变少，聊天照常。'));
+      if (st.state === 'flaky') return h('div', { class: 'pm-alert warn' }, h('span', null, `最近不稳定（一半的调用没成${st.code ? `，${st.code}` : ''}）：会自己重试。`));
+      const last = (st.pairs ?? []).map((r) => r.lastOkAt).filter(Boolean).sort((a, b) => b - a)[0];
+      // D169 学到的：这个模型关不掉思考（插件已经给输出留了余量）
+      const heavy = (st.pairs ?? []).some((r) => r.thinkHeavy);
+      return h('div', { class: 'pm-faint' }, last ? `正常，上一次成功在 ${when(last)}。` : '还没用过：可以点「试一下」。',
+        heavy ? ' 这个模型关不掉思考，会慢一些、贵一些（插件已经给它的输出多留了余量）；在意的话可以换个不带思考的小模型。' : '');
+    }
+    function testBox() {
+      if (!test) return null;
+      const s = test.steps ?? {};
+      const step = (name, x) => (x ? `${name}：${x.ok ? `${(x.ms / 1000).toFixed(1)} 秒，读懂 ${x.valid ?? 0} 行${x.bad ? `、读不懂 ${x.bad} 行` : ''}${x.reported ? '' : '，没报用量'}` : `没通（${x.code}）`}` : null);
+      return h('div', { class: `pm-alert ${test.level === 'ok' ? 'info' : test.level === 'warn' ? 'warn' : 'bad'}` },
+        h('span', null, h('b', null, test.verdict), test.pair ? `（${pairText(test.pair)}）` : '', h('br'), h('span', { class: 'pm-faint' }, meta(step('第一眼', s.glance), step('提炼', s.extract)))));
+    }
+    function render() {
+      const providers = list?.providers ?? [];
+      const cur = list?.current ?? {};
+      const target = cur.target;
+      const off = target === 'off';
+      const chosen = target && typeof target === 'object' ? target : null;
+      const eff = cur.effective?.provider ? cur.effective : null;
+      const p = providers.find((x) => x.id === pick.provider);
+      const models = p?.models ?? [];
+      // 模型目录空的（没登录、服务商不给目录）：手填模型名
+      const modelCtl = models.length
+        ? select([['', '选一个模型'], ...models.map((m) => [m.id, m.name && m.name !== m.id ? `${m.name}（${m.id}）` : m.id])], pick.model, (v) => { pick.model = v; test = null; render(); }, { label: '模型' })
+        : (() => { const i = h('input', { class: 'pm-input', value: pick.model, placeholder: '模型名，例如 deepseek-flash', 'aria-label': '模型', autocomplete: 'off', spellcheck: 'false' }); i.addEventListener('input', () => { pick.model = i.value.trim(); }); return i; })();
+      const provCtl = select([['', providers.length ? '选一个服务商' : 'DSH 里还没有服务商'], ...providers.map((x) => [x.id, x.name && x.name !== x.id ? `${x.name}（${x.id}）` : x.id])], pick.provider,
+        (v) => { pick = { provider: v, model: '' }; const pp = providers.find((x) => x.id === v); const sug = list?.suggest; if (sug && sug.provider === v) pick.model = sug.model; else if (pp?.models?.length === 1) pick.model = pp.models[0].id; test = null; render(); }, { label: '服务商' });
+      const ready = !!pick.provider && !!pick.model;
+      const now = off ? '不用后台模型' : chosen ? pairText(chosen) : eff ? `${pairText(eff)}（还没选，按以前的做法自动定的）` : '还没选';
+      const sug = list?.suggest;
+      const per = cur.perUse ?? {};
+      const perRow = (u, name, hint) => opt({ title: name, hint: per[u] ? `单独用 ${pairText(per[u])}` : `跟着上面的（${hint}）`,
+        control: h('div', { class: 'pm-row' },
+          per[u] ? btn('跟着上面的', () => save({ perUse: { [u]: null } }), { kind: 'sm', busy: '保存中…' }) : null,
+          btn('用上面选的这一对', () => save({ perUse: { [u]: { ...pick } } }), { kind: 'sm', busy: '保存中…', disabled: !ready || same(per[u], pick) })) });
+      clear(root, h('div', { class: 'pm-stack' },
+        kv([['现在用的', now], st?.catchUp > 0 ? ['补积压', `正在补之前没整理的 ${st.catchUp} 段（受花费上限管）`] : null]),
+        off ? null : statusLine(),
+        sug && !chosen && !off ? h('div', { class: 'pm-faint' }, `建议：${pairText(sug)}${sug.why === 'chat' ? '（这是你聊天用的模型，可能偏贵偏慢；同一个服务商下可以换个小一点的）' : '（DeepSeek 的 flash，又快又便宜）'}`) : null,
+        h('div', { class: 'pm-row', style: { alignItems: 'flex-end', flexWrap: 'wrap' } },
+          h('div', { class: 'pm-field pm-sp' }, h('label', null, '服务商'), provCtl),
+          h('div', { class: 'pm-field pm-sp' }, h('label', null, '模型'), modelCtl)),
+        p?.error ? h('div', { class: 'pm-faint' }, `读不到这个服务商的模型目录（${p.error}），可以手填模型名。`) : null,
+        testBox(),
+        h('div', { class: 'pm-row' },
+          btn('试一下', async () => { test = await api.act('llm.test', { ...pick }); render(); }, { busy: '试着…（十几秒）', disabled: !ready }),
+          btn(off || !same(chosen, pick) ? '用这个' : '在用', () => save({ target: { ...pick } }, { andTest: true }), { kind: 'primary', busy: '保存中…', disabled: !ready || (!off && same(chosen, pick)) }),
+          h('span', { class: 'pm-faint pm-sp' }, '试一下会真的调两次很小的请求（编的内容），一次不到 1 分钱，算进后台花费。')),
+        opt({ title: '不工作时用聊天的模型顶上', hint: '选的这一对配错了（不认识的模型、没登录、Key 失效……）时，临时用你在 DSH 里聊天的那个模型，可能更贵；修好以后自动换回。暂时连不上不顶。',
+          control: seg([['on', '顶上'], ['off', '不顶']], cur.fallbackToChat === false ? 'off' : 'on', (v) => save({ fallbackToChat: v === 'on' }), { small: true, label: '不工作时用聊天的模型顶上' }) }),
+        h('details', null, h('summary', null, '高级：第一眼、提炼单独用一对'),
+          h('div', { class: 'pm-opts' }, perRow('glance', '第一眼', '要快'), perRow('extract', '提炼', '要好'))),
+        h('div', { class: 'pm-sec' },
+          h('h3', null, '不用后台模型'),
+          h('p', { class: 'pm-desc' }, '她照常记下原话，能按原话、人、时间找回来；但不会自己整理出事实和经历，第一眼和说话前的细看也不做——要先细看才能给的那些记忆这时先不给，往公开的地方说的话照旧先改口。之后重新打开会自动补上没整理的。'),
+          h('div', { class: 'pm-row' }, off
+            ? btn('重新用后台模型', () => { const t = ready ? pick : sug; return save({ target: { provider: t.provider, model: t.model } }, { andTest: true }); }, { kind: 'primary', busy: '保存中…', disabled: !(ready || sug) })
+            : btn('不用后台模型', () => save({ target: 'off' }), { busy: '保存中…' }))),
+        wizard ? null : h('div', { class: 'pm-row end' }, btn('刷新', () => load(true), { kind: 'sm', busy: '读取中…' }))));
+    }
+    load(true);
+    return root;
+  }
+
   // ── QQ 桥接（D129）：找目录、白名单补丁 ─────────────────────────────────
   function BridgeCard({ wizard = false, offGroups = null } = {}) {
     const root = h('div');
@@ -3547,6 +3655,7 @@ html.pm-sm-maxed{overflow:hidden}
         h('label', { class: 'pm-check' }, check, '我知道了')),
       card({ title: '怎么称呼（可选）', desc: '都可以不填，之后用默认的说法。' },
         h('div', { class: 'pm-stack' }, field('label', '她怎么称呼你', '默认「主人」'), field('her', '她的名字和昵称（认「叫她名字」用，多个用逗号隔开）', '可以不填'), field('preset', 'DSH「新建任务」下拉里显示的名字', '默认「人设聊天」'))),
+      card({ title: '后台模型', desc: '她在后台整理记忆用的模型（第一眼、提炼、夜间整理）。下面已经填好了建议的那一对，点「试一下」看看能不能用；不选的话完成设置时就用建议的这一对，之后可以在「设置」里改。' }, LlmCard({ wizard: true })),
       card({ title: '想起来的方式（嵌入）', desc: '给每段记忆算一个「意思」的向量，换个说法也想得起来。选哪一档都能用，之后可以改。' }, EmbeddingCard({ wizard: true })),
       card({ title: 'QQ 桥接（可选）' }, BridgeCard({ wizard: true, offGroups })),
       card({}, h('div', { class: 'pm-row' }, finish, h('span', { class: 'pm-faint' }, '勾选上面的「我知道了」之后才能完成。'))));

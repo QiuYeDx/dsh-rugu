@@ -13,6 +13,8 @@
 // 计数只有数字，按本机的日子存在 <数据目录>/host-budget.json，重启不丢（D120：最近 90 天的历史，每天按用途分开）。
 //   - 准的：次数和 token 数（宿主 usage 块报的未命中 / 命中 / 输出；宿主没报用量的按字数估，单独记 estimated）；
 //   - 估的：元（按配置的价目 host.budget.prices 和峰谷时段折算；DeepSeek 法定节假日全天按空闲价，这里不认节假日，会略高估）。
+//     价目只认 DeepSeek flash（D168）：后台用的是别的一对（或者在用聊天的模型顶着）时 status().priceKnown = false，管理页不显示元；
+//     次数和 token 的上限和服务商无关，照常管。主人选了「不用后台模型」时一次都不放行（原因记成 off；「试一下」除外）。
 //   - 每个用途（byUse）：真正发出去的调用次数、其中失败的（超时、中止、报错）、未命中 / 命中 / 输出 token、估算元；
 //     失败的调用宿主报了用量也照记（结果丢了，钱照样花了）。
 //   - 节省档的 stage2Scope='direct'：第二段评估只在这一轮直接对她说（或她自己要回想）时放行——核心在 allow 的 meta.direct 里告诉这里；
@@ -23,7 +25,8 @@ import { localDay, readJson, writeJsonAtomic } from '../host/util.js';
 
 const M = 1_000_000;
 /** 插件自己的后台调用的全部用途（管理页按这个顺序列）。 */
-export const BG_USES = Object.freeze(['glance', 'extract', 'sleep', 'summary', 'appraise', 'review', 'rewrite', 'perceive']);
+// test：管理页上的「试一下」后台模型（D168），两次很小的真实请求，照样过上限、照样记账
+export const BG_USES = Object.freeze(['glance', 'extract', 'sleep', 'summary', 'appraise', 'review', 'rewrite', 'perceive', 'test']);
 export const HISTORY_DAYS = 90;
 const USE_KEY = /^[a-z][\w-]{0,31}$/;
 
@@ -84,10 +87,14 @@ function pick(obj, p) {
 
 /**
  * @param {{coreConfig: {get: () => object}, hostConfig: () => object, file?: string|null, now: () => number,
- *          log?: {warn: Function, info: Function}, fsImpl?: typeof fs, providerOf?: () => (string|null)}} opt
+ *          log?: {warn: Function, info: Function}, fsImpl?: typeof fs, providerOf?: () => (string|null),
+ *          pricing?: () => ({known: boolean}|null), llmOff?: () => boolean}} opt
  *   providerOf：后台用的是哪个提供方（只把同一个提供方的会话用量算进账户花费）
+ *   pricing（D168）：正在用的那几对的价目认不认得——不认得时元照样按价目折算（护栏只看次数和 token），但管理页不显示元
+ *   llmOff（D168）：主人选了「不用后台模型」——一次都不放行（原因记成 off）
  */
-export function createBudget({ coreConfig, hostConfig, file = null, now, log = { warn() {}, info() {} }, fsImpl = fs, providerOf = () => null }) {
+export function createBudget({ coreConfig, hostConfig, file = null, now, log = { warn() {}, info() {} }, fsImpl = fs, providerOf = () => null,
+  pricing = () => null, llmOff = () => false }) {
   let d = null;
   let history = [];               // 最近 90 天（D120）：historyOf() 的样子；更早的文件里只有 {day, bgYuan, mainYuan, acctYuan}
   let dirty = false;
@@ -206,6 +213,10 @@ export function createBudget({ coreConfig, hostConfig, file = null, now, log = {
       const t = today();
       const L = limits();
       const est = Math.max(0, Number(estTokens) || 0);
+      let off = false;
+      try { off = llmOff() === true; } catch { off = false; }
+      // 「试一下」不挡：关着的时候也能先试一对再决定开不开
+      if (off && use !== 'test') return deny(use, 'off');
       if (use === 'review') {
         if (t.review >= L.egressReservePerDay) return deny(use, 'reserve');
         t.review += 1;
@@ -344,6 +355,8 @@ export function createBudget({ coreConfig, hostConfig, file = null, now, log = {
         uses: BG_USES,
         // 元是按这份价目估的（元 / 百万 token；改在 ~/.dsh/persona-memory.json 的 host.budget.prices）
         prices: pricesView(hostConfig().budget?.prices),
+        // D168：价目只认 DeepSeek flash（附录 G）。后台用的是别的模型（或者在用聊天模型顶着）时 false：管理页不显示元，只显示用量
+        priceKnown: (() => { try { const p = pricing(); return p == null ? null : p.known === true; } catch { return null; } })(),
       };
     },
     flush,

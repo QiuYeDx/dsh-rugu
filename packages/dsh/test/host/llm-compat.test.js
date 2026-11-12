@@ -17,7 +17,7 @@ const rejected = (code = 'INVALID_REQUEST') => [{ type: 'finish', reason: { kind
 const port = (ctx, o = {}) => {
   const recorded = [];
   const logs = [];
-  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith(o.host ?? {}), budget: { record: (use, u, m) => recorded.push({ use, u, m }) },
+  const llm = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: () => ctx.agentDefaultModel.currentSelection(), hostConfig: hostWith(o.host ?? {}), budget: { record: (use, u, m) => recorded.push({ use, u, m }) },
     log: { warn() {}, info: (ev, f) => logs.push({ ev, f }) } });
   return { llm, recorded, logs };
 };

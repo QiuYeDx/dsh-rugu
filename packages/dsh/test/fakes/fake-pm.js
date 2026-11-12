@@ -58,6 +58,8 @@ export function createFakePm({
       async tick(o) { rec('tick', o); return { windows: 0, segment: 0, sleep: 'not-due' }; },
       async runJobs(b) { rec('runJobs', b); return { ran: 0, failed: 0 }; },
       async sleep() { return { steps: [] }; },
+      // D168：后台模型恢复了，补积压
+      resumeExtraction(o) { rec('resumeExtraction', o); return { jobs: 2, stalled: 0 }; },
     },
     sessions: {
       bind(b) { rec('bind', b); },

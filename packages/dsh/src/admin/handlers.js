@@ -27,9 +27,9 @@ export const ROUTES = Object.freeze({
 });
 export const TOKEN_HEADER = 'x-pm-admin';
 const MAX_BODY = 64 * 1024;
-/** 设置模式（D128，还没有核心）下只开这几条：向导本身、嵌入、QQ 桥接。 */
-const SETUP_VIEWS = new Set(['setup', 'embeddingSetup', 'bridge']);
-const SETUP_ACTIONS = new Set(['prepare', 'setup.finish', 'embedding.pull', 'embedding.pullCancel', 'embedding.test', 'embedding.save', 'bridge.apply', 'bridge.setDir']);
+/** 设置模式（D128，还没有核心）下只开这几条：向导本身、嵌入、QQ 桥接、后台模型（D168）。 */
+const SETUP_VIEWS = new Set(['setup', 'embeddingSetup', 'bridge', 'llmSetup']);
+const SETUP_ACTIONS = new Set(['prepare', 'setup.finish', 'embedding.pull', 'embedding.pullCancel', 'embedding.test', 'embedding.save', 'bridge.apply', 'bridge.setDir', 'llm.list', 'llm.test', 'llm.save']);
 
 const BASE_HEADERS = Object.freeze({
   'cache-control': 'no-store',

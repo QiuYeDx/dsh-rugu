@@ -84,6 +84,14 @@ const preview = (s, max = 80) => {
   return chars.length > max ? `${chars.slice(0, max).join('')}…` : chars.join('');
 };
 
+/** 一对「服务商 + 模型」（D168）：两个不带控制字符的字符串（id 原样，不做 NFKC）。 */
+function llmPair(v, p) {
+  if (!isPlainObject(v)) throw new InputError(p || 'provider', '应为 {provider, model}');
+  onlyKeys(v, p ? ['provider', 'model'] : ['action', 'provider', 'model'], p || undefined);
+  const at = (k) => (p ? `${p}.${k}` : k);
+  return { provider: text(v.provider, at('provider'), { max: 120, normalize: false }), model: text(v.model, at('model'), { max: 200, normalize: false }) };
+}
+
 /** 规则的目标和值（核心也会校验；这里先挡，并给看得懂的错误）。 */
 function parseRule(b) {
   onlyKeys(b, ['action', 'kind', 'target', 'value', 'note']);
@@ -139,6 +147,7 @@ export function createActions(deps) {
   const setupPart = () => needPart('setup', '首次设置');
   const embeddingPart = () => needPart('embeddingSetup', '嵌入设置');
   const bridgePart = () => needPart('bridgeSetup', 'QQ 桥接设置');
+  const llmPart = () => needPart('llmSetup', '后台模型设置');
 
   /** 同一类长操作同一时间只跑一个（两次「立即备份」、恢复时再恢复）。 */
   async function exclusive(key, fn) {
@@ -657,6 +666,33 @@ export function createActions(deps) {
       bind: ({ apiKey, ...rest }) => rest,
       prepare: (p) => ({ preview: { reasons: embeddingPart().reasonsFor(p).reasons } }),
       run: (p) => embeddingPart().save(p),
+    },
+    // 后台模型（D168）：列出可选的、试一下（两次很小的真实请求，过预算）、保存选择。管理页只给主人，点「用这个」就是确认
+    'llm.list': { parse: (b) => (onlyKeys(b, ['action']), {}), run: () => within(30_000, () => llmPart().list()) },
+    'llm.test': {
+      parse: (b) => {
+        onlyKeys(b, ['action', 'provider', 'model']);
+        if (b.provider == null && b.model == null) return { pair: null };
+        return { pair: llmPair(b, '') };
+      },
+      run: (p) => exclusive('llm.test', () => llmPart().test(p.pair)),
+    },
+    'llm.save': {
+      parse: (b) => {
+        onlyKeys(b, ['action', 'target', 'perUse', 'fallbackToChat']);
+        const p = {};
+        if (b.target !== undefined) p.target = b.target === 'off' ? 'off' : llmPair(b.target, 'target');
+        if (b.perUse !== undefined) {
+          if (!isPlainObject(b.perUse)) throw new InputError('perUse', '应为对象');
+          onlyKeys(b.perUse, ['glance', 'extract'], 'perUse');
+          p.perUse = {};
+          for (const u of ['glance', 'extract']) if (b.perUse[u] !== undefined) p.perUse[u] = b.perUse[u] === null ? null : llmPair(b.perUse[u], `perUse.${u}`);
+        }
+        if (b.fallbackToChat !== undefined) p.fallbackToChat = bool(b.fallbackToChat, 'fallbackToChat');
+        if (!Object.keys(p).length) throw new InputError('target', '要给 target、perUse 或 fallbackToChat');
+        return p;
+      },
+      run: (p) => llmPart().save(p),
     },
     // QQ 桥接（D129）：白名单补丁，预览 + 确认 + 可还原；改了要彻底重启 DSH
     'bridge.apply': {

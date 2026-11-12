@@ -6,6 +6,7 @@
 //   systemPrompt.context({name, order, required, interpolate, text})   provider 同步（F1）
 //   agents.list / get                    活着的 agent
 //   llm.stream(opts)                     按脚本吐 chunk（text-delta / usage / finish）
+//   agentDefaultModel.currentSelection() DSH 的默认模型（defaultSelection，默认 deepseek-official / deepseek-flash；D168）
 //   sessionProjections.stateOf(session, 'agentPreset')   会话现在的预设：会话头，之后被 agent-preset/selected 事件推进（照 DSH 的预设注册表）
 //   ctx.inject(deps, cb) / sub.effect(fn)  服务都在了才跑 cb；服务撤掉时 effect 的 disposer 跑掉，重新提供时再跑一次
 //   agentPresets（installPresets() 装上）：FakePresetRegistry，definitions / register / list / composedPreset / select
@@ -63,6 +64,11 @@ export class FakeDshCtx {
     this.services.set('agents', this.agents);
     this.services.set('systemPrompt', this.systemPrompt);
     this.services.set('llm', this.llm);
+    // DSH 的默认模型（dsh-agent-default-model 的 currentSelection()，D168：插件不再写死兜底的服务商，宿主总有一对默认的）。
+    // 测试里改 defaultSelection（null = 拿不到）；要服务商目录、按脚本报错的 ctx.llm 用 fake-llm.js
+    this.defaultSelection = { provider: 'deepseek-official', model: 'deepseek-flash' };
+    this.agentDefaultModel = { currentSelection: () => (self.defaultSelection ? { ...self.defaultSelection } : undefined) };
+    this.services.set('agentDefaultModel', this.agentDefaultModel);
     // 会话投影（照 dsh-agent-preset-registry 的 agentPresetProjectionDefinition：init 取会话头，agent-preset/selected 推进）
     const selected = new WeakMap();
     this.selectedPresets = selected;

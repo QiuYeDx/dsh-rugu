@@ -1,6 +1,6 @@
 // 核心端口（§3.3）的 DSH 实现。核心是被动的库：时间、模型、调度、平台相关的清洗都从这里注入，换宿主只重写这一层。
 //   Clock          系统时钟
-//   LLMPort        包宿主的 ctx.llm.stream（llm.js）
+//   LLMPort        包宿主的 ctx.llm.stream（llm.js）；选定并钉住的一对、健康状态、顶上、试一下（D168，llm-health.js）
 //   EmbeddingPort  Ollama /api/embed 或 OpenAI 兼容接口（embedding.js）
 //   RerankPort     可选的 llama-server（rerank.js）；没配 → 没有这个端口
 //   BudgetPort     宽松 / 节省 / 不设上限三档预设和主人单独改的项、失控上限、余额保护（budget.js）
@@ -28,20 +28,26 @@ export { createLlmPort, createEmbeddingPort, createRerankPort, createBudget, cre
  *   log: object,
  *   clock?: {now: () => number},
  *   fetchImpl?: typeof fetch,
+ *   onLlmRecover?: (why: string) => void,
  * }} opt
+ *   onLlmRecover：后台模型恢复了（D168：不工作 → 通了、关 → 开、试一下通了），宿主叫核心把推迟的提炼提到现在
  */
-export function buildPorts({ ctxGet, configStore, paths, governor = null, log, clock = systemClock, fetchImpl = globalThis.fetch, embeddingKey = () => '' }) {
+export function buildPorts({ ctxGet, configStore, paths, governor = null, log, clock = systemClock, fetchImpl = globalThis.fetch, embeddingKey = () => '', onLlmRecover = () => {} }) {
   const hostConfig = () => configStore.host();
   const now = () => clock.now();
   let llmRef = null;
   const budget = createBudget({
     coreConfig: configStore.core, hostConfig, file: paths?.budgetFile ?? null, now, log,
     providerOf: () => { try { return llmRef?.target?.().provider ?? null; } catch { return null; } },
+    // D168：用的不是内置价目认识的那一对时，管理页不显示元（只记用量）
+    pricing: () => { try { return llmRef?.pricing?.() ?? null; } catch { return null; } },
+    // D168：主人选了「不用后台模型」——一次都不放行（端口照样交给核心，切回来不用重启；不放行的调用不发、不记次数）
+    llmOff: () => hostConfig().llm?.target === 'off',
   });
   const llm = createLlmPort({
     getLlm: () => ctxGet('llm'),
     getDefaultSelection: () => ctxGet('agentDefaultModel')?.currentSelection?.() ?? null,
-    hostConfig, budget, log, now,
+    hostConfig, budget, log, now, stateFile: paths?.llmStateFile ?? null, onRecover: (why) => onLlmRecover(why),
   });
   llmRef = llm;
   const embedding = createEmbeddingPort({ hostConfig, fetchImpl, governor, log, now, apiKey: embeddingKey });

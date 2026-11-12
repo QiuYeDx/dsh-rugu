@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 export { FakeDshCtx, FakePresetRegistry, FAKE_STANDARD_ROWS, fakeAgent, userMessage } from './fake-dsh-ctx.js';
 export { createFakePm } from './fake-pm.js';
+export { createFakeLlm, ok as llmOk, failWith as llmFail, GOOD_GLANCE, GOOD_EXTRACT } from './fake-llm.js';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 export const TMP_ROOT = path.join(REPO_ROOT, '.tmp');

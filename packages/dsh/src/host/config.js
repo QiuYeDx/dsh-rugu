@@ -74,10 +74,20 @@ export const HOST_DEFAULTS = deepFreeze({
   },
   guards: { breakerErrors: 3, breakerMs: 10 * MIN, slowMs: 100 },   // §10.10
   scheduler: { tickMs: MIN, startDelayMs: 15_000, jobsIdleMs: 5000, jobsBusyMs: 250, jobsMaxMs: 20_000, selfProfileCheckMs: MIN },
+  // 后台模型（D168）：选定一对「服务商 + 模型」钉住，不再悄悄跟着 DSH 的默认服务商变，也没有写死的兜底。
+  //   target：{provider, model} = 钉住的一对（主人在管理页「设置 → 后台模型」选的，或手写）/ 'off' = 不用后台模型 / null = 还没选：
+  //     还没选时按升级前的做法解析（下面的 provider → 主聊天的服务商；模型照各用途的 models，要在 allow 里），第一次调用成功就把
+  //     当时的服务商自动钉住（记在数据目录的 host-llm.json，不改这个文件）；手写过 models / allow 的照写的用。都拿不到 = NO_PROVIDER；
+  //   perUse：「高级」，只给第一眼（要快）和提炼（要好）单独指定一对，null = 跟着 target；
+  //   fallbackToChat：选定的那一对判成「不工作」（配置类的错）时，临时用 DSH 当前聊天的那一对顶上（可能更贵）；probeMs：顶着的时候隔多久再试原来那一对
   llm: {
-    provider: '',                    // 空 = 跟主聊天同一个提供方（宿主默认选择的提供方），都没有就 deepseek-official
+    target: null,
+    perUse: { glance: null, extract: null },
+    fallbackToChat: true,
+    probeMs: 30 * MIN,
+    provider: '',                    // 还没选 target 时（升级前的配置）：空 = 跟主聊天同一个提供方（宿主默认选择的提供方）；没有写死的兜底
     models: { extract: 'deepseek-flash', appraise: 'deepseek-flash', review: 'deepseek-flash', rewrite: 'deepseek-flash', sleep: 'deepseek-flash', summary: 'deepseek-flash', glance: 'deepseek-flash', perceive: 'deepseek-flash' },
-    allow: ['deepseek-flash'],       // 允许清单（§10.6：不跟随宿主的默认模型）；附录 G：精确 id，思考关
+    allow: ['deepseek-flash'],       // 允许清单（§10.6：不跟随宿主的默认模型；附录 G：精确 id，思考关）。选了 target 以后，钉住的那一对就是主人确认过的
     effort: 'lowest',                // 'lowest' = 模型支持的最低档（V0 定的是关闭思考）；也可以写死一个档位
     temperature: 0.2,
     // 关不掉思考的模型（D169）：一次调用输出 token ≥ minTokens 且 > ratio × 正文字数，就记住这一对，之后 maxTokens × factor
@@ -150,9 +160,24 @@ const ENUMS = {
   'embedding.provider': ['ollama-native', 'openai-compat', 'none'],
 };
 
+/** 一对「服务商 + 模型」（D168）：两个非空字符串，没有别的键。 */
+export function isLlmPair(v) {
+  return isPlain(v) && Object.keys(v).every((k) => k === 'provider' || k === 'model')
+    && typeof v.provider === 'string' && v.provider.trim() !== '' && v.provider.length <= 120
+    && typeof v.model === 'string' && v.model.trim() !== '' && v.model.length <= 200;
+}
+/** 值是「一对」的配置项（D168）：null = 没选；target 还可以是 'off'（不用后台模型）。 */
+const PAIR_PATHS = { 'llm.target': { off: true }, 'llm.perUse.glance': {}, 'llm.perUse.extract': {} };
+
 /** 把用户的 host 配置合到默认值上：类型不对、未知的键忽略并给 warning（开放对象除外）。 */
 export function mergeHost(base, over, p = '', warnings = []) {
   if (over === undefined) return base;
+  if (PAIR_PATHS[p]) {
+    if (over === null || (PAIR_PATHS[p].off && over === 'off')) return over;
+    if (isLlmPair(over)) return { provider: over.provider.trim(), model: over.model.trim() };
+    warnings.push(`host.${p}：应为 {provider, model}${PAIR_PATHS[p].off ? '、\'off\'' : ''} 或 null，忽略`);
+    return base;
+  }
   if (isPlain(base)) {
     if (!isPlain(over)) { warnings.push(`host${p ? `.${p}` : ''}：应为对象，忽略`); return base; }
     const out = { ...base };
@@ -201,6 +226,10 @@ const RISKY = [
   ['host.adapters.web.sessionIds', (v) => Array.isArray(v) && v.length > 0 && '手动指定的会话也算跟她聊：那些会话会被记住、会收到她的记忆'],
   ['host.adapters.web.requireClientTimeZone', (v) => v === false && '不再要求是 DSH 界面里亲手发的消息（以主人身份连进来的 API 客户端也会被当成主人）'],
   ['host.preset.enabled', (v) => v === false && '新建任务里的预设会消失；用它开过的旧会话在重新打开它之前都打不开'],
+  // D168：后台模型换一对（允许清单的原意：后台不能被悄悄换成贵的模型）。管理页上主人点「用这个」就是确认；配置文件被改的先扣下
+  ['host.llm.target', (v) => isLlmPair(v) && `后台模型换成 ${v.provider} / ${v.model}：提炼、评估、审视都用它，花费按它算`],
+  ['host.llm.perUse.glance', (v) => isLlmPair(v) && `第一眼单独用 ${v.provider} / ${v.model}：花费按它算`],
+  ['host.llm.perUse.extract', (v) => isLlmPair(v) && `提炼单独用 ${v.provider} / ${v.model}：花费按它算`],
   ['host.egress.extraTools', (v) => isPlain(v) && Object.values(v).some((c) => c === 'none' || c === 'read')
     && `把工具标成「不说话」或「只读」（${Object.entries(v).filter(([, c]) => c === 'none' || c === 'read').map(([k]) => k).slice(0, 5).join('、')}）：她用这些工具发出去的话不再先看一眼`],
 ];

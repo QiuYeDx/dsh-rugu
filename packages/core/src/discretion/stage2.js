@@ -5,7 +5,7 @@
 // 设成 omit 是原来的做法，一律不给内容（第一段放行的照常给）。「没有结论」不进缓存，下一轮照常评估。
 import { registerPromptVersion, getMeta, setMeta } from '../store/index.js';
 import {
-  dcfg, VERDICTS, stricterVerdict, clip, hkey, metric, warn, errCode, promptText, placeText, fence, parseJsonlObjects, timeoutSignal, semaphore,
+  dcfg, VERDICTS, stricterVerdict, clip, hkey, metric, warn, errCode, promptText, placeText, fence, parseJsonlObjects, timeoutSignal, semaphore, llmReady,
   HOUR, DAY,
 } from './util.js';
 import { selfId, managerIds, bond, displayName, relatedEntities, rightsEquivalents, settingInfo, descriptorTraits } from './facts.js';
@@ -601,7 +601,8 @@ function failAll(core, items, target, code, memo = new Map()) {
 async function callOnce(core, items, target, opt, memo) {
   const cfg = dcfg(core);
   const llm = core.ports.llm;
-  if (!llm) return failAll(core, items, target, 'no-llm', memo);
+  // 没有模型、或者端口说现在用不了（D168）：和「评估没成」同一条路（failAll → onFailure 照给 / 不给），不占预算名额
+  if (!llmReady(core, 'appraise')) return failAll(core, items, target, 'no-llm', memo);
   if (!rateOk(core, target.audience.settingKey, core.now())) return failAll(core, items, target, 'rate', memo);
   const prompt = buildPrompt(core, items, target, memo);
   if (!prompt) return failAll(core, items, target, 'sanitize', memo);

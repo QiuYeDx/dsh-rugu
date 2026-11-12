@@ -87,6 +87,17 @@ export function info(core, event, fields = {}) {
   try { core.log.info(`discretion.${event}`, fields); } catch { /* 忽略 */ }
 }
 export const errCode = (e) => String(e?.code ?? e?.name ?? 'Error').slice(0, 40);
+/**
+ * 后台模型这一刻能不能用（D168 小修）：没有 llm 端口，或者端口的可选 ready(use) 说用不了（配错了又没有顶上的、主人关了后台模型）→ false。
+ * 第一眼、第二段评估、外发审视在要预算之前先问它：用不了就按「没有模型」处理，不白占当天的放行名额。ready 出错按能用算（照旧去调，由调用的结果说话）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {string} use
+ */
+export function llmReady(core, use) {
+  const llm = core.ports.llm;
+  if (!llm) return false;
+  try { return llm.ready?.(use) !== false; } catch { return true; }
+}
 
 /**
  * 调别的模块：出错时记日志、计数，返回 fallback（降级，不往上抛）。
