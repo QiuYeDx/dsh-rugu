@@ -27,6 +27,7 @@
 // 这里从不触发提炼：她知不知道一件事不靠任何后台任务做完。外发守护的候选（有叮嘱的、一对一里别人说的）原话在注入时顺手预热进查询向量的缓存。
 import { refOf, parseRef, bumpMetric } from '../store/index.js';
 import { sanitize, clip, charLen, whenText, spanText, MINUTE_MS } from './text.js';
+import { recallCaps, clipBody } from '../config/caps.js';
 import { bestName } from './people.js';
 
 // 段头里显示的几行跨了这么多分钟以上才两头都写（D148；不是可调的参数：几分钟以内的先后，「多久以前」写最新的就够了）
@@ -88,7 +89,7 @@ function plainWorking(core, p, { lines, ok, given, maxLines, budget, units = [] 
       const it = ok.get(l.ref);
       const who = l.role === 'reply' ? '你' : nameOf(l.actorEntityId ?? it?.tellerId);
       const where = l.settingKey ? whereOf(placeOf(l.settingKey), l.settingKey, p.key, [l]) : '';
-      text = sanitize(core, `${where ? `〔${where}〕` : ''}${who}：${clip(sanitize(core, String(l.text ?? '')), W.lineChars)}${labelTags(core, l, it, nameOf)}`);
+      text = sanitize(core, `${where ? `〔${where}〕` : ''}${who}：${clipBody(sanitize(core, String(l.text ?? '')), recallCaps(p.cfg).working.lineChars).text}${labelTags(core, l, it, nameOf)}`);
     } catch (e) {
       fault(core, p, 'working-plain-line', e);
       continue;
@@ -133,9 +134,11 @@ export function buildWorking(core, p) {
     if (trigs.length >= maxTrig) break;
   }
   if (!trigs.length) return empty;
-  const maxLines = Math.max(1, Math.floor(W.maxLines));
-  const budget = Math.max(0, W.budgetChars);
-  const threadMax = Math.max(1, Math.floor(W.thread?.maxLines ?? 7));
+  // D165：行数和字数随花费档位的 room（config/caps.js）；thread.maxLines 不随 room 变
+  const K = recallCaps(p.cfg).working;
+  const maxLines = Math.max(1, K.maxLines);
+  const budget = Math.max(0, K.budgetChars);
+  const threadMax = Math.max(1, K.threadMaxLines);
   const openMax = Math.max(0, Math.floor(W.open?.maxItems ?? 3));
   const admitLines = Math.max(threadMax, Math.floor(W.thread?.admitLines ?? 3 * threadMax));
 
@@ -516,7 +519,10 @@ function renderer(core, p, ok, trigs, unitByKey, said = new Set()) {
   let more = 0;
   let stats = {};
   let curKey = null;
-  const body = (l) => clip(sanitize(core, l.text), W.lineChars);
+  // D165：lineChars 管的是一行原话的正文（场合、谁、标签不算），在词或句子的边界上截；截短了的记下来（context.clip.working）
+  const lineChars = recallCaps(p.cfg).working.lineChars;
+  const clippedRefs = new Set();
+  const body = (l) => { const b = clipBody(sanitize(core, l.text), lineChars); if (b.clipped) clippedRefs.add(l.ref); return b.text; };
   /** 一行的标签（labelTags）。 */
   const tags = (l) => labelTags(core, l, ok.get(l.ref), nameOf);
 
@@ -575,6 +581,7 @@ function renderer(core, p, ok, trigs, unitByKey, said = new Set()) {
           ref: refOf('percept', l.perceptId), layer: 'working', verdict: it.verdict ?? 'share', rendered: sanitize(core, rendered), appraisalRef: it.appraisalRef,
           provenance: placeOf(l.settingKey).named ? placeOf(l.settingKey).text : '', confidence: 1, group: groupId(g.u), order: gi * 1000 + i * 10,
           prio: prioRank.get(l.ref) ?? i, alloc: alloc * 1000 + i * 10, unit: g.u.kind, unitKey: extra.unitKey ?? g.u.key,
+          ...(clippedRefs.has(l.ref) ? { clipped: true } : {}),
         });
       };
       if (g.u.kind === 'open') {

@@ -21,7 +21,8 @@ test('默认值：§6.9 参数表的关键项', () => {
   assert.deepEqual(a.sourceWindow, { sameMemoryH: 6, sameSourcePerDay: 1 });
   assert.deepEqual([DEFAULTS.validity.presentAbove, DEFAULTS.validity.pastBelow, DEFAULTS.validity.changeKnownFactor], [0.7, 0.3, 0.3]);
   assert.equal(DEFAULTS.mood.halfLifeH, 3);
-  assert.deepEqual([DEFAULTS.recall.involuntary.maxItems, DEFAULTS.recall.involuntary.maxChars], [5, 600]);
+  // D165：平衡档的基线（随 room 乘，见 test/context/caps.test.js），itemChars 是正文
+  assert.deepEqual([DEFAULTS.recall.involuntary.maxItems, DEFAULTS.recall.involuntary.maxChars, DEFAULTS.recall.involuntary.itemChars], [8, 1600, 240]);
   // §9.3.2 的阈值
   assert.deepEqual(DEFAULTS.discretion.thresholds, { b2OmitSensitivity: 0.5, b5Sensitivity: 0.7, b5MaxCloseness: 0.3, a2MaxSensitivity: 0.6, a3MaxSensitivity: 0.3, lateMemberSensitivity: 0.5, unassessedShareMaxSensitivity: 0.5, notTellerShareMaxSensitivity: 0.5 });
   // §12.4.2、§12.6
@@ -219,7 +220,7 @@ test('预算（D121）：「不设上限」档不设次数、token、比例上�
 
 test('预算（D121）：budget.overrides 只认那几个键、每个按自己的规则查；写错的那一项忽略并给 warning，其余照用', () => {
   assert.deepEqual(BUDGET_OVERRIDE_KEYS, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
-    'injectShare', 'injectPerSessionPerDay', 'recollectScale']);
+    'injectShare', 'injectPerSessionPerDay', 'room']);
   const { config, warnings } = mergeConfig(DEFAULTS, { budget: { overrides: {
     dailyCalls: 0, dailyUncachedTokens: null, dailyOutputTokens: 1.5, perSourceShare: 0, mainChatRatioCap: null, balanceProtectDays: 400,
     stage2Scope: 'direct', prefetchRewrite: 'no', rerank: false, sleepDepth: 'deep', egressReservePerDay: 3 } } });
@@ -231,12 +232,12 @@ test('预算（D121）：budget.overrides 只认那几个键、每个按自己�
   assert.match(mergeConfig(DEFAULTS, { budget: { overrides: [] } }).warnings[0], /应为对象/);
 });
 
-test('注入预算跟着花费档位（D133）：宽松 25% / 每天不限（D147），节省 5% / 8000 字（原来的数），不设上限都是 null（不限）', () => {
+test('注入预算跟着花费档位（D133）：平衡 40%（D165，原来 25%）/ 每天不限（D147），节省 5% / 8000 字（原来的数），效果优先都是 null（不限）', () => {
   const at = (preset) => budgetLimits(mergeConfig(DEFAULTS, { budget: { preset } }).config);
-  assert.deepEqual([at('loose').injectShare, at('loose').injectPerSessionPerDay], [0.25, null]);
+  assert.deepEqual([at('loose').injectShare, at('loose').injectPerSessionPerDay], [0.4, null]);
   assert.deepEqual([at('saving').injectShare, at('saving').injectPerSessionPerDay], [0.05, 8000]);
   assert.deepEqual([at('unlimited').injectShare, at('unlimited').injectPerSessionPerDay], [null, null]);
-  assert.deepEqual([budgetLimits(DEFAULTS).injectShare, budgetLimits(DEFAULTS).injectPerSessionPerDay], [0.25, null], '默认宽松');
+  assert.deepEqual([budgetLimits(DEFAULTS).injectShare, budgetLimits(DEFAULTS).injectPerSessionPerDay], [0.4, null], '默认平衡');
   // 自定义：单独改、单独设成不限
   const o = budgetLimits(mergeConfig(DEFAULTS, { budget: { preset: 'saving', overrides: { injectShare: 0.1, injectPerSessionPerDay: null } } }).config);
   assert.deepEqual([o.injectShare, o.injectPerSessionPerDay, o.sleepDepth], [0.1, null, 'essential']);

@@ -1,7 +1,7 @@
 // 管理页的只读视图（GET，§13.1）。全部只经核心的公开 API（pm.status / pm.admin.*，§3.5）和宿主给的 host.*，不碰表。
 // 主人看得到全部记忆（§9.3.7 第 3 条），所以记忆列表照原样给；宿主的状态、预算、显卡只给数字和短状态（§13.3）。
 // 每个视图各自兜错：某一块出错只让那一块显示「读不出来」，别的照常（总览不能因为备份目录读不了就整页空白）。
-import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride } from 'rugu-core';
+import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride, mergeConfig, recallCaps } from 'rugu-core';
 import { InputError, nonNegInt, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
 
 const DAY = 86_400_000;
@@ -107,8 +107,8 @@ export const BUDGET_RANGES = Object.freeze({
   // 注入预算（D133）：比例 1%–100% 或不限；每个会话每天 1000 字起（再少回想几乎给不出东西）或不限
   injectShare: { kind: 'ratio', min: 0.01, max: 1 },
   injectPerSessionPerDay: { kind: 'cap', min: 1000, max: 10_000_000 },
-  // 回忆的名额（D155）：10%–100%
-  recollectScale: { kind: 'share', min: 0.1, max: 1 },
+  // 记忆给多少（D165）：回想各层的条数和总字数乘它；管理页建议 0.5–3（核心的校验更宽，留给手改文件）
+  room: { kind: 'room', min: 0.5, max: 3 },
 });
 const fmtInt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 /**
@@ -131,6 +131,10 @@ export function budgetValue(key, v, path = key) {
       throw new InputError(path, `应为 ${Math.round(r.min * 100)}%–${Math.round(r.max * 100)}%${r.kind === 'ratio' ? '，或不设' : ''}`);
     }
     return Math.round(v * 1000) / 1000;
+  }
+  if (r.kind === 'room') {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < r.min - 1e-9 || v > r.max + 1e-9) throw new InputError(path, `应为 ${r.min}–${r.max} 的数（1 = 平衡档）`);
+    return Math.round(v * 100) / 100;
   }
   if (r.kind === 'days') {
     if (!Number.isSafeInteger(v) || v < r.min || v > r.max) throw new InputError(path, `应为 ${r.min}–${r.max} 的整数（0 = 关掉）`);
@@ -159,7 +163,26 @@ export function budgetConfigView(core, hostCfg) {
   }
   const overrides = {};
   if (isObj(b.overrides)) for (const k of BUDGET_OVERRIDE_KEYS) if (Object.hasOwn(b.overrides, k) && checkBudgetOverride(k, b.overrides[k]) === null) overrides[k] = b.overrides[k];
-  return { preset, custom: Object.keys(overrides).length > 0, overrides, presets, effective: { ...presets[preset], ...overrides }, keys: [...BUDGET_OVERRIDE_KEYS], ranges: BUDGET_RANGES };
+  // 记忆给多少（D165）：每一档（和现在生效的）各层生效的上限，从核心的 recallCaps 算（页面不写死数字）
+  const memoryOf = (name, ov) => {
+    try {
+      const { config } = mergeConfig(DEFAULTS, { ...core, budget: { ...b, preset: name, overrides: ov } });
+      return memorySummary(recallCaps(config));
+    } catch { return null; }
+  };
+  const memory = Object.fromEntries(BUDGET_PRESETS.map((name) => [name, memoryOf(name, {})]));
+  return { preset, custom: Object.keys(overrides).length > 0, overrides, presets, effective: { ...presets[preset], ...overrides }, keys: [...BUDGET_OVERRIDE_KEYS], ranges: BUDGET_RANGES,
+    memory, memoryEffective: memoryOf(preset, overrides) };
+}
+/**
+ * 「记忆给多少」（D165）给页面的几个数：想起来的最多几条、工作记忆最多几行、被问到以前的事时最多约多少字、她调记忆工具时最多约多少字、
+ * 这之后他的事最多几件、整块最多约多少字（不含有自己预算的几层）。都是核心生效的上限，不是每轮都给满。
+ * @param {ReturnType<typeof recallCaps>} K
+ */
+export function memorySummary(K) {
+  return { room: K.room, recalled: K.involuntary.maxItems, recalledDeliberate: K.deliberate.maxItems, working: K.working.maxLines,
+    recollectAuto: K.recollect.auto.totalChars, recollectTool: K.recollect.tool.totalChars, sinceHere: K.sinceHere.maxItems,
+    block: K.blockMaxChars, itemChars: K.involuntary.itemChars };
 }
 const CAP_NAMES = { dailyCalls: '每天后台调用次数', dailyUncachedTokens: '每天未命中缓存的输入', dailyOutputTokens: '每天输出' };
 /**
@@ -171,7 +194,7 @@ const CAP_NAMES = { dailyCalls: '每天后台调用次数', dailyUncachedTokens:
 export function budgetRisks(cur, next) {
   const eff = { ...cur.presets[next.preset], ...next.overrides };
   const out = [];
-  if (next.preset === 'unlimited' && cur.preset !== 'unlimited') out.push('换成「不设上限」：后台的调用次数、token 和比例都不设上限，程序失控时也不会被拦住，只剩余额保护（余额不够 1 天时停后台）');
+  if (next.preset === 'unlimited' && cur.preset !== 'unlimited') out.push('换成「效果优先」：后台的调用次数、token 和比例都不设上限，程序失控时也不会被拦住，只剩余额保护（余额不够 1 天时停后台）；记忆给得最多，她的上下文长得更快、压缩得更早');
   else for (const k of Object.keys(CAP_NAMES)) if (eff[k] === null && cur.effective[k] !== null) out.push(`去掉${CAP_NAMES[k]}的上限：程序失控时不会被拦住`);
   if (eff.balanceProtectDays === 0 && cur.effective.balanceProtectDays !== 0) out.push('关掉余额保护：余额被后台用完时她的聊天也会停');
   return out;
@@ -950,7 +973,8 @@ export function recallHealthRow(x) {
   const day = (d) => ({ day: short(d?.day, 10), recalls: num(d?.recalls) ?? 0, errors: num(d?.errors) ?? 0, partial: num(d?.partial) ?? 0, lost: num(d?.lost) ?? 0,
     legacyErrors: num(d?.legacyErrors) ?? 0, aborted: num(d?.aborted) ?? 0, skipped: num(d?.skipped) ?? 0,
     byStage: nums(d?.byStage), byCode: nums(d?.byCode), ms: nums(d?.ms), host: { ...nums(d?.host), wait: nums(d?.host?.wait) }, embed: nums(d?.embed),
-    inject: nums(d?.inject) });
+    // D165：按层的计数（正文被截短 / 因为额度没装进去 / 因为上限没装进去）是层名 → 条数
+    inject: { ...nums(d?.inject), clipped: nums(d?.inject?.clipped), budgetDroppedBy: nums(d?.inject?.budgetDroppedBy), capDropped: nums(d?.inject?.capDropped) } });
   return {
     days: Array.isArray(x.days) ? x.days.slice(0, 7).filter(isObj).map(day) : [],
     // 【D133】各活跃会话的注入预算：会话 id 的前几位、适配器、今天已用 / 上限、滚动窗口已用 / 上限（null = 不限或窗口还没满）、记了几步

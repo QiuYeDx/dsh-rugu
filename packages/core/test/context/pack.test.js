@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { DEFAULTS, budgetLimits } from '../../src/config/defaults.js';
 import { validateRecallLayers } from '../../src/contract/index.js';
 import { pack, DISPLAY_ORDER, UNMETERED_LAYERS } from '../../src/context/pack.js';
+import { recallCaps } from '../../src/config/caps.js';
 
 const cfg = DEFAULTS;
 const free = { dayUsed: 0, dayLimit: budgetLimits(cfg).injectPerSessionPerDay, rollingLeft: Infinity };
@@ -35,29 +36,29 @@ test('组：组长放不下整组都不放；组员放不下只丢组员；组�
   const card = [E('n1', 'people', { group: 'p:1', chars: 60 }), E('i1', 'people', { group: 'p:1', chars: 100 })];
   let items = run(card);
   assert.deepEqual(items.map((i) => i.id), ['n1', 'i1']);
-  // 每张人物卡 ≤ 180 字：第二张卡的印象放不下，只丢印象
+  // 每张人物卡 ≤ peopleCardChars（D165：240）字：第二张卡的印象放不下，只丢印象
   const cards = [...card, E('n2', 'people', { group: 'p:2', chars: 150 }), E('i2', 'people', { group: 'p:2', chars: 150 })];
   items = run(cards);
   assert.deepEqual(items.map((i) => i.id), ['n1', 'i1', 'n2']);
-  // 组长放不下：整组不放
-  items = run([E('n3', 'people', { group: 'p:3', chars: 600 }), E('i3', 'people', { group: 'p:3', chars: 10 })]);
+  // 组长放不下（整块只剩 100 字）：整组不放
+  items = run([E('n3', 'people', { group: 'p:3', chars: 200 }), E('i3', 'people', { group: 'p:3', chars: 10 })], { budgetChars: 100 });
   assert.deepEqual(items, []);
   // 卡头发过了：印象也不单独出现
   items = run(card, { sent: new Set(['n1']) });
   assert.deepEqual(items, []);
 });
 
-test('各层上限：想起来的 ≤ 5 条且 ≤ 600 字（有意回想 ≤ 8 条）；心里有数 ≤ 2 行；你想着的 ≤ 1 条', () => {
-  const rec = Array.from({ length: 10 }, (_, i) => E(`a${i + 1}`, 'recalled', { chars: 50 }));
-  assert.equal(run(rec).filter((i) => i.layer === 'recalled').length, 5);
-  assert.equal(run(rec, { mode: 'deliberate' }).filter((i) => i.layer === 'recalled').length, 8);
+test('各层上限（D165 平衡档）：想起来的 ≤ 8 条且 ≤ 1600 字（有意回想 ≤ 12 条）；心里有数 ≤ 2 行；你想着的 ≤ 1 条', () => {
+  const rec = Array.from({ length: 20 }, (_, i) => E(`a${i + 1}`, 'recalled', { chars: 50 }));
+  assert.equal(run(rec, { budgetChars: 2000 }).filter((i) => i.layer === 'recalled').length, 8);
+  assert.equal(run(rec, { mode: 'deliberate', budgetChars: 2000 }).filter((i) => i.layer === 'recalled').length, 12);
   // 「还在想」的暂定提示另算一行，不占想起来的名额（§9.3.5）
   const withPending = [...rec, E('a50', 'recalled', { verdict: 'pending', chars: 30 }), E('a51', 'recalled', { verdict: 'pending', chars: 30 })];
-  const d = run(withPending, { mode: 'deliberate' });
-  assert.equal(d.filter((i) => i.verdict === 'share').length, 8);
+  const d = run(withPending, { mode: 'deliberate', budgetChars: 2000 });
+  assert.equal(d.filter((i) => i.verdict === 'share').length, 12);
   assert.equal(d.filter((i) => i.verdict === 'pending').length, 1);
-  const long = Array.from({ length: 6 }, (_, i) => E(`e${i + 1}`, 'recalled', { chars: 120 }));
-  assert.ok(total(run(long)) <= cfg.recall.involuntary.maxChars);
+  const long = Array.from({ length: 10 }, (_, i) => E(`e${i + 1}`, 'recalled', { chars: 300 }));
+  assert.ok(total(run(long, { budgetChars: 2000 })) <= recallCaps(cfg).involuntary.maxChars);
   const aware = Array.from({ length: 4 }, (_, i) => E(`a${i + 20}`, 'awarePrivate', { verdict: 'aware_private' }));
   assert.equal(run(aware).length, cfg.context.layers.awareLines);
   const its = [E('t1', 'intentions'), E('t2', 'intentions')];
@@ -142,18 +143,19 @@ test('D133：pack 的 report——超没超（每天 / 滚动窗口）、多少�
   };
   // 没超、额度够：什么都没丢
   let r = go(free);
-  assert.deepEqual(r.report, { over: null, budgetDropped: 0 });
+  assert.deepEqual(r.report, { over: null, budgetDropped: 0, dropped: {}, capDropped: {}, clipped: {}, overMax: {} });
   assert.equal(r.ids.length, 5);
   // 每天的额度用完：除了「你想着的」和工作记忆整层丢掉；本周期已经发过的那条不算「没放进去」
   r = go({ dayUsed: 10, dayLimit: 10, rollingLeft: -1 }, { sent: new Set(['a2']) });
   assert.deepEqual(r.ids.sort(), ['t1', 'w1']);
-  assert.deepEqual(r.report, { over: 'day', budgetDropped: 2 }, '两样都超时记 day；a1、n1 两条');
+  assert.deepEqual([r.report.over, r.report.budgetDropped], ['day', 2], '两样都超时记 day；a1、n1 两条');
+  assert.deepEqual(r.report.dropped, { recalled: 1, people: 1 }, 'D165：按层');
   // 滚动窗口用完
   r = go({ ...free, rollingLeft: 0 });
-  assert.deepEqual(r.report, { over: 'rolling', budgetDropped: 3 });
+  assert.deepEqual([r.report.over, r.report.budgetDropped], ['rolling', 3]);
   // 有意回想：想起来的那一档也不受限，丢的只有人物卡
   r = go({ ...free, rollingLeft: 0 }, { mode: 'deliberate' });
-  assert.deepEqual(r.report, { over: 'rolling', budgetDropped: 1 });
+  assert.deepEqual([r.report.over, r.report.budgetDropped], ['rolling', 1]);
   // 没超但只剩 120 字：放得下一条想起来的（100），另一条和人物卡（50）放不下
   r = go({ ...free, rollingLeft: 120 });
   assert.equal(r.report.over, null);

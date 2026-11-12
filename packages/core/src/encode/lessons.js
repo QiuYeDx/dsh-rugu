@@ -22,6 +22,7 @@
 import { getMetaJson, setMetaJson, bumpMetric } from '../store/kv.js';
 import { refOf } from '../store/refs.js';
 import { clip, jsonParse, modeOfPercept, tzOffsetMin, DAY, MIN } from './util.js';
+import { clipBody } from '../config/caps.js';
 import { writeAssertion, addSource, reviseAssertion, assertionRow, selfIdOf, ensurePredicate } from './write.js';
 import { pickTrigger, supportedBy, targetSim, resolveName, findTrigger, triggerProblem } from './tools.js';
 
@@ -89,13 +90,24 @@ export function ownerMade(row) {
 /**
  * 给她看的一行：「（验证过）用 X 时：规则（要避开：坑）」。vague：关口①只让说个大概时用它代替正文；provenance：听来的、主人教的，
  * 后面带一句是谁、在哪儿说的（评审 M7）。
- * @param {object} core @param {object|number} rowOrId @param {{chars?: number, vague?: string|null, provenance?: string|null}} [opt]
+ * bodyChars（D165，回想注入用）：只管正文（「用 X 时：规则（要避开：坑）」），在边界上截；「（验证过）」和〔来源〕不占它，来源一定带上。
+ * 没给时照旧 chars 管整行（常驻区、夜里的回顾）。report：传一个对象进来，正文被截短时填 clipped: true。
+ * @param {object} core @param {object|number} rowOrId
+ * @param {{chars?: number, bodyChars?: number, vague?: string|null, provenance?: string|null, report?: object}} [opt]
  */
-export function lessonLine(core, rowOrId, { chars, vague = null, provenance = null } = {}) {
+export function lessonLine(core, rowOrId, { chars, bodyChars, vague = null, provenance = null, report = null } = {}) {
   const row = typeof rowOrId === 'object' ? rowOrId : assertionRow(core, rowOrId);
   if (!row) return '';
   const info = lessonInfo(row);
-  const max = num(chars, num(cfgOf(core).itemChars, 110));
+  if (Number.isFinite(bodyChars) && bodyChars > 0) {
+    let body = vague ? String(vague) : `${info.tool ? `用 ${toolLabel(info.tool)} 时：` : ''}${String(row.text ?? '').replace(/[。.]+$/u, '')}${info.trap ? `（要避开：${info.trap}）` : ''}`;
+    try { body = core.mods.intake.sanitizeForPrompt(core, body); } catch { /* 用原样 */ }
+    const b = clipBody(body, Math.floor(bodyChars));
+    if (report && typeof report === 'object' && b.clipped) report.clipped = true;
+    const prov = provenance ? `〔${clipBody(String(provenance), 30).text}〕` : '';
+    return `${STATUS_TEXT[info.status]}${b.text}${prov}`;
+  }
+  const max = num(chars, num(cfgOf(core).itemChars, 220));
   const body = vague ? String(vague) : `${info.tool ? `用 ${toolLabel(info.tool)} 时：` : ''}${String(row.text ?? '').replace(/[。.]+$/u, '')}${info.trap ? `（要避开：${info.trap}）` : ''}`;
   const prov = provenance ? `〔${clip(String(provenance), 30)}〕` : '';
   let s = `${STATUS_TEXT[info.status]}${body}`;

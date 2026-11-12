@@ -41,14 +41,19 @@ export const HOST_DEFAULTS = deepFreeze({
   claim: { excludePresets: [], excludeCwdPrefixes: [], negativeTtlMs: 60_000, signatureRetryMs: 5000, maxAttempts: 5, suspendOnAlarms: ['mismatch', 'multiple'] },
   // graceMs：等核心回想时在截止时间之外多等的余量；「在问过去」时按核心的 recall.deliberate.deadlineMs 等（实测问题 #2）
   // D117：deadlineMs 800 → 1500、graceMs 200 → 300（主人「哪怕提高一些允许的等待时长」；平常几十毫秒就回来，上限只在慢的时候用上）
-  // recollectChars（D155）：被判成回忆的那一轮（结果里有回忆那一层），整块的上限在 blockMaxChars 上再加这么多（核心回忆那一层自动触发的一档约 2000 字）；
-  // 浮现的轮不变
-  // sinceHereChars（D164）：块里有「这之后他的事」那一层时，整块的上限再加这一层实际占的字数（最多这么多；核心那一层默认 4 件 × 100 字）。
-  // 它和工作记忆一样在核心里有自己的预算，到这里也不该挤掉工作记忆和「想起来的」
-  inject: { deadlineMs: 1500, graceMs: 300, budgetChars: 900, blockMaxChars: 1400, recollectChars: 2400, sinceHereChars: 400, onToolResults: true },
+  // 字数的上限（D165，用户反馈第 39 轮：一处预算）：核心是唯一做预算的地方，这里默认都是 null = 跟着核心走——由核心生效的上限
+  // （rugu-core 的 recallCaps，随花费档位的 room）算出来，再留出块头、小标题、记号这些宿主自己加的字，核心打包出来的东西一定装得下。
+  // 主人手写了数字的照他写的当硬上限（这时才可能截掉核心给的东西，按条计数 host.inject.truncated）：
+  //   budgetChars：交给核心 pack 的整块字数（自动 = 核心的 context.blockMaxChars）；
+  //   blockMaxChars：整块（不含下面两项加出来的）的上限（自动 = 核心整块 + 工作记忆 + 宿主自己加的字）；
+  //   recollectChars（D155）：被判成回忆的那一轮整块再加这么多（自动 = 核心回忆自动触发那一档的总字数）；
+  //   sinceHereChars（D164）：块里有「这之后他的事」时整块再加这一层实际占的字数，最多这么多（自动 = 核心这一层的字数）；
+  //   itemChars：每条最多多少字（自动 = 不另截：核心已经按每层的上限截好了，见 recallCaps().itemMax）
+  inject: { deadlineMs: 1500, graceMs: 300, budgetChars: null, blockMaxChars: null, recollectChars: null, sinceHereChars: null, itemChars: null, onToolResults: true },
   // seenFreshMs：读消息工具读到的、别人对她说的，最多早于这一轮开始多久还算她这一轮新看到的（记忆工具的触发消息候选，D114）
-  // recollectChars（D155）：记忆工具的结果里有回忆那一层时，整个结果最多这么多字（核心工具那一档约 4000 字）；没有时照旧 1600
-  tools: { presets: [], recallDeadlineMs: 8000, recallBudgetChars: 1200, recollectChars: 4600, seenFreshMs: 10 * MIN },
+  // 字数（D165：null = 跟着核心走，同 inject）：recallBudgetChars 交给核心 pack 的整块字数（自动 = 核心的 context.blockMaxChars）；
+  // recollectChars（D155）：记忆工具 / 翻看的结果最多这么多字（自动 = 核心工具那一档能给的全部 + 宿主自己加的字）；itemChars：每条最多多少字（自动 = 不另截）
+  tools: { presets: [], recallDeadlineMs: 8000, recallBudgetChars: null, recollectChars: null, itemChars: null, seenFreshMs: 10 * MIN },
   // 她看过的媒体（D116）：认领的会话里，工具结果带图片、或者是 viewTools 里的工具，就算她在看一条消息里的媒体；
   //   viewTools：主人补的「看媒体的工具」（精确名或 MCP 去掉前缀的名字；私有插件的名字写在主人自己的配置里，默认空）；
   //   maxSteps：最多等她几步（看完以后的想法和回话），到了就把有的交给核心
@@ -162,6 +167,12 @@ export function mergeHost(base, over, p = '', warnings = []) {
     return out;
   }
   const tn = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
+  // 默认是 null 的项（D165：字数上限，null = 跟着核心走）：接受 null 或不小于 0 的有限数字
+  if (base === null) {
+    if (over === null || (typeof over === 'number' && Number.isFinite(over) && over >= 0)) return over;
+    warnings.push(`host.${p}：应为不小于 0 的数字或 null（跟着核心走），忽略`);
+    return base;
+  }
   if (tn(over) !== tn(base)) { warnings.push(`host.${p}：应为 ${tn(base)}，忽略`); return base; }
   if (typeof over === 'number' && !Number.isFinite(over)) { warnings.push(`host.${p}：应为有限数字，忽略`); return base; }
   if (ENUMS[p] && !ENUMS[p].includes(over)) { warnings.push(`host.${p}：应为 ${ENUMS[p].join(' / ')} 之一，忽略`); return base; }
@@ -178,7 +189,7 @@ const RISKY = [
   ['mode.global', (v) => v !== 'live' && `总开关改成 ${v}`],
   ['budget.overrides.balanceProtectDays', (v) => v === 0 && '关掉余额保护：余额被后台用完时她的聊天也会停（H5）'],
   // D121：重度用户的「不设上限」和单项去掉上限——程序失控时花费不会被拦住，只剩余额保护
-  ['budget.preset', (v) => v === 'unlimited' && '换成「不设上限」：后台的调用次数、token 和比例都不设上限，程序失控时也不会被拦住，只剩余额保护（余额不够 1 天时停后台）'],
+  ['budget.preset', (v) => v === 'unlimited' && '换成「效果优先」：后台的调用次数、token 和比例都不设上限，程序失控时也不会被拦住，只剩余额保护（余额不够 1 天时停后台）；记忆给得最多（她的上下文长得更快、压缩得更早）'],
   ['budget.overrides.dailyCalls', (v) => v === null && '去掉每天后台调用次数的上限：程序失控时不会被拦住'],
   ['budget.overrides.dailyUncachedTokens', (v) => v === null && '去掉每天未命中缓存输入的上限：程序失控时不会被拦住'],
   ['budget.overrides.dailyOutputTokens', (v) => v === null && '去掉每天输出的上限：程序失控时不会被拦住'],

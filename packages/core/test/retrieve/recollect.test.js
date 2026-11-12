@@ -172,15 +172,20 @@ test('盖住时间（arrange）：timeline 每段先各取一条再按名次；p
   assert.equal(segOf(segs, 99), 2);
 });
 
-test('名额两档随花费档位：节省档条数和总字数减半，每条字数不变', () => {
+test('名额两档随花费档位的 room（D165）：节省 0.6、效果优先 2 乘条数和总字数，每条字数（正文）不变；recollectScale 已弃用、读到了也忽略', () => {
   const loose = recollectTier(DEFAULTS, 'tool');
-  assert.deepEqual(loose, { kind: 'tool', maxItems: 36, itemChars: 300, totalChars: 4000 });
-  assert.deepEqual(recollectTier(DEFAULTS, 'auto'), { kind: 'auto', maxItems: 18, itemChars: 240, totalChars: 2000 });
+  assert.deepEqual(loose, { kind: 'tool', maxItems: 36, itemChars: 480, totalChars: 6000 });
+  assert.deepEqual(recollectTier(DEFAULTS, 'auto'), { kind: 'auto', maxItems: 18, itemChars: 360, totalChars: 3000 });
   const saving = mergeConfig(DEFAULTS, { budget: { preset: 'saving' } }).config;
-  assert.deepEqual(recollectTier(saving, 'tool'), { kind: 'tool', maxItems: 18, itemChars: 300, totalChars: 2000 });
-  assert.deepEqual(recollectTier(saving, 'auto'), { kind: 'auto', maxItems: 9, itemChars: 240, totalChars: 1000 });
-  const custom = mergeConfig(DEFAULTS, { budget: { overrides: { recollectScale: 0.25 } } }).config;
-  assert.equal(recollectTier(custom, 'tool').maxItems, 9);
+  assert.deepEqual(recollectTier(saving, 'tool'), { kind: 'tool', maxItems: 22, itemChars: 480, totalChars: 3600 });
+  assert.deepEqual(recollectTier(saving, 'auto'), { kind: 'auto', maxItems: 11, itemChars: 360, totalChars: 1800 });
+  const best = mergeConfig(DEFAULTS, { budget: { preset: 'unlimited' } }).config;
+  assert.deepEqual(recollectTier(best, 'auto'), { kind: 'auto', maxItems: 36, itemChars: 360, totalChars: 6000 });
+  const custom = mergeConfig(DEFAULTS, { budget: { overrides: { room: 0.5 } } }).config;
+  assert.equal(recollectTier(custom, 'tool').maxItems, 18);
+  const old = mergeConfig(DEFAULTS, { budget: { overrides: { recollectScale: 0.25 } } });
+  assert.deepEqual(old.warnings, [], '旧配置里的 recollectScale 不报错');
+  assert.equal(recollectTier(old.config, 'tool').maxItems, 36, '但也不起作用');
 });
 
 test('时间那一路：时间窗当范围（只看范围里的），有查询向量时按话题排；没有向量时在跨度上均匀取，不是只取最晚的', async () => {

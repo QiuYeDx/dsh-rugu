@@ -89,7 +89,7 @@ export async function simulate(core, s) {
       try {
         // 和真的注入一样按目标场合渲染（来源在同一个场合说「在这里」、称呼按这个场合的叫法）
         const r = core.mods.retrieve.render(core, byRef.get(g.ref) ?? bareCandidate(g.ref),
-          { verdict: g.verdict, vagueText: g.vagueText ?? null, at, itemChars, settingKey: resolved.key, placeAllowed });
+          { verdict: g.verdict, vagueText: g.vagueText ?? null, at, bodyChars: itemChars, settingKey: resolved.key, placeAllowed });
         rendered = r.rendered; confidence = r.confidence; provenance = r.provenance;
       } catch { rendered = ''; }
     }

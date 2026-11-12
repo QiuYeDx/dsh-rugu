@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { sessionInfoOf } from './claim.js';
 import { agentId } from './session-state.js';
-import { renderInjectBlock } from './render.js';
+import { renderInjectBlock, coreBudgetChars } from './render.js';
 import { randomId, charLen, settleWithin, deepFreeze, errCode, pickFocus, pickFoci, mergeSeen, freshToHer, turnCandidates } from './util.js';
 
 export const SOURCE_KIND = 'persona-memory';
@@ -202,7 +202,10 @@ export function createContextAssembler({ getPm, claims, states, guard, hostConfi
     };
     // pm.recall 同步抛错（契约校验不过之类）也当成「出错」，退回缓存，不让这一轮的钩子出错
     let p0;
-    try { p0 = pm.recall(sit, { mode: 'involuntary', deadlineMs: deadline, budgetChars: ic.budgetChars ?? 900, ...(signal ? { signal } : {}) }); } catch (e) { p0 = Promise.reject(e); }
+    // 交给核心的整块字数（D165）：主人没手写就跟着核心的 context.blockMaxChars（随花费档位的 room），不再比它小
+    let budgetChars;
+    try { budgetChars = coreBudgetChars(coreConfig(), ic, 'inject'); } catch { budgetChars = coreBudgetChars(null, ic, 'inject'); }
+    try { p0 = pm.recall(sit, { mode: 'involuntary', deadlineMs: deadline, budgetChars, ...(signal ? { signal } : {}) }); } catch (e) { p0 = Promise.reject(e); }
     const r = await settleWithin(abortable(p0, signal), waitMsFor(deadline));
     // 这一轮在等的时候被取消了（主人取消、桥接中止）：不给死掉的回合记「待确认」、也不插（审查：等得更久以后这点更要紧）
     if (signal?.aborted) { report('aborted'); return null; }
@@ -222,9 +225,13 @@ export function createContextAssembler({ getPm, claims, states, guard, hostConfi
     if (!layers?.items?.length) return null;
     // 块头和小标题的写法跟核心的 context.usageStyle（D125；读不到按 guided）
     let style = 'guided';
-    try { style = coreConfig()?.context?.usageStyle === 'purpose' ? 'purpose' : 'guided'; } catch { style = 'guided'; }
-    // 被判成回忆的那一轮（D155：结果里有回忆那一层）整块的上限加大、开头带「找了哪儿」；浮现的轮不变
-    const { text, used, recollect } = renderInjectBlock(layers, { inject: ic, style });
+    let cc = null;
+    try { cc = coreConfig(); } catch { cc = null; }
+    style = cc?.context?.usageStyle === 'purpose' ? 'purpose' : 'guided';
+    // 被判成回忆的那一轮（D155：结果里有回忆那一层）整块的上限加大、开头带「找了哪儿」；浮现的轮不变。
+    // D165：上限默认跟着核心走（核心打包出来的东西一定装得下）；主人手写了更小的数才会截，截掉的按条交回核心计数（host.inject.truncated）
+    const { text, used, recollect, truncated } = renderInjectBlock(layers, { inject: ic, style, coreConfig: cc });
+    if (truncated > 0) report('truncated', { count: truncated });
     if (!used.length) return null;
     // 生效档回想之后再问一次：新场合的第一条消息在回想时才落库、才描述进库（核心先 drain 再算，D96），之前问只能得到 unknown
     const live = (mode === 'live' ? mode : modeOf(claim.settingId)) === 'live';

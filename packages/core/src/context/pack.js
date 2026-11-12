@@ -4,7 +4,8 @@
 // 条目按组分配：人物卡（卡头 + 印象）、意图（意图 + 它指向的事实）、新版本 +「之前那一版」、计划 + 它的结果是一组，
 // 组长放不下整组都不放，组员放不下只丢组员；绑在组长上的组员（bound：它的内容已经写进组长那条里了）放不下整组都不放。
 // 「指回去」（D146）：pointBackOf 挑出这一轮该指回去的已给过的条目，做成 pointBack 层的一行，和别的条目一起再打包一次。
-import { charLen, clip } from './text.js';
+import { charLen } from './text.js';
+import { recallCaps, clipBody } from '../config/caps.js';
 
 // 组长发过了整组就不再发的层：卡头 / 意图本身是这一组的意思所在。别的层（想起来的……）组长发过了，没发过的组员照样可以发
 // （例：计划本周期已经提过，后来它的结果才想起来）
@@ -69,36 +70,42 @@ const seenKey = (e) => `${e.ref}|${e.verdict}${e.layer === 'outline' ? '|outline
 
 function capsOf(cfg, mode, rcTier = null) {
   const L = cfg.context.layers;
-  const rc = mode === 'deliberate' ? cfg.recall.deliberate : cfg.recall.involuntary;
-  const recalledChars = mode === 'deliberate' ? rc.maxItems * rc.itemChars : cfg.recall.involuntary.maxChars;
-  // groups：每层几组；chars：每层多少字；groupChars：每组多少字（人物卡 ≤ 180 字一张）；pending：「还在想」的提示另算几行
+  // D165：条数和总字数随花费档位的 room，在 config/caps.js 一处算（K）；不乘的（间隔行数、人物卡张数……）照旧读配置
+  const K = recallCaps(cfg);
+  const rc = mode === 'deliberate' ? K.deliberate : K.involuntary;
+  const recalledChars = mode === 'deliberate' ? rc.maxItems * (rc.itemChars + META_ALLOW) : K.involuntary.maxChars;
+  const M = K.itemMax;
+  // groups：每层几组；chars：每层多少字；groupChars：每组多少字（人物卡 ≤ peopleCardChars 一张）；pending：「还在想」的提示另算几行；
+  // itemMax（D165）：一条渲染好的最长（正文上限 + 来源说法这些短句），超了在边界上截短（报告里按层计数）
   return {
-    gap: { groups: L.gapLines, chars: Infinity },
-    warmStart: { groups: Infinity, chars: L.warmStart },
-    people: { groups: L.peopleCards, chars: L.peopleCards * L.peopleCardChars, groupChars: L.peopleCardChars },
-    recentFromPresent: { groups: cfg.recall.present.maxItems, chars: L.presentRecent },
-    todaySoFar: { groups: Infinity, chars: L.todaySoFar },
-    recalled: { groups: rc.maxItems, chars: recalledChars, pending: L.pendingLines },
-    awarePrivate: { groups: L.awareLines, chars: Infinity },
-    intentions: { groups: Math.min(L.intentions, cfg.intention.maxPerBlock), chars: Infinity },
+    gap: { groups: L.gapLines, chars: Infinity, itemMax: M.gap },
+    warmStart: { groups: Infinity, chars: K.layers.warmStart, itemMax: M.warmStart },
+    people: { groups: L.peopleCards, chars: L.peopleCards * L.peopleCardChars, groupChars: L.peopleCardChars, itemMax: M.people },
+    recentFromPresent: { groups: K.present.maxItems, chars: K.layers.presentRecent, itemMax: M.recentFromPresent },
+    todaySoFar: { groups: Infinity, chars: K.layers.todaySoFar, itemMax: M.todaySoFar },
+    recalled: { groups: rc.maxItems, chars: recalledChars, pending: L.pendingLines, itemMax: M.recalled },
+    awarePrivate: { groups: L.awareLines, chars: Infinity, itemMax: M.awarePrivate },
+    intentions: { groups: Math.min(L.intentions, cfg.intention.maxPerBlock), chars: Infinity, itemMax: M.intentions },
     // 她的经验（D124）：lessons.recallMax 条、lessons.chars 字
-    lessons: { groups: cfg.lessons?.recallMax ?? 2, chars: cfg.lessons?.chars ?? 220 },
+    lessons: { groups: K.lessons.recallMax, chars: K.lessons.chars, itemMax: M.lessons },
     // 工作记忆：条数和字数在 context/working.js 里按 A 装好了（maxLines、budgetChars 按渲染好的字数，含场合说明和来源说明）；
-    // 只受它自己的 budgetChars，不占整块的 blockMaxChars（D108：原来意图先占了 900 字里的一块，最新的几行工作记忆被挤掉）
-    working: { groups: Infinity, chars: cfg.recall.working?.budgetChars ?? 800, ownBudget: true },
+    // 只受它自己的 budgetChars，不占整块的 blockMaxChars（D108：原来意图先占了整块里的一块，最新的几行工作记忆被挤掉）
+    working: { groups: Infinity, chars: K.working.budgetChars, ownBudget: true, itemMax: M.working },
     // 这之后他的事（D164）：一件一组（计划和它的结果同一组），最多 context.sinceHere.maxItems 组、chars 字；有自己的预算，
     // 和工作记忆一样不占整块的 blockMaxChars、不受每天额度和滚动窗口限制（UNMETERED_LAYERS），也不和「想起来的」抢名额
-    sinceHere: { groups: Math.max(0, Math.floor(cfg.context.sinceHere?.maxItems ?? 4)), chars: cfg.context.sinceHere?.chars ?? 400, ownBudget: true },
+    sinceHere: { groups: K.sinceHere.maxItems, chars: K.sinceHere.chars, ownBudget: true, itemMax: M.sinceHere },
     // 指回去（D146）：每条已经截到 context.pointBack.chars 字，条数由 pointBackOf 管（这里再按 max 兜一道）
-    pointBack: { groups: Math.max(0, Math.floor(cfg.context.pointBack?.max ?? 2)), chars: Infinity },
+    pointBack: { groups: K.pointBack.max, chars: Infinity, itemMax: M.pointBack },
     // 回忆（D155）：这一档（工具 / 自动触发，随花费档位）的条数和总字数；有自己的预算，不占整块的 blockMaxChars（被判成回忆的那一轮
-    // 集成层整块的上限相应加大）。没给这一档（缓存里的旧条目）按自动触发那一档的原数
-    recollect: { groups: rcTier?.maxItems ?? cfg.recall.recollect?.auto?.maxItems ?? 18,
-      chars: rcTier?.detailChars ?? rcTier?.totalChars ?? cfg.recall.recollect?.auto?.totalChars ?? 2000, ownBudget: true },
+    // 集成层整块的上限相应加大）。没给这一档（缓存里的旧条目）按自动触发那一档
+    recollect: { groups: rcTier?.maxItems ?? K.recollect.auto.maxItems,
+      chars: rcTier?.detailChars ?? rcTier?.totalChars ?? K.recollect.auto.totalChars, ownBudget: true, itemMax: M.recollect },
     // 那段时间的经过（D156）：一段一行，字数是这一档里分给经过的那一份（context 按实际的经过行算好）
-    outline: { groups: Infinity, chars: rcTier?.outlineChars ?? 0, ownBudget: true },
+    outline: { groups: Infinity, chars: rcTier?.outlineChars ?? 0, ownBudget: true, itemMax: M.outline },
   };
 }
+// 有意回想「想起来的」那一层的总字数 = 条数 × 每条（D165：每条的正文 + 来源说法这些短句的一个平均余量，不是上限 META_CHARS）
+const META_ALLOW = 60;
 
 /**
  * 这一周期已经给过她的条目（本周期已确认发过，或几乎一样的文字发过；时间间隔、待审提示不算）。
@@ -169,7 +176,7 @@ export function pointBackOf(entries, items, sent, { max, chars, perCycle, counts
     if (seen.has(e.ref)) continue;
     seen.add(e.ref);
     if ((counts.get(e.ref) ?? 0) >= cap) { out.capped += 1; continue; }
-    const rendered = clip(String(e.rendered ?? '').trim(), width);
+    const rendered = clipBody(String(e.rendered ?? '').trim(), width).text;
     if (!rendered) continue;
     out.entries.push({ ref: e.ref, layer: POINT_BACK_LAYER, verdict: e.verdict, rendered, provenance: e.provenance ?? '', confidence: e.confidence,
       appraisalRef: e.appraisalRef, group: `b:${e.ref}`, order: e.order });
@@ -191,9 +198,10 @@ export function pointBackOf(entries, items, sent, { max, chars, perCycle, counts
  */
 export function pack(entries, opt) {
   const { cfg, mode, sent } = opt;
-  const blockCap = Math.max(0, Math.min(Number.isFinite(opt.budgetChars) ? opt.budgetChars : cfg.context.blockMaxChars, cfg.context.blockMaxChars));
+  const blockMax = recallCaps(cfg).blockMaxChars;
+  const blockCap = Math.max(0, Math.min(Number.isFinite(opt.budgetChars) ? opt.budgetChars : blockMax, blockMax));
   const b = opt.budget ?? { dayUsed: 0, dayLimit: Infinity, rollingLeft: Infinity };
-  // 上限是 null（档位里写的「不限」，D147 起宽松档每天就是 null）按不限算；ledger.budgetState 已经换成 Infinity，这里再兜一道
+  // 上限是 null（档位里写的「不限」，D147 起平衡档（原来叫宽松）每天就是 null）按不限算；ledger.budgetState 已经换成 Infinity，这里再兜一道
   const lim = (v) => (typeof v === 'number' && !Number.isNaN(v) ? v : Infinity);
   const dayLeft = lim(b.dayLimit) - (Number(b.dayUsed) || 0);
   const rollingLeft = lim(b.rollingLeft);
@@ -207,6 +215,12 @@ export function pack(entries, opt) {
   const budgetCap = over ? 0 : Math.max(0, Math.min(dayLeft, rollingLeft));   // 其余各层合计
   const report = opt.report && typeof opt.report === 'object' ? opt.report : null;
   let budgetDropped = 0;
+  // D165：按层的计数——dropped：因为每天 / 滚动窗口的额度没装进去的；capDropped：因为这一层的条数、字数或整块的上限没装进去的；
+  // overMax：一条渲染好的超了这一层的 itemMax、在这里被截短的（正常不会有：渲染时已经按正文截好了）
+  const dropped = {};
+  const capDropped = {};
+  const overMax = {};
+  const inc = (o, l, n = 1) => { o[l] = (o[l] ?? 0) + n; };
 
   // 1. 去掉本周期已发过的（时间间隔不按条目去重：它的「只提示一次」由 gap_ack_at 管）。
   // 几乎一样的文字（MMR 合并进来的 duplicates）发过了也算这条发过：两段几乎一样的情节这一轮谁分高谁当代表，
@@ -215,7 +229,7 @@ export function pack(entries, opt) {
   const groups = new Map();
   for (const e of entries) {
     if (allowed && !allowed.has(e.layer)) {
-      if (report && !isSent(e)) budgetDropped += 1;
+      if (report && !isSent(e)) { budgetDropped += 1; inc(dropped, e.layer); }
       continue;
     }
     if (!groups.has(e.group)) groups.set(e.group, []);
@@ -253,7 +267,7 @@ export function pack(entries, opt) {
       const free = exempt.has(layer);
       const own = !!cap.ownBudget;
       const isPending = cap.pending != null && g.members[0].verdict === 'pending';
-      if (isPending ? used[layer].pending >= cap.pending : used[layer].groups >= cap.groups) continue;
+      if (isPending ? used[layer].pending >= cap.pending : used[layer].groups >= cap.groups) { inc(capDropped, layer, g.members.length); continue; }
       const take = [];
       let chars = 0;
       // 组长、绑在组长上的先放；别的组员按 prio（没有就按原来的先后）
@@ -268,16 +282,22 @@ export function pack(entries, opt) {
         // 组长、绑在组长上的放不下 → 整组不放；别的组员放不下只丢它自己
         const vital = i === 0 || !!e.bound;
         if (seenRefs.has(seenKey(e)) && e.layer !== 'gap') { if (vital) { take.length = 0; break; } continue; }
-        const n = charLen(e.rendered);
+        // D165：一条超了这一层的 itemMax（正文上限 + 来源说法这些短句）：在边界上截短再装，计数
+        let ee = e;
+        if (Number.isFinite(cap.itemMax) && charLen(e.rendered) > cap.itemMax) {
+          ee = { ...e, rendered: clipBody(e.rendered, cap.itemMax).text, clipped: true, overMax: true };
+        }
+        const n = charLen(ee.rendered);
         const fits = !((!own && total + chars + n > blockCap) || used[layer].chars + chars + n > cap.chars || chars + n > (cap.groupChars ?? Infinity));
         const budgetOk = free || budgeted + chars + n <= budgetCap;
         if (!fits || !budgetOk) {
-          // 只有单块、层的上限都放得下、卡在预算上的才算「因为预算没放进去」（组长卡住了整组都算）
-          if (fits && !budgetOk) budgetDropped += vital ? g.members.length : 1;
+          // 只有单块、层的上限都放得下、卡在预算上的才算「因为预算没放进去」（组长卡住了整组都算）；卡在上限上的另记（capDropped）
+          const k = vital ? g.members.length : 1;
+          if (fits && !budgetOk) { budgetDropped += k; inc(dropped, layer, k); } else if (!fits) inc(capDropped, layer, k);
           if (vital) { take.length = 0; break; }
           continue;
         }
-        take.push(e);
+        take.push(ee);
         chars += n;
       }
       if (!take.length) continue;
@@ -285,13 +305,20 @@ export function pack(entries, opt) {
       used[layer].chars += chars;
       if (!own) total += chars;
       if (!free) budgeted += chars;
-      for (const e of take) { chosen.push(e); seenRefs.add(seenKey(e)); }
+      for (const e of take) { chosen.push(e); seenRefs.add(seenKey(e)); if (e.overMax) inc(overMax, layer); }
     }
   }
 
   if (report) {
     report.over = !over ? null : overDay ? 'day' : 'rolling';
     report.budgetDropped = budgetDropped;
+    report.dropped = dropped;
+    report.capDropped = capDropped;
+    // 真给出去的条目里正文被截短的（渲染时截的 + 这里兜底截的），按层
+    const clipped = {};
+    for (const e of chosen) if (e.clipped) inc(clipped, e.layer);
+    report.clipped = clipped;
+    report.overMax = overMax;
   }
 
   // 3. 按展示顺序输出（记忆工具：查到的在最前，D148）

@@ -8,7 +8,7 @@
 // execute 第一步重新判定场合，判不出就返回「现在用不了」。返回给她的文字都过清洗（【】→「」、去不可见字符）。
 import { sessionInfoOf, matchesSignature } from './claim.js';
 import { agentId } from './session-state.js';
-import { renderRecallResult, renderLookResult } from './render.js';
+import { renderRecallResult, renderLookResult, coreBudgetChars } from './render.js';
 import { randomId, charLen, sanitizeForPrompt, clip, settleWithin, errCode } from './util.js';
 
 const TEXT_OUTPUT = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] };
@@ -201,6 +201,10 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
   blockedToolFor = () => false }) {
   /** 用法说明的写法（D125，核心配置 context.usageStyle；读不到按 guided）。 */
   const style = () => { try { return coreConfig()?.context?.usageStyle === 'purpose' ? 'purpose' : 'guided'; } catch { return 'guided'; } };
+  /** 核心的配置快照（D165：字数上限跟着核心走；读不到按默认值）。 */
+  const cc = () => { try { return coreConfig(); } catch { return null; } };
+  /** 宿主截掉了核心给的东西（只有主人手写了更小的上限才会有）：按条交回核心计数 host.inject.truncated。 */
+  const noteTruncated = (pm, sessionId, n) => { if (n > 0) { try { pm.sessions?.recallOutcome?.(sessionId, { outcome: 'truncated', count: n, trigger: 'tool' }); } catch { /* 只是计数 */ } } };
   /** agentId → disposer */
   const registered = new Map();
   const stats = { registered: 0, calls: { memory_recall: 0, memory_note: 0, memory_fix: 0, memory_look: 0 }, results: {} };
@@ -225,7 +229,7 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     const q = String(args?.query ?? '').trim();
     if (!q) return '要想什么？query 写一句想回忆的事。';
     const deadline = tc.recallDeadlineMs ?? 8000;
-    const opt = { mode: 'deliberate', query: clip(q, 200), deadlineMs: deadline, budgetChars: tc.recallBudgetChars ?? 1200,
+    const opt = { mode: 'deliberate', query: clip(q, 200), deadlineMs: deadline, budgetChars: coreBudgetChars(cc(), tc, 'tool'),
       ...(args?.about ? { about: clip(String(args.about), 80) } : {}), ...(args?.time ? { time: clip(String(args.time), 40) } : {}),
       ...(args?.where ? { where: clip(String(args.where), 40) } : {}),
       ...(args?.include_history === true ? { includeHistory: true } : {}), ...(exec?.signal ? { signal: exec.signal } : {}) };
@@ -238,7 +242,8 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     const given = Number(r.value?.alreadySent) > 0;
     if (!r.value?.items?.length) { bump(!r.value ? 'error' : given ? 'alreadyGiven' : 'nothing'); return given ? TOOL_TEXT.alreadyGiven : TOOL_TEXT.nothing; }
     // 回忆（D155）：结果里有回忆那一层时整个结果的上限放开，开头带「找了哪儿」那一行
-    const { text, used, recollect } = renderRecallResult(r.value, { tools: tc, style: style() });
+    const { text, used, recollect, truncated } = renderRecallResult(r.value, { tools: tc, style: style(), coreConfig: cc() });
+    noteTruncated(pm, claim.sessionId, truncated);
     if (!used.length) { bump(given ? 'alreadyGiven' : 'nothing'); return given ? TOOL_TEXT.alreadyGiven : TOOL_TEXT.nothing; }
     // 场合的档只有 off / live：关着的场合核心回想就是空的；这里只防读不到档位（不给内容，也不记注入日志）
     if (assembler.modeOf(claim.settingId) !== 'live') { bump('withheld'); return TOOL_TEXT.withheld; }
@@ -290,7 +295,8 @@ export function createMemoryTools({ getPm, claims, states, assembler, hostConfig
     const reason = r.value.look?.reason;
     if (!r.value.items?.length) { bump(`look:${reason ?? 'nothing'}`); return say(LOOK_TEXT[reason] ?? LOOK_TEXT.nothing); }
     if (assembler.modeOf(claim.settingId) !== 'live') { bump('look:withheld'); return TOOL_TEXT.withheld; }
-    const { text, used } = renderLookResult(r.value, { tools: tc, style: style() });
+    const { text, used, truncated } = renderLookResult(r.value, { tools: tc, style: style(), coreConfig: cc() });
+    noteTruncated(pm, claim.sessionId, truncated);
     if (!used.length) { bump('look:nothing'); return LOOK_TEXT.nothing; }
     const nonce = randomId(12);
     try {

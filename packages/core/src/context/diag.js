@@ -114,6 +114,12 @@ export function recallDiag(core, { trigger = null, background = false, signal = 
  */
 export function noteHostRecall(core, sessionId, o) {
   if (core.readOnly) return;
+  // D165：宿主真的截掉了核心给的东西（只有主人在宿主配置里手写了更小的上限才会有）：按条计数 host.inject.truncated，不算一次等回想
+  if (o?.outcome === 'truncated') {
+    const n = Number.isInteger(o.count) && o.count > 0 ? Math.min(o.count, 1000) : 0;
+    if (n) bump(core, 'host.inject.truncated', n);
+    return;
+  }
   const outcome = ['ok', 'timeout', 'error', 'aborted'].includes(o?.outcome) ? o.outcome : 'other';
   bump(core, `host.recall.${outcome}`);
   if (Number.isFinite(o?.waitedMs) && o.waitedMs >= 0) bump(core, `host.recall.wait.${msBucket(o.waitedMs)}`);
@@ -176,6 +182,9 @@ export function recallHealth(core, opt = {}) {
         pointBack: m.get('context.pointBack') ?? 0, pointBackCapped: m.get('context.pointBack.capped') ?? 0,
         // 这之后他的事（D164）：给出了至少一条的轮数、一共给了几条
         sinceHereTurns: m.get('context.sinceHere.turns') ?? 0, sinceHereItems: m.get('context.sinceHere.items') ?? 0,
+        // D165：各层「正文被截短的 / 因为额度没装进去的 / 因为这一层或整块的上限没装进去的」条数，宿主截掉的条数
+        clipped: pick('context.clip.'), budgetDroppedBy: pick('context.pack.budgetDropped.'), capDropped: pick('context.pack.capDropped.'),
+        hostTruncated: m.get('host.inject.truncated') ?? 0,
       },
     });
   }

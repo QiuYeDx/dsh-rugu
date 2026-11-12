@@ -222,6 +222,8 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  *   - verdict='share_vague' 时用第二段写好的含糊版本，来源也含糊；
  *   - 时间按人感觉的写（D148，lang.describeTime：「今晚 21:39 · 20 分钟前」「昨天晚上 22:14」「周日（11/8）下午」），钟点和日子照样写着（F25）。
  * 渲染结果 ≤ itemChars；文字过 intake.sanitizeForPrompt。
+ * opt.bodyChars【补】（D165：给了它时它只管正文，在词或句子的边界上截；来源说法和附注不占正文的字数，各有小上限；结果带 clipped 标出正文截没截。
+ * 回想注入都走这一种，常驻区、提炼背景照旧按整条的 itemChars）；
  * 可选字段：opt.settingKey（目标场合：来源在同一个场合时说「在这里」，称呼按这个场合里的叫法）；
  * opt.previous（旧版本也过了关口①时传进来，渲染成「之前……，后来……」；没传就只渲染这一版）；
  * opt.placeAllowed【补】（场合键 → 能不能在目标这里写出那个场合的名字：别的场合的名字也是记忆，场合的档案卡过了关口①才写，
@@ -234,10 +236,10 @@ export function mmr(items, params) { return mmrImpl(items, params); }
  * 记忆已经不在了（被删）返回空字符串，调用方跳过这条。
  * @param {import('../core-types.js').CoreContext} core
  * @param {import('../core-types.js').ScoredCandidate} c
- * @param {{verdict: 'share'|'share_vague', vagueText?: string|null, at: number, itemChars: number, settingKey?: string|null,
+ * @param {{verdict: 'share'|'share_vague', vagueText?: string|null, at: number, itemChars?: number, bodyChars?: number, settingKey?: string|null,
  *          previous?: {candidate: import('../core-types.js').ScoredCandidate, verdict: 'share'|'share_vague', vagueText?: string|null}|null,
  *          placeAllowed?: (settingKey: string) => boolean, timeStyle?: 'full'|'day', excerpt?: string[], outline?: boolean}} opt
- * @returns {{rendered: string, provenance: string, confidence: number}}
+ * @returns {{rendered: string, provenance: string, confidence: number, clipped?: boolean}}
  */
 export function render(core, c, opt) { return renderImpl(core, c, opt); }
 
@@ -366,7 +368,7 @@ export function scopeOf(core, spec, opt) { return scopeOfImpl(core, spec, opt ??
 
 /**
  * 【D155】回忆这一档的名额：tool（她调记忆工具）/ auto（被直接问到以前的事、自动触发）。recall.recollect 的 maxItems、totalChars
- * 乘花费档位的 recollectScale（节省档 0.5），itemChars 不变。同步、不抛错。
+ * 乘花费档位的 room（D165，config/caps.js），itemChars（正文）不变。同步、不抛错。
  * @param {import('../core-types.js').CoreContext} core
  * @param {'tool'|'auto'} kind
  * @returns {{kind: 'tool'|'auto', maxItems: number, itemChars: number, totalChars: number}}

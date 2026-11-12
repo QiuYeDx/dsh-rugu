@@ -8,10 +8,10 @@
 //   5. 全库：原来的有意回想流水线照跑一次（没有范围的情况、范围之外的、版本和结果的带出、知道感、补不回的空白都靠它）；
 //   6. 合并：范围内找到的在前（按合并名次，不看 B 和 S），全库的在后，去重；候选照旧带元数据、照旧算激活（B 只管「印象很模糊」）；
 //   7. 盖住时间：范围有时间窗时，把有记忆的跨度等分成几段，按形状决定先盖住（timeline）、只按名次（point）还是一半一半（null）；
-//   8. 名额：recall.recollect 的两档（工具 / 自动触发），随花费档位（budget.presets 的 recollectScale）。
+//   8. 名额：recall.recollect 的两档（工具 / 自动触发），随花费档位（budget.presets 的 room，D165，config/caps.js 一处算）。
 // 出错的退路：意图、范围、范围内检索任何一步出错或超时，都退回「只有全库那一份」，记计数，不让回想失败。
 // 产出的仍是还没过关口①的候选（CandidateSet），另带 recollect：意图和范围的摘要、名额、时间段（给 context 写「找了哪儿」那一行）。
-import { budgetLimits } from '../config/defaults.js';
+import { recallCaps } from '../config/caps.js';
 import { listPerceptShards } from '../store/fts.js';
 import { buildCues } from './cues.js';
 import { hydrate } from './hydrate.js';
@@ -33,24 +33,16 @@ export function recollectEnabled(core) {
 }
 
 /**
- * 这一档的名额（D155）：tool（她调记忆工具）/ auto（被直接问到以前的事，自动触发）；条数和总字数乘花费档位的 recollectScale（节省档 0.5）。
+ * 这一档的名额（D155）：tool（她调记忆工具）/ auto（被直接问到以前的事，自动触发）。条数和总字数随花费档位的 room（D165，config/caps.js；
+ * 原来的 recollectScale 已弃用，读到了也忽略），每条的字数（正文）不乘。
  * @param {object} cfg  core.config.get()
  * @param {'tool'|'auto'} kind
  * @returns {{kind: 'tool'|'auto', maxItems: number, itemChars: number, totalChars: number}}
  */
 export function recollectTier(cfg, kind) {
-  const r = cfg?.recall?.recollect ?? {};
-  const t = (kind === 'tool' ? r.tool : r.auto) ?? { maxItems: 18, itemChars: 240, totalChars: 2000 };
-  let scale = 1;
-  try { scale = Number(budgetLimits(cfg).recollectScale); } catch { scale = 1; }
-  if (!Number.isFinite(scale) || scale <= 0) scale = 1;
-  scale = Math.min(1, Math.max(0.1, scale));
-  return {
-    kind: kind === 'tool' ? 'tool' : 'auto',
-    maxItems: Math.max(1, Math.round((Number(t.maxItems) || 1) * scale)),
-    itemChars: Math.max(40, Math.floor(Number(t.itemChars) || 240)),
-    totalChars: Math.max(200, Math.round((Number(t.totalChars) || 2000) * scale)),
-  };
+  const K = recallCaps(cfg).recollect;
+  const t = kind === 'tool' ? K.tool : K.auto;
+  return { kind: kind === 'tool' ? 'tool' : 'auto', maxItems: t.maxItems, itemChars: t.itemChars, totalChars: t.totalChars };
 }
 
 /**

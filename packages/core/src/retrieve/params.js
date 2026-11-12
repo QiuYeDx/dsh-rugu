@@ -1,5 +1,6 @@
 // retrieve 用到的参数：每次都从 core.config.get() 取（热加载）。数值都在 config/defaults.js 的 recall 段（唯一的来源），
 // 都是【建议】，等评测集调参（§6.5、§14.4）。这里只把 retrieve 内部用的几个键摆成方便用的形状（x）。
+import { recallCaps } from '../config/caps.js';
 
 /**
  * 当前配置里 retrieve 用的部分。mergeConfig 保证快照里的键是全的。
@@ -8,6 +9,7 @@
 export function params(core) {
   const cfg = core.config.get();
   const r = cfg.recall;
+  const K = recallCaps(cfg);
   const x = {
     queryInstruct: r.queryInstruct,
     maxQueryVectors: r.maxQueryVectors,
@@ -18,7 +20,10 @@ export function params(core) {
     weightsPresent: r.weights.present,
     entity: r.entity,
     time: r.time,
-    present: r.present,
+    // D165：在场者近况的名额随花费档位的 room（config/caps.js）
+    present: { ...r.present, maxItems: K.present.maxItems },
+    // D165：交给关口①的候选 = 这一档的条数（随 room）× poolFactor
+    maxItems: { involuntary: K.involuntary.maxItems, deliberate: K.deliberate.maxItems },
     rerank: r.rerank,
     occurrence: r.occurrence,
     past: r.past,

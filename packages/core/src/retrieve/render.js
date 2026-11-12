@@ -5,12 +5,15 @@
 //   - 时间按人感觉的写（D148，lang.describeTime）：「今晚 21:39 · 20 分钟前」「昨天晚上 22:14」「周日（11/8）下午」，不让她自己和「现在」做减法。
 //     会冻结一段时间的文字（常驻区）传 timeStyle 'day'，不带「多久以前」；钟点和日子照样写着，留在会话里也认得出是什么时候（F25）；
 //   - 文字过 intake.sanitizeForPrompt，整条 ≤ itemChars。
+//   - D165：给了 bodyChars 时它管的只是正文（不截半句：在词或句子的边界上截，config/caps.js 的 clipBody）；来源说法和附注是代码拼的短句，
+//     不占正文的字数，各有小上限（PREFIX_CHARS / NOTE_CHARS）。回想注入（context）都走这一种；常驻区、提炼背景照旧按整条的 itemChars。
 // 渲染出来的文字是给她自己看的（注入块整体对她说，§10.4），所以她自己写成「你」；provenance 是不带人称的短说法。
 import { charLen, clip, parseJson, safe } from './util.js';
 import { parseRef } from '../store/refs.js';
 import { nameOf, principalLabelOf } from './names.js';
 import { params } from './params.js';
 import { outlineText } from './outline.js';
+import { clipBody, PREFIX_CHARS, NOTE_CHARS } from '../config/caps.js';
 
 /** 措辞模板（按 selfProfile.locale 选，没有的语言用 zh）。只是输出的说法，不参与任何判断。 */
 const PHRASES = {
@@ -113,7 +116,10 @@ export function render(core, c, opt) {
     const L = phrasesFor(core);
     const at = Number.isFinite(opt?.at) ? opt.at : core.now();
     const timeStyle = opt?.timeStyle === 'day' ? 'day' : 'full';
-    const max = Number.isFinite(opt?.itemChars) && opt.itemChars > 0 ? opt.itemChars : core.config.get().recall.involuntary.itemChars;
+    // D165：bodyChars = 正文的上限（来源说法、附注另算）；没给时照旧 itemChars 管整条
+    const bodyChars = Number.isFinite(opt?.bodyChars) && opt.bodyChars > 0 ? Math.floor(opt.bodyChars) : null;
+    const max = bodyChars ?? (Number.isFinite(opt?.itemChars) && opt.itemChars > 0 ? opt.itemChars : core.config.get().recall.involuntary.itemChars);
+    const fitX = (prefix, content, suffix) => (bodyChars ? fitBody(prefix, content, suffix, bodyChars) : { text: fit(prefix, content, suffix, max), clipped: false });
     const target = opt?.settingKey ?? null;
     const san = (t) => safe(core, 'sanitize', () => core.mods.intake.sanitizeForPrompt(core, String(t ?? '')), String(t ?? '').replace(/\s+/g, ' '));
     // 只有「能说」「说个大概」两种结论才有文字；别的（aware_private / omit / pending / 没给）一律不给内容（fail closed，§9.3.4）
@@ -162,7 +168,8 @@ export function render(core, c, opt) {
       if (!vague) return { ...none, provenance: L.vagueSource };
       const date = whenOf(core, m.time, at, 'date', tzOffsetMin);
       const prefix = `（${[date, L.vagueSource].filter(Boolean).join(L.sep)}）`;
-      return { rendered: fit(prefix, vague, '', max), provenance: L.vagueSource, confidence: round2(Math.min(P, m.confidence)) };
+      const f = fitX(prefix, vague, '');
+      return { rendered: f.text, provenance: L.vagueSource, confidence: round2(Math.min(P, m.confidence)), ...(f.clipped ? { clipped: true } : {}) };
     }
 
     // ── 来源说法 ──
@@ -189,7 +196,8 @@ export function render(core, c, opt) {
       const when = m.time != null ? whenOf(core, m.time, at, 'day', tzOffsetMin) : '';
       const head = [when, prov.whereText].filter(Boolean).join(' · ');
       const hedgeO = sure < x.render.hedgeAbove ? L.maybe : '';
-      return { rendered: fit(head ? `${head} · ${hedgeO}` : hedgeO, line, '', max), provenance: prov.text, confidence: round2(sure) };
+      const f = fitX(head ? `${head} · ${hedgeO}` : hedgeO, line, '');
+      return { rendered: f.text, provenance: prov.text, confidence: round2(sure), ...(f.clipped ? { clipped: true } : {}) };
     }
 
     // ── 内容 ──
@@ -210,11 +218,16 @@ export function render(core, c, opt) {
     const time = m.time != null ? whenOf(core, m.time, at, timeStyle, tzOffsetMin) : '';
     const prefix = `（${[time, prov.text].filter(Boolean).join(L.sep)}）${hedge}`;
     // 对着问题截取（D155，只在回忆这条路上给 excerpt）：放不下时截和问题最对得上的那一段，不是从头截
+    let focused = false;
     if (Array.isArray(opt?.excerpt) && opt.excerpt.length) {
-      const room = max - charLen(prefix) - charLen(`${notes}${faint}`);
-      content = focusOn(core, content, room >= 4 ? room : max - charLen(prefix), opt.excerpt);
+      if (bodyChars) { const c2 = focusOn(core, content, bodyChars, opt.excerpt); focused = c2 !== content; content = c2; }
+      else {
+        const room = max - charLen(prefix) - charLen(`${notes}${faint}`);
+        content = focusOn(core, content, room >= 4 ? room : max - charLen(prefix), opt.excerpt);
+      }
     }
-    return { rendered: fit(prefix, content, `${notes}${faint}`, max), provenance: prov.text, confidence: round2(sure) };
+    const f = fitX(prefix, content, `${notes}${faint}`);
+    return { rendered: f.text, provenance: prov.text, confidence: round2(sure), ...(f.clipped || focused ? { clipped: true } : {}) };
   } catch (e) {
     safe(core, 'render', () => { throw e; }, null);
     return none;
@@ -292,6 +305,17 @@ function fit(prefix, content, suffix, max) {
   const room2 = max - charLen(prefix);
   if (room2 >= 4) return `${prefix}${clip(content, room2)}`;
   return clip(`${prefix}${content}`, max);
+}
+
+/**
+ * D165：正文 ≤ bodyChars（在边界上截，clipped 标出截没截）；来源说法 ≤ PREFIX_CHARS、附注 ≤ NOTE_CHARS，各自截，不占正文的字数。
+ * @returns {{text: string, clipped: boolean}}
+ */
+function fitBody(prefix, content, suffix, bodyChars) {
+  const b = clipBody(content, bodyChars);
+  const pre = charLen(prefix) > PREFIX_CHARS ? clipBody(prefix, PREFIX_CHARS).text : prefix;
+  const suf = charLen(suffix) > NOTE_CHARS ? clipBody(suffix, NOTE_CHARS).text : suffix;
+  return { text: `${pre}${b.text}${suf}`, clipped: b.clipped };
 }
 
 /** 渲染要的东西：主表行 + 来源。 */

@@ -229,7 +229,8 @@ export const DEFAULTS = deepFreeze({
     sameSim: 0.5,                        // 和已有的一条（同一个工具、同一个范围）这么像就并进那一条，不另记
     perDay: 12,                          // 她一天（本地日）最多新记几条（并进已有的不算；主人教的不受这个限制）
     proofMin: 30,                        // 这个工具这么多分钟内「先没成、换了做法后成了」：她这时记下的这个工具的经验算验证过（宿主看到的工具结果）
-    recallMax: 2, itemChars: 110, chars: 220,   // 每轮「你的经验」最多几条、每条和一共多少字
+    // 每轮「你的经验」最多几条、每条正文多少字（D165：不含「（验证过）」和来源说法，110 → 220）、一共多少字（220 → 480）
+    recallMax: 2, itemChars: 220, chars: 480,
     topicMin: 0.34,                      // 只靠话题对上时：经验正文的多字词（按全文检索的 IDF 加权）至少这么大比例出现在眼前这句里，而且至少两个词
     topicCommon: 0.02, topicCommonDocs: 5, topicHits: 3,   // 出现在这么大比例以上、而且至少这么多条原话里的词算到处都有的词：话题对上至少要有一个不是这种词（评审 M4）
     toolLog: { max: 300, errorChars: 40 },     // 工具没成 / 换了做法后成了的记录（只有工具名、出错类别——引号里的内容、网址、数字都去掉——、时间），留最近 max 条
@@ -298,8 +299,10 @@ export const DEFAULTS = deepFreeze({
   recall: {
     // 截止时间（D117 起放宽：主人「哪怕提高一些允许的等待时长」；11-06 实测 Ollama 查询嵌入 1290 次里 105 次 > 800 ms、40 次 > 3 s，
     // 多半是冷加载和换参数重载。不自主 800 → 1500 接住大部分慢的那一截，有意 3000 → 4000；都是上限，平常几十毫秒就回来）
-    involuntary: { maxItems: 5, itemChars: 120, maxChars: 600, deadlineMs: 1500 },
-    deliberate: { maxItems: 8, itemChars: 120, deadlineMs: 4000, toolDeadlineMs: 8000 },
+    // D165（用户反馈第 39 轮）：itemChars 管的是一条的正文，不含来源说法、「讲过了」的附注和状态说法（它们是代码拼的短句，另有小上限，
+    // 见 config/caps.js 的 META_CHARS），120 → 240；条数和总字数是平衡档的基线（5 → 8、600 → 1600、8 → 12），随花费档位的 room 乘（caps.js）
+    involuntary: { maxItems: 8, itemChars: 240, maxChars: 1600, deadlineMs: 1500 },
+    deliberate: { maxItems: 12, itemChars: 240, deadlineMs: 4000, toolDeadlineMs: 8000 },
     // 窗口：最近 6–10 条、≤ 400 字；往回取时遇到 ≥ maxGapH 小时的空白就停（隔了几周再说话，几周前的话题不算眼下的线索，S20b）
     window: { minMsgs: 6, maxMsgs: 10, maxChars: 400, maxGapH: 12 },
     presentSpeakerWindowMin: 30,         // 最近 30 分钟在本场合亲自发过言的人算在场（评审:PS-13）
@@ -365,13 +368,14 @@ export const DEFAULTS = deepFreeze({
     // 回忆（D155，retrieve/recollect.js）：有意回想（她调记忆工具、这一轮被判定在问过去）的新路——读懂问题 → 圈范围 → 范围内找 + 全库照跑一次
     // → 范围内的在前、盖住时间 → 照旧过关口① → 对着问题截取。enabled 关掉就完全走原来的有意回想（评测拿它做改前改后）。
     // 两档名额：tool（她调记忆工具）、auto（被直接问到以前的事、自动触发的那一轮）；maxItems 条、每条 itemChars 字、一共 totalChars 字。
-    // 随花费档位：budget.presets 的 recollectScale 乘 maxItems 和 totalChars（节省档 0.5）。
+    // 随花费档位：budget.presets 的 room 乘 maxItems 和 totalChars（D165；原来的 recollectScale 已弃用），itemChars（正文，不含记号和来源说法）不乘。
     // poolFactor：交给关口①的候选 = maxItems × 它；scopeTopK：范围内稠密、字面各取前多少；segments：有时间窗时把范围里有记忆的跨度
     // 等分成几段（盖住时间）；reserveMs：全库那一次少用这么多时间，留给范围内检索和合并
     recollect: {
       enabled: true,
-      tool: { maxItems: 36, itemChars: 300, totalChars: 4000 },
-      auto: { maxItems: 18, itemChars: 240, totalChars: 2000 },
+      // D165：itemChars 300 → 480、240 → 360（正文）；totalChars 4000 → 6000、2000 → 3000（平衡档的基线）
+      tool: { maxItems: 36, itemChars: 480, totalChars: 6000 },
+      auto: { maxItems: 18, itemChars: 360, totalChars: 3000 },
       poolFactor: 2, scopeTopK: 120, segments: 6, reserveMs: 300,
       // 「那段时间的经过」（D156）：范围里的经历一段一行（上下文头，空的用「标题 + 叙述的第一句」），≤ lineChars 字（不含记号）；
       // 一档的总字数里经过占多少看形状（share：timeline / point / none = 形状判断不出来），point 时经过最多 pointLines 行；
@@ -392,8 +396,9 @@ export const DEFAULTS = deepFreeze({
     // 没有任何时间窗：A = 基础激活 B + triggerBoost + cueWeight × 话题相似度 +（还开着的意图和它的来源行）openBoost，A < tau 的不进；
     // candidatePool 只是一次看多少行（按 id 倒序走索引），maxLines / budgetChars / lineChars 是软的上下文预算
     // budgetChars 按渲染好的字数算（含每组第一行的场合说明、careful / not-here 的来源说明），pack 不再另加余量
+    // D165：lineChars 是一行原话的正文（场合、谁、标签不算），80 → 160；maxLines 12 → 16、budgetChars 800 → 1600 是平衡档的基线，随 room 乘
     working: {
-      enabled: true, candidatePool: 300, maxLines: 12, budgetChars: 800, lineChars: 80, contextLines: 3,
+      enabled: true, candidatePool: 300, maxLines: 16, budgetChars: 1600, lineChars: 160, contextLines: 3,
       tau: -0.5, triggerBoost: 1.0, cueWeight: 1.0, openBoost: 1.0,
       // B1 豁免（D106）的「他就在这里提起了它」：和眼前这句话的话题相似度 ≥ 它。D113 起没有清晰度（gist）这一说，不再管别的
       onTopicMin: 0.35,
@@ -414,7 +419,8 @@ export const DEFAULTS = deepFreeze({
       // 只剩这么几个字（报一个数、一两个字），就算照着前面定好的做的一步，不另起一段（评审：「@她 99」每一步都成了开头）。
       // sameTopic：他后来的一句没有自己的后续（没有照着做的一步、没改掉什么），只有和「他最近一次跟你定的」那一句的话题相似度到了它，
       // 才把这个标记拿走（评审：后来随口托她办的一件事、一件新的提醒不该让游戏丢了「最近一次定的」）。都是软的，没有时间
-      thread: { maxLines: 7, acceptLines: 2, admitLines: 21, stepChars: 4, sameTopic: 0.3 },
+      // D165：maxLines 7 → 10（不随 room 变）；admitLines 跟着 21 → 30（准入只跑第一段，零 LLM）
+      thread: { maxLines: 10, acceptLines: 2, admitLines: 30, stepChars: 4, sameTopic: 0.3 },
       open: { maxItems: 3 },
       maxTriggers: 3,                    // 一批里有几个人都在对她说话：最多按几个触发者各算一份工作记忆（D108，预算主触发者优先）
       memoMax: 2000,                     // 进程内去重集合（提过的感知、记过的排除）的上限，满了清空
@@ -523,15 +529,18 @@ export const DEFAULTS = deepFreeze({
     usageStyle: 'guided',
     // 常驻区各部分的字数预算；peopleMax：重要的人最多看几位（字数预算照样管）；autobiographyDays：「现在的我」的自传要点看几天
     resident: { coreSelf: 400, usage: 240, people: 400, me: 300, upcoming: 200, lessons: 200, peopleMax: 3, autobiographyDays: 2 },
+    // D165：warmStart 500 → 800、todaySoFar 300 → 450、peopleCardChars 180 → 240；warmStart / todaySoFar / presentRecent / todayItems 随 room 乘
+    // （presentRecent 是别处的闲聊原话，价值最低，基线不加）
     layers: {
-      gapH: 12, warmStart: 500, peopleCards: 3, peopleCardChars: 180, presentRecent: 600, todaySoFar: 300, awareLines: 2, intentions: 1,
+      gapH: 12, warmStart: 800, peopleCards: 3, peopleCardChars: 240, presentRecent: 600, todaySoFar: 450, awareLines: 2, intentions: 1,
       gapLines: 2,                       // 时间间隔 1–2 行
       pendingLines: 1,                   // 「还在想」的暂定提示行（§9.3.5），不占想起来的条数
       warmEpisodes: 2,                   // 暖启动：最近几段情节
       warmWindows: 2,                    // 暖启动：还没成段的原文窗口（§10.5 没封口的对话）
       todayItems: 3,                     // 有意回想时「今天到目前为止」给几条小结
     },
-    blockMaxChars: 900,
+    // 整块（不含有自己预算的工作记忆、这之后他的事、回忆）：900 → 2000（D165，平衡档的基线，随 room 乘）
+    blockMaxChars: 2000,
     // 注入预算（§10.4）：上限跟着花费档位走（D133，budget.presets 的 injectShare / injectPerSessionPerDay，生效值从 budgetLimits() 取）。
     // rolling.steps 照旧有效：滚动窗口看最近多少步。
     // rolling.maxShare、perSessionPerDay 已弃用（D133）：读到了也忽略，改看档位；留着只是不让旧的覆盖报未知字段
@@ -549,7 +558,7 @@ export const DEFAULTS = deepFreeze({
     // 指回去（D146）：别人直接对她说的话开启的一轮，回想排在最前面的条目这个周期已经给过时，给一行指回去（不是整条再发一遍）。
     // max：一轮最多指回几条（0 = 不指）；chars：每条截到多少字（沿用那一条原来的渲染：来源说法 + 内容的开头）；
     // perCycle：同一条一个压缩周期里最多指回几次（防止每一轮都重复）
-    pointBack: { max: 2, chars: 80, perCycle: 2 },
+    pointBack: { max: 2, chars: 120, perCycle: 2 },   // D165：chars 80 → 120
     // 这之后他的事（D164）：重新在一个场合接上话时（最典型是她自己开口），对眼前这个人，她和他上次在这里说完话以后在别处知道的关于他的事，
     // 一件一行、按要紧排。maxItems：最多几件（计划和它的结果算一件；几个人时第一个人优先，后面的人至少各留 1 件）；chars：这一层一共多少字
     // （自己的预算，不占整块的上限、不受每天额度限制；= maxItems × itemChars，装得下全部挑中的，不然挑中了又装不下的只能靠普通回想）；
@@ -557,7 +566,8 @@ export const DEFAULTS = deepFreeze({
     // 排序是平滑的打分：重要度 + （有了结果的计划 ? resolvedBoost : 0）− log2(1 + 距现在的小时数 / ageScaleH)。刚发生的事里要紧的先说，
     // 有了结果的计划稍占先（她不知道就会去问）；隔了几天的事让位给今天的事（ageScaleH 6：6 小时前的扣 1 分，一天前扣约 2.3、四天前扣约 4.1）。
     // 没有硬的时间窗
-    sinceHere: { enabled: true, maxItems: 4, chars: 400, itemChars: 100, resolvedBoost: 2, ageScaleH: 6 },
+    // D165：itemChars 100 → 200（正文），chars 400 → 800（= maxItems × itemChars）；maxItems 和 chars 随 room 乘
+    sinceHere: { enabled: true, maxItems: 4, chars: 800, itemChars: 200, resolvedBoost: 2, ageScaleH: 6 },
     // 她自己调记忆工具（D148）：查到的排最前；工作记忆的段、只靠「在场」那一路来的近况，要和问题字面重合到 minSim（重合的词占较短一边的比例），
     // 或者 retrieve 稠密那一路把它排在前 denseTop 名以内才放（词法那一路的词里有实体词元，不算）
     toolRecall: { minSim: 0.3, denseTop: 5 },
@@ -681,27 +691,31 @@ export const DEFAULTS = deepFreeze({
     coverageRecheckMs: 10 * MIN,         // 影子空间覆盖率到 100% 后多久复查一次（§8.9）
   },
 
-  // ── §10.6 预算：三档预设，默认宽松（§17 Q10）。核心只读这些数，执行在集成层的 BudgetPort
+  // ── §10.6 预算：三档预设，默认平衡（loose，D165 以前叫「宽松」；§17 Q10）。核心只读这些数，执行在集成层的 BudgetPort
   //   调用次数、未命中输入的上限写 null = 不设上限；perSourceShare 1 = 一个来源不单独限；mainChatRatioCap null = 不设比例上限
-  //   不设上限（unlimited，D121）：给重度用户——次数、token、比例都不拦，其余和宽松一样全开；余额保护照留（1 天）
+  //   效果优先（unlimited，D121 时叫「不设上限」）：给重度用户——次数、token、比例都不拦，其余和平衡一样全开；余额保护照留（1 天）
   //   注入预算（D133）：回想注入她上下文的字数，花的是她聊天的输入 token。injectShare：最近 context.rolling.steps 步里受限的注入字数
   //   ≤ 同期上下文增量 × 它；injectPerSessionPerDay：每个会话每天受限的注入字数。null = 不限。「你想着的」和工作记忆不受限、也不记账。
-  //   宽松给得松（记忆效果优先）；节省是 D133 之前的数（5%、8000 字）。
-  //   D147：宽松档不设每天的上限（原来 4 万字）。比例已经保证注入不超过聊天内容增长的四分之一，再加一个绝对数只会让最活跃的会话
+  //   平衡给得松（记忆效果优先）；节省是 D133 之前的数（5%、8000 字）。
+  //   D147：平衡档不设每天的上限（原来 4 万字）。比例已经保证注入不超过聊天内容增长的四分之一，再加一个绝对数只会让最活跃的会话
   //   先断粮（实测最活跃的群下午就用完了，之后到午夜只剩工作记忆和「你想着的」）；想要的话在「自定义」里自己设一个数
-  //   D155：recollectScale 乘回忆（被问到以前的事、她调记忆工具）两档的条数和总字数（recall.recollect），节省档减半
+  //   D155：recollectScale 乘回忆（被问到以前的事、她调记忆工具）两档的条数和总字数（recall.recollect），节省档减半——D165 起已弃用（读到了也忽略），并进 room
+  //   D165（用户反馈第 39 轮）：room = 记忆给多少的倍数，乘回想各层的条数和总字数（不乘每条的字数：哪一档都不截半句），在 config/caps.js 一处算。
+  //   三档对外叫「节省 / 平衡（默认）/ 效果优先」，内部键不变（saving / loose / unlimited）。平衡档 injectShare 0.25 → 0.4：记忆块已经占
+  //   一个周期文字的约 20%，块变大以后 0.25 会更常撞上「只剩工作记忆」的断崖。效果优先 = 原来的不设上限 + room 2
   budget: {
     preset: 'loose',
     presets: {
       loose: { mainChatRatioCap: null, dailyCalls: 3000, dailyUncachedTokens: 5_000_000, perSourceShare: 0.5,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: 0.25, injectPerSessionPerDay: null, recollectScale: 1 },
+        injectShare: 0.4, injectPerSessionPerDay: null, room: 1, recollectScale: 1 },
       saving: { mainChatRatioCap: 0.25, dailyCalls: 600, dailyUncachedTokens: 1_000_000, perSourceShare: 0.3,
         stage2Scope: 'direct', prefetchRewrite: false, rerank: true, sleepDepth: 'essential', balanceProtectDays: 3,
-        injectShare: 0.05, injectPerSessionPerDay: 8000, recollectScale: 0.5 },
+        injectShare: 0.05, injectPerSessionPerDay: 8000, room: 0.6, recollectScale: 1 },
       unlimited: { mainChatRatioCap: null, dailyCalls: null, dailyUncachedTokens: null, perSourceShare: 1,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: null, injectPerSessionPerDay: null, recollectScale: 1 },
+        injectShare: null, injectPerSessionPerDay: null, room: 2, recollectScale: 1 },
+      // 每档的 recollectScale 已弃用（D165）：读到了也忽略（并进 room）；留着只是不让旧的覆盖报未知字段
     },
     // 主人单独改过的项（管理页「花费护栏 → 自定义」或手改文件），覆盖预设。能写的键和取值见 BUDGET_OVERRIDE_KEYS / checkBudgetOverride；
     // 其中 dailyOutputTokens（每天输出的上限，null = 不设）不在预设里：不改时按宿主每档的数（host.budget.dailyOutputTokens）
@@ -806,11 +820,18 @@ const BUDGET_OVERRIDE_CHECKS = Object.freeze({
   // 注入预算（D133）：null = 不限
   injectShare: (v) => (v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1) ? null : '应为大于 0、不超过 1 的数，或 null（不限）'),
   injectPerSessionPerDay: capV,
-  // 回忆的名额（D155）：recall.recollect 两档的条数和总字数乘它
-  recollectScale: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 1 ? null : '应为 0.1–1 的数'),
+  // 记忆给多少（D165）：回想各层的条数和总字数乘它（config/caps.js）
+  room: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= ROOM_MIN && v <= ROOM_MAX ? null : `应为 ${ROOM_MIN}–${ROOM_MAX} 的数`),
+  // 已弃用（D165）：回忆的名额并进 room。读到了也忽略；留着只是不让旧的覆盖报未知字段（不在 BUDGET_OVERRIDE_KEYS 里，管理页不再显示）
+  recollectScale: (v) => (typeof v === 'number' && Number.isFinite(v) ? null : '应为数（已弃用，读到了也忽略）'),
 });
-/** budget.overrides 能写的键（顺序就是管理页「自定义」里的顺序）。 */
-export const BUDGET_OVERRIDE_KEYS = Object.freeze(Object.keys(BUDGET_OVERRIDE_CHECKS));
+/** room（D165）的取值范围：建议 0.5–3，校验放宽到 0.3–4（手改文件的余地）。 */
+export const ROOM_MIN = 0.3;
+export const ROOM_MAX = 4;
+/** 已弃用、读到了也忽略的预算项（D165：recollectScale 并进 room）。 */
+const DEPRECATED_BUDGET_KEYS = new Set(['recollectScale']);
+/** budget.overrides 能写的键（顺序就是管理页「自定义」里的顺序；已弃用的不在里面）。 */
+export const BUDGET_OVERRIDE_KEYS = Object.freeze(Object.keys(BUDGET_OVERRIDE_CHECKS).filter((k) => !DEPRECATED_BUDGET_KEYS.has(k)));
 /**
  * 检查 budget.overrides 的一项（D121）。
  * @param {string} key

@@ -183,21 +183,21 @@ async function runCase(c, env) {
       const opt = { deadlineMs, ...(k.open ? { open: clip(String(k.open), 64) } : { when: clip(String(k.when), 40), ...(k.where ? { where: clip(String(k.where), 40) } : {}),
         ...(k.about ? { about: clip(String(k.about), 80) } : {}) }) };
       out = await core.mods.context.lookAt(core, s, opt);
-      rendered = render.renderLookResult(out, { tools: caps.tools, style });
+      rendered = render.renderLookResult(out, { tools: caps.tools, style, coreConfig: core.config.get() });
     } else if (c.trigger === 'tool') {
       const t = c.tool;
       const s = { settingKey: c.setting, sessionId: c.session ?? null, trigger: Number.isSafeInteger(c.focus) ? 'message' : 'idle',
         ...(Number.isSafeInteger(c.focus) ? { focusPerceptId: c.focus } : {}) };
-      const opt = { mode: 'deliberate', query: clip(t.query.trim(), 200), deadlineMs, budgetChars: caps.toolBudgetChars,
+      const opt = { mode: 'deliberate', query: clip(t.query.trim(), 200), deadlineMs, budgetChars: render.coreBudgetChars(core.config.get(), caps.tools, 'tool'),
         ...(t.about ? { about: clip(t.about, 80) } : {}), ...(t.time ? { time: clip(t.time, 40) } : {}), ...(t.where ? { where: clip(t.where, 40) } : {}), ...(t.include_history === true || t.includeHistory === true ? { includeHistory: true } : {}) };
       out = await core.mods.context.recallAt(core, s, opt);
       // 和线上记忆工具同一条渲染（D155：结果里有回忆那一层时上限放开、带「找了哪儿」）
-      rendered = render.renderRecallResult(out, { tools: caps.tools, style });
+      rendered = render.renderRecallResult(out, { tools: caps.tools, style, coreConfig: core.config.get() });
     } else {
       const s = { settingKey: c.setting, sessionId: c.session ?? null, trigger: c.trigger, ...(Number.isSafeInteger(c.focus) ? { focusPerceptId: c.focus } : {}) };
-      out = await core.mods.context.recallAt(core, s, { mode: 'involuntary', deadlineMs, budgetChars: caps.injectBudgetChars });
+      out = await core.mods.context.recallAt(core, s, { mode: 'involuntary', deadlineMs, budgetChars: render.coreBudgetChars(core.config.get(), caps.inject, 'inject') });
       // 和线上自动注入同一条渲染（D155：被判成回忆的那一轮整块上限加大）
-      rendered = render.renderInjectBlock(out, { inject: caps.inject, style });
+      rendered = render.renderInjectBlock(out, { inject: caps.inject, style, coreConfig: core.config.get() });
     }
     const tRecall = performance.now() - t1;
     db = new DatabaseSync(path.join(dir, FILES[0]), { readOnly: true });
@@ -273,10 +273,8 @@ export async function runReplay(o) {
   const { fakePorts, FakeClock, FakeLogger, FakeEmbedding } = await imp('packages/core/test/fakes/index.js');
   const render = await imp('packages/dsh/src/host/render.js');
   const { HOST_DEFAULTS } = await imp('packages/dsh/src/host/config.js');
+  // D165：宿主的字数上限默认跟着核心走（null）；交给核心的整块字数按回放用的配置算（render.coreBudgetChars）
   const caps = {
-    injectBudgetChars: HOST_DEFAULTS.inject?.budgetChars ?? 900,
-    blockMaxChars: HOST_DEFAULTS.inject?.blockMaxChars ?? 1400,
-    toolBudgetChars: HOST_DEFAULTS.tools?.recallBudgetChars ?? 1200,
     inject: HOST_DEFAULTS.inject ?? {},
     tools: HOST_DEFAULTS.tools ?? {},
   };

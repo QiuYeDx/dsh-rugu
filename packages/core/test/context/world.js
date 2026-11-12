@@ -81,13 +81,17 @@ export async function makeWorld(opt = {}) {
       // 照 retrieve.render 的契约：share_vague 只用含糊版本；opt.previous（旧版本也过了关口①）渲染成「之前……，后来……」；
       // opt.settingKey 是目标场合（这里只记下来，断言用）
       render: (core, c, o) => {
-        w.calls.render.push({ ref: c.ref, verdict: o.verdict, settingKey: o.settingKey ?? null, previous: o.previous?.candidate?.ref ?? null, itemChars: o.itemChars });
+        w.calls.render.push({ ref: c.ref, verdict: o.verdict, settingKey: o.settingKey ?? null, previous: o.previous?.candidate?.ref ?? null, itemChars: o.itemChars,
+          bodyChars: o.bodyChars });
         boom('retrieve.render');
         const body = (ref, v, vague) => (v === 'share_vague' ? (vague ?? '有人提过一件事') : (w.texts.get(ref) ?? `记忆 ${ref}`));
         let text = body(c.ref, o.verdict, o.vagueText);
         if (o.previous && o.verdict === 'share') text = `之前${body(o.previous.candidate.ref, o.previous.verdict, o.previous.vagueText)}，后来${text}`;
         const provenance = o.verdict === 'share_vague' ? '听人说的' : (w.provenance.get(c.ref) ?? '自己说的');
-        return { rendered: Array.from(text).slice(0, o.itemChars).join(''), provenance, confidence: 0.9 };
+        // D165：bodyChars 管正文（这里的替身没有来源说法，正文就是整条）；没给时照旧 itemChars
+        const max = o.bodyChars ?? o.itemChars;
+        const cut = Array.from(text).length > max;
+        return { rendered: Array.from(text).slice(0, max).join(''), provenance, confidence: 0.9, ...(cut ? { clipped: true } : {}) };
       },
       looksLikePast: async () => { boom('retrieve.looksLikePast'); return w.past; },
       degradeLevel: () => w.degrade,

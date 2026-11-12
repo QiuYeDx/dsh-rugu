@@ -4,6 +4,7 @@
 // 现在：那几行带着「在群A当着大家」的来源在心里、是最新的一段，段头按显示出来的最后一行算；草稿直接说（不送审、不改口）。
 // 变体：旧的 glance-2 行 about=others 照样进；规范写好以后照样进。真模块 + 替身端口 + 假平台；账号、群号都是假的。
 import test from 'node:test';
+import { recallCaps } from '../../src/config/caps.js';
 import assert from 'node:assert/strict';
 import { opaqueFrom } from '../../src/contract/ids.js';
 import { openWorld, recallAt, platformSeeds, FakeLLM, MINUTE, glancer } from './presence-world.js';
@@ -112,7 +113,7 @@ for (const [label, opt] of [['第一眼 glance-2（正常）', {}], ['旧的 gla
       if (opt.live) {
         // 8 小时前那串提醒（过了点的两件）还在心里，但不是「现在这件」：一分钟前刚聊的小狗才是
         assert.ok(wm.some((i) => /十点半/.test(i.rendered) && i.group !== last.group), `那串提醒还在、不在最后 ${show(wm)}`);
-        assert.ok(wm.length <= 12);
+        assert.ok(wm.length <= recallCaps(w.core.config.get()).working.maxLines, 'D165：按生效的行数上限');
       }
       assert.deepEqual(g.slice(-5).map((i) => i.id), ids, '显示出来的最后五行就是视频、他那句和她的三句（按时间）');
       assert.ok(!wm.some((i) => /别外传|私下/.test(i.rendered)), '没有不相干的判语');

@@ -1258,14 +1258,18 @@ html.pm-sm-maxed{overflow:hidden}
   const dur = (ms) => (ms == null ? '—' : ms < 3600_000 ? `${Math.max(1, Math.round(ms / 60_000))} 分钟` : ms < 2 * 86400_000 ? `${Math.round(ms / 3600_000)} 小时` : `${Math.round(ms / 86400_000)} 天`);
   const fmtMb = (mb) => (mb == null ? '—' : mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
   const yuan = (x) => (x == null ? '—' : x === 0 ? '¥0' : x < 0.005 ? '不到 ¥0.01' : `¥${x >= 10 ? x.toFixed(1) : x.toFixed(2)}`);
-  const PRESET = { loose: '宽松', saving: '节省', unlimited: '不设上限' };
-  const BUDGET_PRESETS = ['loose', 'saving', 'unlimited'];
-  /** 花费护栏现在是哪一档：单独改过的写「自定义（以宽松为基础）」。 */
+  // 三档对外的名字（D165）：节省 / 平衡（默认）/ 效果优先；内部键不变（loose 原来叫「宽松」、unlimited 原来叫「不设上限」）
+  const PRESET = { loose: '平衡', saving: '节省', unlimited: '效果优先' };
+  const BUDGET_PRESETS = ['saving', 'loose', 'unlimited'];
+  /** 「记忆给多少」（D165）写成人话：数字从服务端按核心生效的上限算好（budgetConfig.memory），页面不写死。 */
+  const memText = (m) => (m ? `想起来的最多 ${m.recalled} 条（被问到时 ${m.recalledDeliberate} 条）、工作记忆最多 ${m.working} 行、被问到以前的事时最多约 ${fmtNum(m.recollectAuto)} 字（她调记忆工具时约 ${fmtNum(m.recollectTool)} 字）`
+    : '—');
+  /** 花费护栏现在是哪一档：单独改过的写「自定义（以平衡为基础）」。 */
   const presetText = (preset, custom) => (custom ? `自定义（以${label(PRESET, preset)}为基础）` : label(PRESET, preset));
-  /** 「宽松档」「「不设上限」档」：说某一档的值时用。 */
-  const presetOf = (preset) => (preset === 'unlimited' ? '「不设上限」档' : `${label(PRESET, preset)}档`);
+  /** 「平衡档」「「效果优先」档」：说某一档的值时用。 */
+  const presetOf = (preset) => (preset === 'unlimited' ? '「效果优先」档' : `${label(PRESET, preset)}档`);
   /** 卡片右上角的短写法。 */
-  const presetShort = (preset, custom) => (custom ? '自定义' : preset === 'unlimited' ? '不设上限' : `${label(PRESET, preset)}档`);
+  const presetShort = (preset, custom) => (custom ? '自定义' : preset === 'unlimited' ? '效果优先' : `${label(PRESET, preset)}档`);
   /** 用量对着上限的一条进度。cap = 'none'：这一项不设上限，只写用了多少。 */
   const meter = (name, used, cap) => {
     if (used == null) return null;
@@ -1402,10 +1406,10 @@ html.pm-sm-maxed{overflow:hidden}
     rerank: { name: '重排', options: [[true, '开'], [false, '关']], hint: '回想的候选再排一次序。在本机算、不花模型钱（要配了重排服务才有用）；关掉排序差一点。' },
     sleepDepth: { name: '夜间整理', options: [['full', '完整'], ['essential', '只做必要项']], hint: '完整：泛化、反思、社区、日记、自我概念都做；只做必要项：省钱，她长进得慢一些。' },
     // 注入预算（D133）：花的是她聊天的输入，不是后台的钱
-    injectShare: { name: '回想注入最多占上下文增量的', unit: '%', pct: true, none: '不限', hint: '最近 50 步里，回想注入她上下文的字数最多是同期上下文增长的多少。调高：想起来的给得更全；调低：她聊天的输入少一点。「你想着的」和工作记忆不算在内。' },
+    injectShare: { name: '回想注入最多占上下文增量的', unit: '%', pct: true, none: '不限', hint: '最近 50 步里，回想注入她上下文的字数最多是同期上下文增长的多少。调高：想起来的给得更全，超了只剩工作记忆的轮更少；调低：她聊天的输入少一点。「你想着的」、工作记忆、这之后他的事、被问到以前的事时的回忆不算在内。' },
     injectPerSessionPerDay: { name: '每个会话每天回想注入', unit: '字', none: '不限', hint: '一个会话一天里回想最多注入多少字（零点清零）。到了以后当天只给「你想着的」、工作记忆和被直接问到时的回想，别的先不给。' },
-    // 回忆的名额（D155）
-    recollectScale: { name: '被问到以前的事时想起来的量', unit: '%', pct: true, hint: '她调记忆工具、被直接问到以前的事时，一次给她的条数和字数（100% = 工具 36 条、约 4000 字，自动的 18 条、约 2000 字）。调高：答得更全；调低：她聊天的输入少一点。' },
+    // 记忆给多少（D165）：回想各层的条数和总字数乘它（不乘每条的字数：哪一档都不截半句）
+    room: { name: '记忆给多少', unit: '倍', dec: true, hint: '每一轮想起来的条数、工作记忆的行数、被问到以前的事时给的字数都乘它（每条的字数不变：一条记忆总是尽量完整地给）。1 = 平衡档；节省 0.6、效果优先 2。调高：想起来的更全；调低：她聊天的输入少一点。注入的记忆留在她的上下文里，给得越多，聊天原文被压缩得越早。' },
   };
   /** 一项的值写成人话（null = 不设上限）。 */
   function budgetVal(k, v) {
@@ -1414,6 +1418,7 @@ html.pm-sm-maxed{overflow:hidden}
     if (f.options) return (f.options.find(([x]) => x === v) ?? [null, '—'])[1];
     if (v == null) return f.none ?? '不设上限';
     if (k === 'balanceProtectDays') return v === 0 ? '关' : `${v} 天`;
+    if (k === 'room') return `${v} 倍`;
     if (f.pct) return pct(v);
     if (f.wan) return `${fmtNum(v)} token`;
     return `${fmtNum(v)} ${f.unit}`;
@@ -1430,7 +1435,7 @@ html.pm-sm-maxed{overflow:hidden}
     if (t === '' || !Number.isFinite(Number(t))) return { error: range };
     const n = Number(t);
     const v = f.wan ? Math.round(n * 10000) : f.pct ? Math.round(n * 10) / 1000 : n;
-    if (!f.wan && !f.pct && !Number.isInteger(v)) return { error: `要整数。${range}` };
+    if (!f.wan && !f.pct && !f.dec && !Number.isInteger(v)) return { error: `要整数。${range}` };
     if (v < r.min - 1e-9 || v > r.max + 1e-9) return { error: range };
     return { value: v };
   }
@@ -1465,7 +1470,7 @@ html.pm-sm-maxed{overflow:hidden}
           sw = h('input', { type: 'checkbox', role: 'switch', checked: vals[k] == null, 'aria-label': f.none ?? '不设上限' });
           sw.addEventListener('change', () => {
             input.disabled = sw.checked; err.hidden = true;
-            // 从「不设」打开：先填一个有上限的档的数（这一档自己也不设时用宽松的、再不行用节省的）
+            // 从「不设」打开：先填一个有上限的档的数（这一档自己也不设时用平衡档的、再不行用节省档的）
             if (!sw.checked && input.value === '') input.value = toInput(k, bc.presets[base][k] ?? bc.presets.loose?.[k] ?? bc.presets.saving?.[k] ?? r.min);
             if (!sw.checked) input.focus();
           });
@@ -1489,7 +1494,7 @@ html.pm-sm-maxed{overflow:hidden}
         (bc.keys ?? Object.keys(BUDGET_FIELDS)).map(row));
     }
     draw();
-    add(dlg.body, h('p', { class: 'pm-desc' }, '按自己的用量改。前几条是每天的上限（零点清零），中间几条是后台做多做少的开关，最后两条是回想往她上下文里注入多少（花在她聊天的输入上）。保存后立即生效；和那一档一样的项不算改过，随时可以在花费护栏里点一档回去。'), list);
+    add(dlg.body, h('p', { class: 'pm-desc' }, '按自己的用量改。前几条是每天的上限（零点清零），中间几条是后台做多做少的开关，最后三条是回想往她上下文里注入多少、记忆给多少（花在她聊天的输入上）。保存后立即生效；和那一档一样的项不算改过，随时可以在花费护栏里点一档回去。'), list);
     const save = btn('保存', async () => {
       const out = {};
       let bad = null;
@@ -1506,7 +1511,19 @@ html.pm-sm-maxed{overflow:hidden}
     add(dlg.foot, btn('恢复成这一档', () => { vals = { ...bc.presets[base] }; draw(); }), h('span', { class: 'pm-sp' }), btn('取消', () => dlg.close()), save);
   }
 
-  /** 「设置」里的花费护栏：预设（宽松 / 节省 / 不设上限）、自定义、每条上限和今天用了多少、超了会怎样。 */
+  /** 层名 → 管理页上的叫法（D165 诊断「各层的上限压了多少」用）。 */
+  const LAYER_NAMES = { recalled: '想起来的', recentFromPresent: '在场的人最近', todaySoFar: '你今天', warmStart: '最近在这里聊到的', people: '人物卡', gap: '时间间隔',
+    working: '工作记忆', sinceHere: '这之后他的事', pointBack: '指回去', recollect: '回忆的细节', outline: '那段时间的经过', lessons: '她的经验', intentions: '你想着的', awarePrivate: '心里有数' };
+  /** 诊断「注入预算」里的一小段（D165）：今天各层被截短的 / 因为额度没装进去的 / 因为上限没装进去的条数，和宿主截掉的条数。 */
+  function limitsSec(inj) {
+    const by = (o) => (o && typeof o === 'object' ? o : {});
+    const layers = [...new Set([...Object.keys(by(inj?.clipped)), ...Object.keys(by(inj?.budgetDroppedBy)), ...Object.keys(by(inj?.capDropped))])];
+    const rows = layers.map((l) => [LAYER_NAMES[l] ?? l, `截短 ${fmtNum(by(inj?.clipped)[l] ?? 0)} · 额度没装进去 ${fmtNum(by(inj?.budgetDroppedBy)[l] ?? 0)} · 上限没装进去 ${fmtNum(by(inj?.capDropped)[l] ?? 0)}`]);
+    rows.push(['宿主截掉的', inj?.hostTruncated ? badge(`${fmtNum(inj.hostTruncated)} 条（宿主配置里手写了更小的上限）`, 'warn') : '0']);
+    return h('div', { class: 'pm-sec' }, h('h3', null, '各层的上限压了多少（今天，条）'),
+      layers.length ? null : h('div', { class: 'pm-faint' }, '今天还没有被截短、因为额度或上限没装进去的条目'), kv(rows));
+  }
+  /** 「设置」里的花费护栏：预设（节省 / 平衡 / 效果优先，D165）、自定义、每条上限和今天用了多少、超了会怎样、每一档记忆给多少。 */
   function guardCard(bud, bc, { setBudget, canWrite = true } = {}) {
     const L = bud && !bud.error ? bud.limits ?? {} : {};
     const t = bud && !bud.error ? bud.today ?? {} : {};
@@ -1519,9 +1536,13 @@ html.pm-sm-maxed{overflow:hidden}
     const unlimited = bc?.preset === 'unlimited';
     return card({ title: '花费护栏', aside: bc ? `现在：${presetText(bc.preset, custom)}` : '', desc: '效果优先，花费是护栏：正常用的时候后台该做的都照做，这些上限只防程序失控（死循环、刷屏的群把调用放大几十倍）和余额被后台吃光。' },
       h('div', { class: 'pm-opts' },
-        opt({ title: '预设', hint: '宽松（默认）：后台该做的都照做。节省：第二段评估只在对她说、真正等待和有意回想时跑，预取改写关掉，夜间整理只做必要项，后台花费最多是她聊天的 25%，余额不够 3 天就停后台。不设上限：给用得多、不在乎花费的时候，调用次数、token 和比例都不拦，其余和宽松一样，只留余额保护。外发审视三档都单独预留。回想注入她上下文的量也跟着档位：宽松最多占上下文增量的 25%、每个会话每天不限；节省 5%、每个会话每天 8000 字；不设上限都不限。',
+        opt({ title: '预设', hint: '平衡（默认）：后台该做的都照做，记忆给得足。节省：第二段评估只在对她说、真正等待和有意回想时跑，预取改写关掉，夜间整理只做必要项，后台花费最多是她聊天的 25%，余额不够 3 天就停后台，记忆给得少一些。效果优先（原来的「不设上限」）：给用得多、不在乎花费的时候，调用次数、token 和比例都不拦，只留余额保护；记忆给得最多、没有滚动额度。外发审视三档都单独预留。回想注入她上下文的量也跟着档位：平衡最多占上下文增量的 40%、每个会话每天不限；节省 5%、每个会话每天 8000 字；效果优先都不限。一条记忆在哪一档都尽量完整地给，不截半句；档位管的是条数和总量。',
           control,
-          more: custom ? h('div', { class: 'pm-alert info' }, h('span', null, `现在是自定义：以${label(PRESET, bc.preset)}为基础，改了 ${changed.length} 项。点上面任一档就回到那一档，改过的都清掉。`)) : null }),
+          // 每一档「记忆给多少」意味着什么（D165，数字从核心生效的上限算）；下面接着原来的「现在是自定义」
+          more: h('div', null, bc?.memory ? h('div', { class: 'pm-faint' }, '记忆给多少（每一档；都是上限，不是每轮都给满。注入的记忆是她聊天的输入，进了上下文以后每一步都按缓存命中再算一次；给得越多，上下文长得越快、压缩得越早）：') : null,
+            bc?.memory ? h('ul', { class: 'pm-tight' }, BUDGET_PRESETS.map((p) => h('li', null, h('b', null, `${PRESET[p]}：`), memText(bc.memory[p])))) : null,
+            custom && bc?.memoryEffective ? h('div', { class: 'pm-faint' }, `现在（自定义，${bc.memoryEffective.room} 倍）：${memText(bc.memoryEffective)}`) : null,
+            custom ? h('div', { class: 'pm-alert info' }, h('span', null, `现在是自定义：以${label(PRESET, bc.preset)}为基础，改了 ${changed.length} 项。点上面任一档就回到那一档，改过的都清掉。`)) : null) }),
         bc ? opt({ title: '自定义', hint: '哪一档都不合适（用得特别多，或者想再省一点），就从现在的值开始一项一项改：每天的上限、一个群最多占多少、余额保护几天、后台做多做少的开关。',
           control: btn(custom ? '改自定义…' : '自定义每一项…', () => customBudget(bc, setBudget), { disabled: !canWrite }),
           more: changed.length ? h('ul', { class: 'pm-tight' }, changed.map((k) => h('li', null, `${BUDGET_FIELDS[k].name}：${budgetVal(k, bc.overrides[k])}`, h('span', { class: 'pm-faint' }, `（${presetOf(bc.preset)} ${budgetVal(k, bc.presets[bc.preset][k])}）`)))) : null }) : null),
@@ -1536,12 +1557,13 @@ html.pm-sm-maxed{overflow:hidden}
           ['后台花费最多是她聊天的', L.mainChatRatioCap != null ? pct(L.mainChatRatioCap) : '不设（只看上面的上限）'],
           ['余额保护', L.balanceProtectDays ? `余额不够 ${L.balanceProtectDays} 天的预计花费时停后台` : '关了'],
           bc ? ['回想注入她的上下文', `最多占上下文增量的 ${budgetVal('injectShare', bc.effective?.injectShare)}，每个会话每天 ${budgetVal('injectPerSessionPerDay', bc.effective?.injectPerSessionPerDay)}`] : null,
+          bc?.memoryEffective ? ['记忆给多少', memText(bc.memoryEffective)] : null,
           ['余额还够', balanceText(bud)],
         ], true),
         h('div', { class: 'pm-sec' },
           h('h3', null, '到了上限会怎样'),
           h('ul', { class: 'pm-tight' },
-            unlimited ? h('li', null, '现在是「不设上限」：调用次数、token 和比例都不拦，后台该做的照做到底；程序真失控了也不会被拦住，只有余额保护会停后台。单独改过的上限照样生效。') : null,
+            unlimited ? h('li', null, '现在是「效果优先」：调用次数、token 和比例都不拦，后台该做的照做到底，记忆给得最多；程序真失控了也不会被拦住，只有余额保护会停后台。单独改过的上限照样生效。') : null,
             h('li', null, '到了每天的上限：提炼、夜间整理、第二段评估、改写、看过的媒体当天先停，零点清零。她收到的消息照常存、照常想得起来（原话能检索）；对她说的一对一的话的提炼和第一眼还留着一小份。'),
             h('li', null, '第二段评估停了：拿不准的那几条先不给她，第一段放行的照常给，她不会因此不说话。'),
             h('li', null, '外发审视的预留用完：公开场合要送审的那句改口、不发出去。'),
@@ -3008,13 +3030,13 @@ html.pm-sm-maxed{overflow:hidden}
       load();
       return true;
     }
-    /** 花费护栏：换一档（overrides 给 {} = 改过的都清掉）或保存自定义。有风险的（不设上限、关余额保护、去掉某项上限）先弹确认。 */
+    /** 花费护栏：换一档（overrides 给 {} = 改过的都清掉）或保存自定义。有风险的（换成效果优先、关余额保护、去掉某项上限）先弹确认。 */
     async function setBudget(preset, overrides) {
       const risky = preset === 'unlimited' || overrides.balanceProtectDays === 0;
       const r = await confirmed('budget.set', { preset, overrides }, {
-        askable: true, title: preset === 'unlimited' && !Object.keys(overrides).length ? '换成「不设上限」' : '确认修改花费护栏', okText: '确定', danger: risky,
+        askable: true, title: preset === 'unlimited' && !Object.keys(overrides).length ? '换成「效果优先」' : '确认修改花费护栏', okText: '确定', danger: risky,
         render: (pv) => [
-          (pv?.reasons ?? []).some((x) => x.startsWith('换成「不设上限」')) ? h('p', { class: 'pm-desc' }, '「不设上限」给用得多、不在乎花费的时候：后台该做的都照做，不会因为到了每天的上限停下来，余额保护照留。') : null,
+          (pv?.reasons ?? []).some((x) => x.startsWith('换成「效果优先」')) ? h('p', { class: 'pm-desc' }, '「效果优先」（原来的「不设上限」）给用得多、不在乎花费的时候：后台该做的都照做，不会因为到了每天的上限停下来，记忆给得最多，余额保护照留。') : null,
           pv?.reasons?.length ? h('div', { class: 'pm-warnbox' }, h('ul', { class: 'pm-tight' }, pv.reasons.map((x) => h('li', null, x)))) : h('p', { class: 'pm-desc' }, '这项改动会立即生效。'),
         ],
       }).catch((e) => { load(); throw e; });
@@ -3229,6 +3251,9 @@ html.pm-sm-maxed{overflow:hidden}
             // 【D164】这之后他的事：重新在一个场合接上话时，上次在这里说完话以后她在别处知道的、关于眼前这个人的事
             ['「这之后他的事」', `${fmtNum(t.inject?.sinceHereTurns ?? 0)} 轮给过，共 ${fmtNum(t.inject?.sinceHereItems ?? 0)} 条`],
           ]),
+          // 【D165】各层的上限压了多少（今天）：正文被截短的、因为额度没装进去的、因为这一层的条数 / 字数或整块的上限没装进去的；宿主截掉的。
+          // 用来客观地看哪一层的上限在压效果，不靠猜
+          limitsSec(t.inject),
           // 各活跃会话：今天已用 / 上限、滚动窗口已用 / 上限（窗口还没记满或档位不限时写「不限」）；用完了的标提醒色
           r.injectBudget?.length ? h('div', { class: 'pm-sec' }, h('h3', null, '各会话的注入预算（字）'),
             kv(r.injectBudget.map((s) => {

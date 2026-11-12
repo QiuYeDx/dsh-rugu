@@ -5,6 +5,7 @@
 //   - retrieve 的 outcomeOf（计划和它的结果一组，S1）；
 //   - backup.isRestoring（§12.4.5 第 2 步：恢复期间不注入新回想，常驻区给冻结的文本）。
 import test from 'node:test';
+import { recallCaps } from '../../src/config/caps.js';
 import assert from 'node:assert/strict';
 import { validateRecallLayers } from '../../src/contract/index.js';
 import { withWorld, percept, plan, GROUP, DM, ADAPTER, H } from './world.js';
@@ -144,7 +145,7 @@ test('计划和它的结果（outcomeOf）是一组：挨着出现；计划本�
   assert.deepEqual(ids(out, 'recalled'), ['a6', 'e7'], '按它自己被想起的顺序');
 }));
 
-test('S14 告诉过谁：对这里的人讲过的带一句「讲过了」（什么时候讲的按人感觉的写，D148），不当新鲜事再讲；整条仍在字数上限内', () => withWorld(async ({ core, w }) => {
+test('S14 告诉过谁：对这里的人讲过的带一句「讲过了」（什么时候讲的按人感觉的写，D148），不当新鲜事再讲；D165：附注不占正文的字数', () => withWorld(async ({ core, w }) => {
   percept(core, w, { sid: GROUP, actor: w.ids.ming, addressed: 'to-her' });
   const itemChars = core.config.get().recall.involuntary.itemChars;
   w.candidates = ['a1', 'a2', 'a3'];
@@ -158,8 +159,10 @@ test('S14 告诉过谁：对这里的人讲过的带一句「讲过了」（什�
   assert.match(a1, /^阿明下周去成都（你(今天|今晚|昨天)\S* \d{1,2}:\d\d 已经对这里的人讲过，别当新鲜事再讲）$/u);
   assert.match(out.items.find((i) => i.id === 'a2').rendered, /提过个大概/);
   const a3 = out.items.find((i) => i.id === 'a3').rendered;
-  assert.ok(len(a3) <= itemChars, '附注挤占正文，不超过上限');
+  // D165：正文照样截到上限，「讲过了」接在后面、不挤占正文（原来附注一起算，正文只剩几十个字）
+  assert.ok(a3.startsWith('长'.repeat(itemChars)) && !a3.startsWith('长'.repeat(itemChars + 1)), '正文 = 上限');
   assert.ok(a3.endsWith('别当新鲜事再讲）'));
+  assert.ok(len(a3) <= recallCaps(core.config.get()).itemMax.recalled, '整条仍在这一层的 itemMax 以内');
   // 两小时前的钟点（测试时区 +8）；附注会留在会话里一阵，不带「多久以前」（D148）
   const local = new Date(core.now() - 2 * H + 8 * H).toISOString();
   assert.ok(a1.includes(` ${Number(local.slice(11, 13))}:${local.slice(14, 16)} `), a1);

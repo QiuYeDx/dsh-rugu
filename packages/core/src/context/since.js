@@ -24,6 +24,7 @@
 //   「打算做 X」、后来才做完时，她心里的还是旧状态——它上次给她的时间（givenAt，context 从这个周期的注入记录里查）早于这次状态变化的，
 //   算没给过、再给一次（regive，带新的状态说法）；状态没再变就照旧不给。普通事实照旧按引用去重。
 import { refOf, parseRef } from '../store/index.js';
+import { recallCaps } from '../config/caps.js';
 
 const SELF_KINDS = ['self-utterance', 'self-action'];
 const HIS_KINDS = ['utterance', 'action'];
@@ -165,7 +166,8 @@ export function sinceHereFor(core, { key, persons, oneOnOne, at, cfg, selfId, se
   const C = cfg.context?.sinceHere ?? {};
   const res = { groups: [], people: 0, empty: 0 };
   if (C.enabled === false) return res;
-  const max = Math.max(0, Math.floor(C.maxItems ?? 4));
+  // D165：件数随花费档位的 room（config/caps.js）
+  const max = Math.max(0, recallCaps(cfg).sinceHere.maxItems);
   if (!max) return res;
   const maxPeople = Math.max(1, Math.floor(cfg.recall?.working?.maxTriggers ?? 3));
   const pool = Math.max(1, Math.floor(cfg.recall?.working?.candidatePool ?? 300));

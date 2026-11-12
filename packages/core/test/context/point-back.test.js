@@ -12,8 +12,8 @@ const DELIB = { mode: 'deliberate', deadlineMs: 3000, budgetChars: 900 };
 const sit = (sid, o = {}) => ({ settingId: sid, trigger: 'message', sessionId: 's1', ...o });
 const ids = (out, layer) => out.items.filter((i) => !layer || i.layer === layer).map((i) => i.id);
 const metric = (core, name) => core.store.get('SELECT SUM(value) AS v FROM metrics WHERE name = ?', name)?.v ?? 0;
-// 群里那段原话（编的）：比指回去的截断长度长
-const QUOTE = '〔在一个群里，阿明说〕周六下午三点在东门集合，记得带上折叠凳和那个蓝色的保温壶，迟到的人请大家喝奶茶，地点要是改了我再在群里说一声，大家别忘了，另外记得看天气预报，下雨就改到下周六同一个时间，还是东门见';
+// 群里那段原话（编的）：比指回去的截断长度（D165：120）长
+const QUOTE = '〔在一个群里，阿明说〕周六下午三点在东门集合，记得带上折叠凳和那个蓝色的保温壶，迟到的人请大家喝奶茶，地点要是改了我再在群里说一声，大家别忘了，另外记得看天气预报，下雨就改到下周六同一个时间，还是东门见，到时候谁要是来不了提前在群里说一声，我好安排车子和吃的喝的';
 
 /** 集成层的做法：每条带自己的字数（D133），记进注入日志并确认。recordInjection 对不上判定会抛错。 */
 function deliver(core, out, nonce = `n-${Math.random().toString(36).slice(2)}`) {
@@ -50,8 +50,12 @@ test('D146：第一轮给过的那段原话，第二轮被直接追问、它还�
   const pb = out.items.filter((i) => i.layer === 'pointBack');
   assert.deepEqual(pb.map((i) => i.id), ['p1']);
   const orig = first.items.find((i) => i.id === 'p1').rendered;
-  assert.equal(Array.from(pb[0].rendered).length, core.config.get().context.pointBack.chars, '截到配置的字数');
-  assert.ok(orig.startsWith(pb[0].rendered.slice(0, -1)) && pb[0].rendered.endsWith('…'), '沿用原来的渲染（来源说法 + 内容的开头）');
+  // D165：在词或句子的边界上截（不超过配置的字数，往回找边界不超过三成），省略号后面补上没配对的引号括号
+  const width = core.config.get().context.pointBack.chars;
+  const n = Array.from(pb[0].rendered).length;
+  assert.ok(n <= width && n >= Math.floor(width * 0.6), `截到配置的字数以内：${n}`);
+  const head = pb[0].rendered.replace(/…[」』）)”》\]]*$/u, '');
+  assert.ok(head !== pb[0].rendered && orig.startsWith(head), `沿用原来的渲染（来源说法 + 内容的开头）：${pb[0].rendered} / ${orig}`);
   // 对得上这一轮的判定：同一条记忆、同一个结论
   const row = core.store.get('SELECT memory_kind, memory_id, verdict FROM appraisals WHERE id = ?', Number(pb[0].appraisalRef.slice(2)));
   assert.deepEqual([row.memory_kind, row.memory_id, row.verdict], ['percept', 1, 'share']);
@@ -64,7 +68,7 @@ test('D146：第一轮给过的那段原话，第二轮被直接追问、它还�
   const before = budgetState(core, loadSession(core, 's1'), core.now()).dayUsed;
   deliver(core, out, 'n-2');
   const logged = JSON.parse(core.store.get("SELECT items_json FROM injections WHERE nonce = 'n-2'").items_json);
-  assert.deepEqual(logged.find((i) => i.layer === 'pointBack'), { id: 'p1', layer: 'pointBack', verdict: 'share', appraisalRef: pb[0].appraisalRef, chars: 80 });
+  assert.deepEqual(logged.find((i) => i.layer === 'pointBack'), { id: 'p1', layer: 'pointBack', verdict: 'share', appraisalRef: pb[0].appraisalRef, chars: n });
   // 预算只按这一行的字数记
   const after = budgetState(core, loadSession(core, 's1'), core.now()).dayUsed;
   assert.equal(after - before, out.items.reduce((n, i) => n + Array.from(i.rendered).length, 0));

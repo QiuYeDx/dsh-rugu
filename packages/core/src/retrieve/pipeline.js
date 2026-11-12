@@ -124,7 +124,7 @@ export async function runRecall(core, s, opt, internal = {}) {
   // 在场者近况（这一路找到的）自成一组，名额是 recall.present.maxItems，不和别的几路抢 limit 那几条（实测问题 #5）：
   // 上下文里它本来就是单独的一层、有自己的条数和字数上限（§10.4），在这里先被一大堆别的候选按带噪声的 A 挤掉，
   // 那一层的名额就是空的——主人两分钟前在别处定下的游戏规则排在第 40 名，连关口①都到不了。两组各自做 MMR，再按 A 合并。
-  const limit = (mode === 'deliberate' ? p.recall.deliberate.maxItems : p.recall.involuntary.maxItems) * p.x.poolFactor;
+  const limit = (mode === 'deliberate' ? p.x.maxItems.deliberate : p.x.maxItems.involuntary) * p.x.poolFactor;
   const presentLimit = Math.max(0, Number(p.x.present.maxItems) || 0);
   const general = sampled.filter((c) => !viaPresent(c));
   const pool = general.slice(0, limit * 2);

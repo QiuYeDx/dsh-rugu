@@ -392,21 +392,27 @@ test('花费护栏的数据：三档每一项的值（每天输出按宿主每�
   assert.equal(v.custom, true);
   assert.deepEqual(v.overrides, { dailyCalls: 1200, rerank: false }, '不认识的键、越界的值不算改过');
   assert.deepEqual(v.keys, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
-    'injectShare', 'injectPerSessionPerDay', 'recollectScale']);
+    'injectShare', 'injectPerSessionPerDay', 'room']);
   assert.deepEqual(v.presets.loose, { dailyCalls: 3000, dailyUncachedTokens: 5_000_000, dailyOutputTokens: 1_000_000, perSourceShare: 0.5, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.25, injectPerSessionPerDay: null, recollectScale: 1 });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.4, injectPerSessionPerDay: null, room: 1 });
   assert.deepEqual(v.presets.unlimited, { dailyCalls: null, dailyUncachedTokens: null, dailyOutputTokens: null, perSourceShare: 1, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null, recollectScale: 1 });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null, room: 2 });
   // 注入预算（D133）：节省档是原来的数
   assert.deepEqual([v.presets.saving.injectShare, v.presets.saving.injectPerSessionPerDay], [0.05, 8000]);
   assert.deepEqual([v.effective.injectShare, v.effective.injectPerSessionPerDay], [0.05, 8000]);
-  // 回忆的名额（D155）：节省档减半
-  assert.deepEqual([v.presets.saving.recollectScale, v.presets.loose.recollectScale], [0.5, 1]);
+  // 记忆给多少（D165）：节省 0.6 / 平衡 1 / 效果优先 2；每一档的「记忆给多少」从核心生效的上限算（页面不写死）
+  assert.deepEqual([v.presets.saving.room, v.presets.loose.room, v.presets.unlimited.room], [0.6, 1, 2]);
+  assert.deepEqual([v.memory.saving.recalled, v.memory.loose.recalled, v.memory.unlimited.recalled], [5, 8, 16]);
+  assert.deepEqual([v.memory.saving.working, v.memory.loose.working, v.memory.unlimited.working], [10, 16, 32]);
+  assert.deepEqual([v.memory.saving.recollectAuto, v.memory.loose.recollectAuto, v.memory.unlimited.recollectAuto], [1800, 3000, 6000]);
+  assert.equal(v.memory.saving.itemChars, v.memory.unlimited.itemChars, '每条的字数各档一样（不截半句）');
+  assert.equal(v.memoryEffective.room, 0.6, '现在生效的（节省档 + 自定义的几项，没改 room）');
+  assert.equal(budgetConfigView({ budget: { preset: 'loose', overrides: { room: 1.5 } } }, null).memoryEffective.recalled, 12, '自定义的 room 覆盖档位');
   assert.equal(v.effective.dailyCalls, 1200);
   assert.equal(v.effective.dailyOutputTokens, 300_000);
   assert.equal(v.effective.rerank, false);
   assert.equal(v.ranges.dailyCalls.min, 50);
-  // 没有配置：按宽松、没改过
+  // 没有配置：按平衡、没改过
   const d = budgetConfigView({}, null);
   assert.equal(d.preset, 'loose');
   assert.equal(d.custom, false);
@@ -432,6 +438,11 @@ test('花费护栏的校验：范围、整数、枚举；不设上限只给上�
   assert.throws(() => budgetValue('sleepDepth', 'half'), /full \/ essential/);
   assert.throws(() => budgetValue('rerank', 1), /true \/ false/);
   assert.throws(() => budgetValue('egressReservePerDay', 5), /不认识/);
+  // 记忆给多少（D165）：0.5–3 的数，不能不设；已弃用的 recollectScale 不再能改
+  assert.equal(budgetValue('room', 1.25), 1.25);
+  assert.throws(() => budgetValue('room', 0.4), /0\.5–3/);
+  assert.throws(() => budgetValue('room', null), /0\.5–3/);
+  assert.throws(() => budgetValue('recollectScale', 0.5), /不认识/);
   // 注入预算（D133）：比例 1%–100% 或不限；每天的字数 1000 起或不限
   assert.equal(budgetValue('injectShare', null), null);
   assert.equal(budgetValue('injectShare', 0.25), 0.25);

@@ -205,7 +205,7 @@ async function openSpan(ctx, out) {
     const g = gated.get(r.ref);
     if (!g || !CONTENT.has(g.verdict)) { withheld += 1; continue; }
     const tail = r.merged.length ? `（另外 ${r.merged.length} 处也提到）` : '';
-    const r0 = shared.renderContent(core, ctx.cands.get(r.ref), g, { at, tz: ctx.tz, key, chars: lineChars - charLen(tail), placeOk: ctx.placeOk, told: false, outline: true });
+    const r0 = shared.renderContent(core, ctx.cands.get(r.ref), g, { at, tz: ctx.tz, key, chars: lineChars, placeOk: ctx.placeOk, told: false, outline: true });   // D165：lineChars 是正文，记号和尾巴不占
     if (!r0?.rendered) continue;
     const text = `${markOf(r.ref)}${r0.rendered}${tail}`;
     if (used + charLen(text) > ctx.budget) break;

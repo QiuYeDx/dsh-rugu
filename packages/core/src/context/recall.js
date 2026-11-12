@@ -34,6 +34,7 @@ import { sinceHereFor } from './since.js';
 import { recallDiag } from './diag.js';
 import { recollectNote, recollectOrder } from './recollect.js';
 import { sanitize, clip, charLen, whenText, nowText, spanText, dayStart, newTraceId, HOUR_MS, MINUTE_MS } from './text.js';
+import { recallCaps, clipBody } from '../config/caps.js';
 
 const CONTENT = new Set(['share', 'share_vague']);
 // 「心里有数」「还在想」的提示只跟着话题线索走；暖启动、人物卡这些背景层不给暗示
@@ -43,8 +44,6 @@ const HINT_LAYERS = new Set(['recalled', 'recollect', 'recentFromPresent', 'toda
 const RECALL_LAYERS = new Set(['recalled', 'recollect', 'recentFromPresent', 'todaySoFar']);
 const PENDING_TEXT = '你隐约记得和这个问题有关的事，还在想这里能不能说';
 const AWARE_TEXT = '你记得一件和这个话题有关的事，这里不适合提';
-// 「讲过了」附注要占的字数放不下时，正文至少还要留这么多字，否则不带附注（附注只是提醒，正文才是内容）
-const TOLD_MIN_BODY = 24;
 // 来源原话被他后来的一句改掉了（D110 C7）：普通回想的条目带这一句，不说新的是什么
 const SUPERSEDED_MARK = '（后来换了新的）';
 // 恢复期间返回的空层（和 api 层的一致：degradeLevel 4）
@@ -205,7 +204,7 @@ function cachedFor(core, s, { exactOnly = false } = {}) {
     return !(Number.isFinite(g) && g >= x.changedAt);
   }).map((x) => x.ref));
   const items = pack(list, {
-    cfg, mode: entry.mode, sent: session ? sentTags(core, session) : new Set(), budgetChars: cfg.context.blockMaxChars, resend,
+    cfg, mode: entry.mode, sent: session ? sentTags(core, session) : new Set(), budgetChars: recallCaps(cfg).blockMaxChars, resend,
     budget: budgetState(core, session, core.now()), ...(entry.recollectTier ? { recollectTier: entry.recollectTier } : {}),
   });
   return { hit: true, items, degradeLevel: entry.degradeLevel };
@@ -223,7 +222,7 @@ function maybePrepare(core, s, key, latest) {
   try { cached = core.mods.retrieve.cached(core, key); } catch { cached = null; }
   if (!cached) return;
   const cfg = core.config.get();
-  const p = compute(core, s, { mode: 'involuntary', deadlineMs: cfg.recall.involuntary.deadlineMs, budgetChars: cfg.context.blockMaxChars },
+  const p = compute(core, s, { mode: 'involuntary', deadlineMs: cfg.recall.involuntary.deadlineMs, budgetChars: recallCaps(cfg).blockMaxChars },
     { traceId: newTraceId(), background: true })
     .catch((e) => { core.log.warn('context.prepare.error', { error: e?.code ?? e?.name ?? 'Error' }); })
     .finally(() => st.inflight.delete(ck));
@@ -253,7 +252,7 @@ export function prepareAfterPrefetch(core, key) {
     const sessionId = core.store.get("SELECT session_id FROM sessions WHERE setting_key = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1", key)?.session_id ?? null;
     const cfg = core.config.get();
     const p = compute(core, ids ? { settingId: ids.settingId, homeSettingId: ids.settingId, sessionId, trigger: 'prefetch' } : { settingKey: key, sessionId, trigger: 'prefetch' },
-      { mode: 'involuntary', deadlineMs: cfg.recall.involuntary.deadlineMs, budgetChars: cfg.context.blockMaxChars },
+      { mode: 'involuntary', deadlineMs: cfg.recall.involuntary.deadlineMs, budgetChars: recallCaps(cfg).blockMaxChars },
       { traceId: newTraceId(), background: true, prefetch: true })
       .catch((e) => { core.log.warn('context.prefetchGate.error', { error: e?.code ?? e?.name ?? 'Error' }); })
       .finally(() => st.inflight.delete(ck));
@@ -657,6 +656,11 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
     try {
       if (packed.over) bumpMetric(core.store, `context.pack.over.${packed.over}`);
       if (packed.budgetDropped > 0) bumpMetric(core.store, 'context.pack.budgetDropped', packed.budgetDropped);
+      // D165：按层的计数，以后能客观地看哪一层的上限在压效果——正文被截短的（context.clip.<层>）、因为额度没装进去的
+      // （context.pack.budgetDropped.<层>）、因为这一层的条数 / 字数或整块的上限没装进去的（context.pack.capDropped.<层>）
+      for (const [l, n] of Object.entries(packed.clipped ?? {})) if (n > 0) bumpMetric(core.store, `context.clip.${l}`, n);
+      for (const [l, n] of Object.entries(packed.dropped ?? {})) if (n > 0) bumpMetric(core.store, `context.pack.budgetDropped.${l}`, n);
+      for (const [l, n] of Object.entries(packed.capDropped ?? {})) if (n > 0) bumpMetric(core.store, `context.pack.capDropped.${l}`, n);
     } catch { /* 只是计数 */ }
   }
   if (!background) guard('continuity', () => noteContinuity(core, wm.top, items));
@@ -1003,7 +1007,7 @@ function todayFor(core, key, at, tz, windows, cfg) {
   const start = dayStart(at, tz);
   if (windows.length && !windows.some((w) => w.end >= start && w.start <= at)) return [];
   return core.store.all(`SELECT id FROM episodes WHERE ep_kind = 'summary' AND setting_key <> ? AND t_end >= ? AND t_end <= ?
-                         ORDER BY t_end DESC LIMIT ?`, key, start, at, cfg.context.layers.todayItems).map((r) => refOf('episode', r.id));
+                         ORDER BY t_end DESC LIMIT ?`, key, start, at, recallCaps(cfg).layers.todayItems).map((r) => refOf('episode', r.id));
 }
 
 // ── 你想着的（§5.5） ──────────────────────────────────────────────────────
@@ -1048,14 +1052,16 @@ const OWNER_KIND_OK = new Set(['percept', 'window', 'episode', 'assertion', 'ent
 function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId, intent, here = new Set(), placeOk = () => false, diag = null, rc = null }) {
   const fault = (stage, e, extra) => { if (diag) diag.fault(stage, e, extra); else core.log.warn('context.render.error', { error: e?.code ?? e?.name ?? 'Error' }); };
   const entries = [];
-  const itemChars = (mode === 'deliberate' ? cfg.recall.deliberate : cfg.recall.involuntary).itemChars;
+  // D165：这些都是正文的字数（来源说法、附注、记号不占），各层生效的上限在 config/caps.js 一处算
+  const K = recallCaps(cfg);
+  const itemChars = (mode === 'deliberate' ? K.deliberate : K.involuntary).itemChars;
   // 回忆这一层（D155）：每条的字数按这一档，正文放不下时对着问题截取（意图的线索）；只在这一层用，浮现不动
   const rcChars = Number.isFinite(rc?.tier?.itemChars) ? rc.tier.itemChars : itemChars;
   const rcExcerpt = (rc?.intent?.cues ?? []).filter((x) => typeof x === 'string' && x);
   const lineChars = Math.max(20, Number(cfg.recall.recollect?.outline?.lineChars) || 80);
   let pendingDone = 0;
   let awareDone = 0;
-  const L = cfg.context.layers;
+  const L = { ...cfg.context.layers, ...K.layers };
   const push = (slot, g, rendered, extra = {}) => {
     if (!rendered) return null;
     // MMR 合并进这一条的几乎一样的文字：去重（本周期发过没有）时一起看（pack）
@@ -1066,6 +1072,8 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       group: slot.group, order: slot.order, ...(extra.bound ? { bound: true } : {}), ...(dups.length ? { duplicates: dups } : {}),
       ...(Number.isFinite(slot.alloc) ? { alloc: slot.alloc } : {}),
       ...(Array.isArray(extra.merged) && extra.merged.length ? { merged: extra.merged } : {}),
+      // D165：这一条的正文被截短了（context.clip.<层> 只数真给出去的）
+      ...(extra.clipped ? { clipped: true } : {}),
     };
     entries.push(e);
     return e;
@@ -1126,8 +1134,10 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       if (best) {
         const room = L.peopleCardChars - card.text.length;
         const islot = cards.get(slot.person).find((x) => x.ref === best.ref);
+        // 人物卡一张有自己的字数（peopleCardChars，卡头 + 印象）：印象这一行整行按剩下的字数截（在边界上截）
         const r = room >= 8 ? content(islot, best.gate, room, { told: false }) : null;
-        if (r) push({ ...islot, order: slot.order + 1 }, best.gate, `印象：${clip(r.rendered, Math.max(1, room - 3))}`, r);
+        const im = r ? clipBody(r.rendered, Math.max(1, room - 3)) : null;
+        if (r) push({ ...islot, order: slot.order + 1 }, best.gate, `印象：${im.text}`, { ...r, clipped: !!(r.clipped || im.clipped) });
       }
       return;
     }
@@ -1146,10 +1156,13 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
         const r = content(slot, g, itemChars, { told: false });
         provenance = String(r?.provenance ?? '').trim();
       }
-      const text = core.mods.encode.lessonLine(core, row, { chars: cfg.lessons?.itemChars ?? 110, provenance: provenance || null,
-        vague: g.verdict === 'share_vague' ? (g.vagueText ?? null) : null });
+      // D165：bodyChars = 正文的字数（「（验证过）」和来源说法不占）
+      const body = K.lessons.itemChars;
+      const info2 = {};
+      const text = core.mods.encode.lessonLine(core, row, { chars: body, bodyChars: body, provenance: provenance || null,
+        vague: g.verdict === 'share_vague' ? (g.vagueText ?? null) : null, report: info2 });
       if (!text || (g.verdict === 'share_vague' && !g.vagueText)) return;
-      push(slot, g, text, { confidence: scored.get(slot.ref)?.P ?? 1, provenance });
+      push(slot, g, text, { confidence: scored.get(slot.ref)?.P ?? 1, provenance, clipped: !!info2.clipped });
       return;
     }
     if (slot.layer === 'intentions') {
@@ -1176,13 +1189,13 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       // 这之后他的事（D164）：能说、说个大概的才有一行（只能暗示、还在想的这一层不出现，也不给暗示）。计划照普通事实渲染，状态的说法
       // 沿用 retrieve.render 的（「（后来做完了，今晚 18:01）」）；它的结果跟在后面一行「结果：……」，同一组、只占一个名额。计划不能说时结果自己一行
       if (!CONTENT.has(g.verdict)) return;
-      const chars = Math.max(20, Math.floor(cfg.context.sinceHere?.itemChars ?? 100));
+      const chars = K.sinceHere.itemChars;
       if (slot.role === 'outcome') {
         const plan = pool.find((x) => x.layer === 'sinceHere' && x.group === slot.group && x.role === 'plan');
         const pg = plan ? gmap.get(plan.ref) : null;
         const withPlan = !!pg && CONTENT.has(pg.verdict);
         const head = withPlan ? '结果：' : '';
-        const r = content(slot, g, chars - charLen(head));
+        const r = content(slot, g, chars);
         if (r) push(slot, g, `${head}${r.rendered}`, r);
         return;
       }
@@ -1196,7 +1209,7 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       const merged = (scored.get(slot.ref)?.outline?.merged ?? []).filter((r) => typeof r === 'string');
       const mark = markOf(slot.ref);
       const tail = merged.length ? alsoText(merged.length) : '';
-      const r = content(slot, g, lineChars - charLen(tail), { told: false, outline: true });
+      const r = content(slot, g, lineChars, { told: false, outline: true });
       if (r) push(slot, g, `${mark}${r.rendered}${tail}`, { ...r, merged });
       return;
     }
@@ -1212,7 +1225,7 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
         const merged = (scored.get(slot.ref)?.merged ?? []).filter((r) => typeof r === 'string');
         const mark = markOf(slot.ref);
         const tail = merged.length ? alsoText(merged.length) : '';
-        const r = content(slot, g, chars - charLen(mark) - charLen(tail));
+        const r = content(slot, g, chars);
         if (r) push(slot, g, `${mark}${r.rendered}${tail}`, { ...r, merged });
         return;
       }
@@ -1301,19 +1314,19 @@ function groupOutcomes(entries, scored) {
  */
 function renderContent(core, cand, g, { at, tz, key, chars, previous = null, told = true, placeOk = () => false, mark = '', fault = null, excerpt = null, outline = false }) {
   if (!cand || !(chars > 0)) return null;
-  // 「（后来换了新的）」（D110 C7）：它的来源原话被他后来的一句改掉了（第一眼的 replaces）；放得下才带，先于「讲过了」
-  const note = `${mark && chars - charLen(mark) >= TOLD_MIN_BODY ? mark : ''}${told && !cand.fok ? toldNote(core, g, at) : ''}`;
-  const room = note && chars - charLen(note) >= TOLD_MIN_BODY ? chars - charLen(note) : chars;
-  const tail = room < chars ? note : '';
+  // 「（后来换了新的）」（D110 C7）：它的来源原话被他后来的一句改掉了（第一眼的 replaces），在「讲过了」前面。
+  // D165：chars 管的是正文；这两句附注、来源说法都不占正文的字数（原来一起算，一行常被截得只剩几十个字的正文）
+  const tail = `${mark}${told && !cand.fok ? toldNote(core, g, at) : ''}`;
   try {
-    const opt = { verdict: g.verdict, vagueText: g.vagueText ?? null, at, itemChars: room, settingKey: key, placeAllowed: placeOk, ...(g.label ? { label: g.label } : {}) };
+    const opt = { verdict: g.verdict, vagueText: g.vagueText ?? null, at, bodyChars: chars, settingKey: key, placeAllowed: placeOk, ...(g.label ? { label: g.label } : {}) };
     if (previous) opt.previous = previous;
     if (Array.isArray(excerpt) && excerpt.length) opt.excerpt = excerpt;
     if (outline) opt.outline = true;
     const r = core.mods.retrieve.render(core, cand, opt);
-    const body = clip(String(r?.rendered ?? '').trim(), room);
+    const body = String(r?.rendered ?? '').trim();
     if (!body) return null;
-    return { rendered: `${body}${tail}`, provenance: String(r?.provenance ?? ''), confidence: Number.isFinite(r?.confidence) ? r.confidence : (cand.P ?? 0) };
+    return { rendered: `${body}${tail}`, provenance: String(r?.provenance ?? ''), confidence: Number.isFinite(r?.confidence) ? r.confidence : (cand.P ?? 0),
+      ...(r?.clipped ? { clipped: true } : {}) };
   } catch (e) {
     if (fault) fault('render-item', e, { layer: cand?.mref?.kind ?? 'unknown' });
     else core.log.warn('context.render.error', { kind: cand?.mref?.kind ?? 'unknown', error: e?.code ?? e?.name ?? 'Error' });
@@ -1423,15 +1436,20 @@ function gapText(core, g0, g, cand, { at, tz, cfg, key, placeOk = () => false })
     head += `；${lead}，最近一次是${where ? `在${where}，` : ''}${sp(whenText(core, ew.at, at, 'full'))}`;
   }
   const tail = ew ? '。先接住眼前这句，别直接接着这里上次的话题' : '。隔了这么久，先接住眼前这句，别直接接着那时的话题';
-  const max = cfg.recall.involuntary.itemChars + 40;
+  const max = recallCaps(cfg).gapChars;
   let text = sanitize(core, `${head}${tail}`);
   const lead = ew ? '。这里上次聊到：' : '，上次聊到：';
-  const room = max - charLen(text) - charLen(lead);
-  if (CONTENT.has(g.verdict) && room >= GAP_MIN_BODY) {
-    const r = renderContent(core, cand, g, { at, tz, key, chars: Math.min(room, cfg.recall.involuntary.itemChars), told: false });
-    if (r) text = `${sanitize(core, `${head}${lead}`)}${r.rendered}${tail}`;
+  let room = max - charLen(text) - charLen(lead);
+  // D165：renderContent 的字数只管正文（来源说法另算），整行还要 ≤ max：超了按超出的字数把正文再收一次（最多两次），收到 GAP_MIN_BODY 以下就只说时间
+  for (let i = 0; i < 3 && CONTENT.has(g.verdict) && room >= GAP_MIN_BODY; i++) {
+    const r = renderContent(core, cand, g, { at, tz, key, chars: Math.min(room, recallCaps(cfg).involuntary.itemChars), told: false });
+    if (!r) break;
+    const full = `${sanitize(core, `${head}${lead}`)}${r.rendered}${tail}`;
+    const over = charLen(full) - max;
+    if (over <= 0) { text = full; break; }
+    room -= over;
   }
-  return clip(text, max);
+  return clipBody(text, max).text;
 }
 // 间隔那一行里「上次聊到」的内容至少要有这么多字，放不下就只说时间
 const GAP_MIN_BODY = 24;

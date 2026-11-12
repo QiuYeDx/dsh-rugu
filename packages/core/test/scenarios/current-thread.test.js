@@ -4,6 +4,7 @@
 // 真模块：createPersonaMemory + 替身端口 + 假平台；第一眼用替身（词表只在这个替身里：真模型自己看），第二段、提炼一调用就报错。
 // 第一眼按 glance-2 看完 / glance-1 的旧行 / 还在看 / 看失败 各跑一遍。不认任何词、没有时间窗：段按内容和结构切，预算是软的条数和字数。
 import test from 'node:test';
+import { recallCaps } from '../../src/config/caps.js';
 import assert from 'node:assert/strict';
 import { opaqueFrom } from '../../src/contract/ids.js';
 import { openWorld, recallAt, readGlanceCard, readCards, FakeLLM, MINUTE, deferred } from './presence-world.js';
@@ -200,8 +201,10 @@ test('R1（= M13，18:03 原样）：第一眼 glance-2 / glance-1 旧行 / 还�
         assert.equal(open.length, 2, `${variant}：两件提醒各一行 ${show(wm)}`);
         assert.match(open[0].rendered, /他托你的，还没办（2 件；还有约 \d+ 小时到点）/, show(open));
         assert.ok(!wm.some((i) => /闹钟定好了|一口气提醒你两件事|卡带没到/.test(i.rendered)), `${variant}：她回那几件事的话不逐行出现 ${show(wm)}`);
-        assert.ok(wm.length <= 12, `${variant}：行数 ${wm.length}`);
-        assert.ok(wm.reduce((n, i) => n + charLen(i.rendered), 0) <= 800, `${variant}：字数`);
+        // D165：行数和字数按生效的上限（平衡档 16 行、1600 字）
+        const K = recallCaps(w.core.config.get()).working;
+        assert.ok(wm.length <= K.maxLines, `${variant}：行数 ${wm.length}`);
+        assert.ok(wm.reduce((n, i) => n + charLen(i.rendered), 0) <= K.budgetChars, `${variant}：字数`);
         const block = await renderBlock(out.items, 1400);
         for (const r of cur) assert.ok(block.used.some((i) => i.id === r), `${variant}：renderBlock(1400) 之后这一段完整`);
         assert.match(block.text, /以他最新的说法为准/, '用法说明');

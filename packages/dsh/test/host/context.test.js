@@ -35,7 +35,7 @@ test('记忆开着（live）+ 真实新消息：当场入库 → 召回 → 记�
   assert.deepEqual(s, { settingId: 'set-zz-1', sessionId: 's-live', trigger: 'message', homeSettingId: 'set-zz-1', focusObsId: 'obs-u1' });
   assert.equal(opt.mode, 'involuntary');
   assert.equal(opt.deadlineMs, 1500, 'D117：不自主回想的截止 800 → 1500');
-  assert.equal(opt.budgetChars, 900);
+  assert.equal(opt.budgetChars, 2000, 'D165：主人没手写时跟着核心的 context.blockMaxChars（平衡档 2000）');
   // 待确认：只记 id / layer / verdict / appraisalRef，加这一条自己的字数（D133：核心按条目的层记注入预算），不记正文
   const inj = pm.named('injected')[0].args[0];
   assert.equal(inj.mode, 'live');
