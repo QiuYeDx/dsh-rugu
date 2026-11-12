@@ -427,6 +427,8 @@ function buildApi(core, { startup, files }) {
     admin: {
       list: (q) => core.mods.admin.list(core, q),
       get: (ref) => core.mods.admin.get(core, ref),
+      /** 【D163】记忆星图：快照 / 实时增量（since）/ 看一眼（peek）。只读，只读库也能用。 */
+      starmap: (q) => core.mods.admin.starmap(core, q ?? {}),
       simulate: (s) => core.mods.admin.simulate(core, s),
       review: {
         list: () => core.mods.admin.listReview(core, { status: 'pending' }),

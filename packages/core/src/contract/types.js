@@ -371,6 +371,8 @@ export {};
  * @property {{list: () => ReviewItem[], decide: (id: number|string, d: 'approve'|'reject') => Promise<void>}} review
  *           decide 的 id 是 ReviewItem.id（整数），也接受十进制数字字符串（D23）
  * @property {(principalOnly: boolean) => number} pendingCount
+ * @property {(q?: {maxStars?: number, recallDays?: number}|{since: {inj: number, trace: number, told: number}}|{peek: string[]}) => object} starmap
+ *           【D163】记忆星图（只读）：快照 / 实时增量 / 看一眼，返回的形状见 admin/index.js 的 starmap
  */
 
 /**

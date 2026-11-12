@@ -86,6 +86,8 @@ export const API_MAP = [
   // D126：「有记忆 / 没记忆」评测的结果
   ['admin.evalResult.get', [], 'admin.evalResult'],
   ['admin.evalResult.set', [{ cases: [] }], 'admin.setEvalResult'],
+  // D163：记忆星图
+  ['admin.starmap', [{}], 'admin.starmap'],
   ['admin.backup.now', [], 'backup.createPack'],
   ['admin.backup.verify', ['p'], 'backup.verifyPack'],
   ['admin.backup.preview', ['p'], 'backup.previewRestore'],

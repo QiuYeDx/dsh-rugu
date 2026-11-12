@@ -15,6 +15,7 @@ import * as purgeMod from './purge.js';
 import * as retention from './retention.js';
 import * as views from './views.js';
 import * as sim from './simulate.js';
+import * as star from './starmap.js';
 import { parseRef } from '../store/refs.js';
 import { getMetaJson, setMetaJson } from '../store/kv.js';
 import { ContractError } from '../contract/errors.js';
@@ -47,6 +48,31 @@ export function list(core, q) { return views.list(core, q); }
  * @returns {object|null}
  */
 export function get(core, ref) { return views.get(core, ref); }
+
+/**
+ * 【D163】记忆星图（管理页「星图」）。同步、只读（不写任何表、不调模型，只读库也能用），参数不合契约抛 ContractError。
+ * 星 = 事实（全部，含被取代、过时的）、经历 / 日记 / 导入的情节、意图；隐藏、忘掉、彻底删除的不出现，它们的痕迹、想起、说起也不出现。
+ * 快照里没有记忆的正文。三种调用：
+ *   (a) 快照 {} / {maxStars?（默认 20000，1–50000）, recallDays?（默认 60）} →
+ *       {now, rev, cursor: {inj, trace, told}, params: {ageFloorMs, timeUnitMs}, t0,
+ *        people: [{id, name, self, principal, closeness, n}], places: [{key, label, ownerLabel, labelKind, adapter, hint, oneOnOne, n}],
+ *        stars: {cols: ['ref','k','sub','t','t2','place','who','st','sup','imp','cert','val','b'], rows},
+ *        traces: [[starIdx, t, w, d, r]], recalls: [[ts, placeIdx, [[starIdx, layerCode]], rawN]], tells: [[at, placeIdx, starIdx, full]],
+ *        mood: [[at, valence, intensity]], heard: [[placeIdx, hourStartMs, n, nToHer]], nights: [ms], dropped,
+ *        counts: {percepts, episode, fact, plan, lesson}}
+ *       k：0 经历、1 知道的事、2 约定和打算（kind_hint plan / commitment / rule、全部意图）、3 做事的经验（lesson）；
+ *       st：0 现在成立、1 被取代、2 过时；sup：取代它的星的下标（没有 -1）；who 第一个是「家」；
+ *       r：0 encode … 8 inherit、9 聚合箱折叠的老痕迹（每箱一条伪痕迹）；layerCode：0 眼前的事、1 自己浮上来的、2 被问到去找的。
+ *       超过 maxStars 先省 cold 里 b_cache 最低的，被省的星的痕迹、想起、说起一起不带，dropped 报数。
+ *       nights：replay 痕迹按本地日聚簇取每簇最早的时刻，加上 meta 'sleep.lastAt'。
+ *   (b) 实时增量 {since: {inj, trace, told}} → {now, rev, cursor, traces: [[ref, t, w, d, r]], recalls: [[ts, placeKey, [[ref, layerCode]], rawN]],
+ *       tells: [[at, placeKey, ref, level]]}：id 大于游标的，每样最多 500 行（多了取最早的，cursor 只前进到给出的最后一行）。
+ *   (c) 看一眼 {peek: [ref…]}（最多 24 个）→ {items: [{ref, title, text, at}]}：text 截到 160 字；隐藏的、不是星的不给。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{maxStars?: number, recallDays?: number}|{since: {inj: number, trace: number, told: number}}|{peek: string[]}} [q]
+ * @returns {object}
+ */
+export function starmap(core, q) { return star.starmap(core, q ?? {}); }
 
 /**
  * 模拟器（§13.1）：「如果 X 在 Y 说了 Z」，只计算召回和分寸，不注入、不写感知、不加痕迹（判定记录照常写，标模拟）。

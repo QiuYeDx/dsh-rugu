@@ -55,7 +55,7 @@ const MODULE_EXPORTS = {
   admin: ['init', 'dispose', 'list', 'get', 'simulate', 'enqueueReview', 'listReview', 'decideReview', 'expireReviews', 'pendingCount',
     'notifyNeedToKnow', 'listNeedToKnow', 'markNeedToKnowRead', 'addRule', 'revokeRule', 'activeRules', 'modeFor', 'doNotRemember',
     'suppress', 'restore', 'suppression', 'suppressedRefs', 'purge', 'reapplyTombstones', 'withdrawBySource', 'retentionState',
-    'requestRetentionChange', 'cancelRetentionChange', 'applyRetention', 'tombstonedObs', 'withdrawReviews', 'inheritSuppression', 'relaxLimit'],
+    'requestRetentionChange', 'cancelRetentionChange', 'applyRetention', 'tombstonedObs', 'withdrawReviews', 'inheritSuppression', 'relaxLimit', 'starmap'],
 };
 
 test('每个模块都导出约定的函数（模块与接口.md §4）', () => {

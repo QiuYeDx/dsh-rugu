@@ -92,6 +92,43 @@ function sameIds(core, id) {
   const { find, groups } = sameSets(core);
   return [id, ...[...(groups.get(find(id)) ?? [])].filter((x) => x !== id).sort((a, b) => a - b)].slice(0, 64);
 }
+/**
+ * 【D161】一个人一组（pickable 和星图共用）：不列场合；一组全是收回的、或都没有名字的不要。代表按 有身份证据 > established >
+ * 被提到的天数多 > id 小 挑；named 是给名字的那个档案（代表没名字时用组里第一个有名字的）。顺序：激活高的、最近提到的在前
+ * （一组按它排得最前的那个档案算）。alive 是组里没收回的档案行（带 authority、closeness），list 是组里全部档案行。
+ * @returns {{rep: any, named: any, name: string, aliases: string[], members: number[], alive: any[], list: any[]}[]}
+ */
+export function personGroups(core) {
+  const rows = core.store.all(`SELECT t.id, t.kind, t.status, t.display_name, t.is_self, t.mention_days, t.authority, t.closeness,
+      EXISTS (SELECT 1 FROM identity_evidence x WHERE x.entity_id = t.id) AS ident
+    FROM entities t LEFT JOIN activation act ON act.owner_kind = 'entity' AND act.owner_id = t.id
+    WHERE t.kind <> 'setting'
+    ORDER BY act.b_cache IS NULL, act.b_cache DESC, t.last_mention_at DESC, t.id DESC LIMIT 20000`);
+  const { find } = sameSets(core);
+  /** @type {Map<number, any[]>} 组根 → 组里的档案（按上面的顺序） */
+  const groups = new Map();
+  for (const r of rows) {
+    const g = find(r.id);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(r);
+  }
+  const nm = (r) => (typeof r.display_name === 'string' ? r.display_name.trim() : '');
+  const rank = (r) => [r.ident ? 0 : 1, r.status === 'established' ? 0 : 1, -(r.mention_days ?? 0), r.id];
+  const before = (a, b) => { const x = rank(a); const y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+  const out = [];
+  for (const list of groups.values()) {
+    const alive = list.filter((r) => r.status !== 'retracted');
+    if (!alive.length) continue;
+    const rep = [...alive].sort(before)[0];
+    const named = [rep, ...alive.filter((r) => r !== rep)].find((r) => nm(r));
+    if (!named) continue;
+    const name = nm(named);
+    const aliases = [...new Set(alive.map(nm).filter((n) => n && n !== name))].slice(0, 8);
+    out.push({ rep, named, name, aliases, members: list.map((r) => r.id).sort((a, b) => a - b), alive, list });
+  }
+  return out;
+}
+
 /** 按人筛：把 entityId 展开成同一个人的全部档案，拼成 `col IN (?, …)`。 */
 function entityFilter(core, where, params, q, col) {
   if (!Number.isSafeInteger(q.entityId)) return;
@@ -206,22 +243,6 @@ const VIEWS = {
    */
   pickable(core, q) {
     const cap = Math.max(1, Math.min(1000, Number.isInteger(q.limit) ? q.limit : 500));
-    const rows = core.store.all(`SELECT t.id, t.kind, t.status, t.display_name, t.is_self, t.mention_days,
-        EXISTS (SELECT 1 FROM identity_evidence x WHERE x.entity_id = t.id) AS ident
-      FROM entities t LEFT JOIN activation act ON act.owner_kind = 'entity' AND act.owner_id = t.id
-      WHERE t.kind <> 'setting'
-      ORDER BY act.b_cache IS NULL, act.b_cache DESC, t.last_mention_at DESC, t.id DESC LIMIT 20000`);
-    const { find } = sameSets(core);
-    /** @type {Map<number, any[]>} 组根 → 组里的档案（按上面的顺序） */
-    const groups = new Map();
-    for (const r of rows) {
-      const g = find(r.id);
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push(r);
-    }
-    const nm = (r) => (typeof r.display_name === 'string' ? r.display_name.trim() : '');
-    const rank = (r) => [r.ident ? 0 : 1, r.status === 'established' ? 0 : 1, -(r.mention_days ?? 0), r.id];
-    const before = (a, b) => { const x = rank(a); const y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
     const placeOf = core.store.prepare(`SELECT scope_setting_key AS k FROM entity_names WHERE entity_id = ? AND text_raw = ? AND scope_setting_key <> ''
                                         ORDER BY count DESC, last DESC LIMIT 1`);
     // 【D162】名下有没有东西：和按人筛展开的是同样的四张表（事实、情节、他说的原话、意图），组里任何一个档案有就算。
@@ -230,18 +251,8 @@ const VIEWS = {
     const hasRows = core.store.prepare(`SELECT 1 AS x WHERE EXISTS (SELECT 1 FROM assertion_entities WHERE entity_id = ?1)
         OR EXISTS (SELECT 1 FROM percepts WHERE actor_entity_id = ?1) OR EXISTS (SELECT 1 FROM intentions WHERE target_entity_id = ?1)`);
     const storedUnder = (list) => list.some((r) => inEpisodes.has(r.id) || !!hasRows.get(r.id));
-    const items = [];
-    for (const list of groups.values()) {
-      const alive = list.filter((r) => r.status !== 'retracted');
-      if (!alive.length) continue;
-      const rep = [...alive].sort(before)[0];
-      const named = [rep, ...alive.filter((r) => r !== rep)].find((r) => nm(r));
-      if (!named) continue;
-      const name = nm(named);
-      const aliases = [...new Set(alive.map(nm).filter((n) => n && n !== name))].slice(0, 8);
-      items.push({ id: rep.id, name, kind: rep.kind, isSelf: alive.some((r) => !!r.is_self), status: rep.status,
-        members: list.map((r) => r.id).sort((a, b) => a - b), aliases, place: placeOf.get(named.id, name)?.k ?? null, stored: storedUnder(list) });
-    }
+    const items = personGroups(core).map((g) => ({ id: g.rep.id, name: g.name, kind: g.rep.kind, isSelf: g.alive.some((r) => !!r.is_self), status: g.rep.status,
+      members: g.members, aliases: g.aliases, place: placeOf.get(g.named.id, g.name)?.k ?? null, stored: storedUnder(g.list) }));
     return { items: items.slice(0, cap), total: items.length, next: undefined };
   },
   settings(core, q) {
