@@ -260,3 +260,98 @@ test('修复：提炼造出来的重复档案（名字全是别人叫的，正�
     void me;
   } finally { await t.cleanup(); }
 });
+
+// ── 【D162】她的账号在别的档案上：适配器以前不知道她的账号，「@她的平台名」被当成普通群友，核心为她的账号另立了一个档案 ──
+/** 她自己的 ActorRef：核实过的账号 + 这个群的名片。 */
+const herRef = (id, name, scope) => ({ self: true, claims: [{ kind: 'account', namespace: ADAPTER, id, verifiedBy: 'platform' }, ...(name ? [{ kind: 'display-name', name, scope, observedAt: T0 }] : [])] });
+const holderOf = (core, id) => core.store.get('SELECT entity_id FROM identity_evidence WHERE namespace = ? AND id_hash = ?', ADAPTER, core.keys.identityHash(ADAPTER, undefined, id))?.entity_id ?? null;
+
+test('她的 ActorRef 带着的账号挂在一个普通档案上：证据改挂到她、计数；带着她的名片时，那个档案（没说过话、名字都是她的）当场撤掉', async () => {
+  const t = await entitiesCore({ name: 'self-reclaim' });
+  try {
+    const { core, ports } = t;
+    const E = core.mods.entities;
+    const me = E.ensureSelf(core);
+    const k1 = core.keys.settingKey(ADAPTER, 'G1');
+    // D160 之后的样子：「@小满同学」被当成普通群友（账号 + 名片）立了档；还有事实挂在上面（名字是她的照样撤，见上面的修复）
+    const ghost = E.resolveActor(core, member('u-her-01', '小满同学', 'G1'), mention(k1)).entityId;
+    fact(core, { subject: ghost, speaker: me });
+    assert.notEqual(ghost, me);
+    const r = E.resolveActor(core, herRef('u-her-01', '小满同学', 'G1'), ctx(k1));
+    assert.equal(r.entityId, me);
+    assert.equal(holderOf(core, 'u-her-01'), me, '账号归她');
+    assert.equal(metric(core, 'entities.identity.selfReclaimed'), 1);
+    assert.equal(metric(core, 'entities.identity.conflict'), 0);
+    assert.equal(st(core, ghost), 'retracted', '那个档案没了证据、名字又是她的：撤掉');
+    assert.equal(linkOf(core, me, ghost), null, '不挂 same（挂上就撤不掉了）');
+    assert.equal(E.resolveActor(core, member('u-her-01', '小满同学', 'G1'), mention(k1)).entityId, me, '之后带着这个账号的提及就是她');
+    ports.logger.assertNoText('u-her-01');
+  } finally { await t.cleanup(); }
+});
+
+test('她的账号在有管理权限的档案上 → 照旧是冲突、不动；在说过话的档案上 → 证据改挂到她，那个档案留着、和她挂 same', async () => {
+  const t = await entitiesCore({ name: 'self-reclaim-kept' });
+  try {
+    const { core } = t;
+    const E = core.mods.entities;
+    const me = E.ensureSelf(core);
+    const k1 = core.keys.settingKey(ADAPTER, 'G1');
+    const boss = E.resolveActor(core, member('u-x-01', '老周', 'G1'), ctx(k1)).entityId;
+    core.store.run("UPDATE entities SET authority = 'delegated' WHERE id = ?", boss);
+    E.resolveActor(core, herRef('u-x-01'), ctx(k1));
+    assert.equal(holderOf(core, 'u-x-01'), boss, '有管理权限的：不动');
+    assert.equal(metric(core, 'entities.identity.conflict'), 1);
+    assert.equal(metric(core, 'entities.identity.selfReclaimed'), 0);
+    // 她的账号以前被当成一个普通的说话人（说过话）
+    const spoke = E.resolveActor(core, member('u-her-02', '小满同学', 'G1'), ctx(k1)).entityId;
+    percept(core, { actor: spoke, at: T0 });
+    E.resolveActor(core, herRef('u-her-02', '小满同学', 'G1'), ctx(k1));
+    assert.equal(holderOf(core, 'u-her-02'), me);
+    assert.equal(metric(core, 'entities.identity.selfReclaimed'), 1);
+    assert.notEqual(st(core, spoke), 'retracted', '说过话：留着');
+    assert.deepEqual(linkOf(core, me, spoke), { rel: 'same', decided_by: 'platform', confidence: 1, evidence_json: '["adapter-claims"]' });
+    // 没核实过的账号（不带 verifiedBy）不拿
+    const other = E.resolveActor(core, member('u-y-01', '阿明', 'G1'), ctx(k1)).entityId;
+    E.resolveActor(core, { self: true, claims: [{ kind: 'account', namespace: ADAPTER, id: 'u-y-01' }] }, ctx(k1));
+    assert.equal(holderOf(core, 'u-y-01'), other);
+  } finally { await t.cleanup(); }
+});
+
+test('适配器注册时（selfClaims 里有平台认出来的她的账号）：从普通档案那里拿回来；什么都没有了的那个档案撤掉，不挂 same', async () => {
+  const t = await entitiesCore({ name: 'self-reclaim-register' });
+  try {
+    const { core } = t;
+    const E = core.mods.entities;
+    const me = E.ensureSelf(core);
+    const k1 = core.keys.settingKey(ADAPTER, 'G1');
+    const ghost = E.resolveActor(core, member('u-her-03', '小满同学', 'G1'), mention(k1)).entityId;
+    E.registerAdapterClaims(core, ADAPTER, { selfClaims: [{ kind: 'account', namespace: ADAPTER, id: 'u-her-03', verifiedBy: 'platform' }], principalClaims: [] });
+    assert.equal(holderOf(core, 'u-her-03'), me);
+    assert.equal(st(core, ghost), 'retracted');
+    assert.equal(linkOf(core, me, ghost), null);
+    assert.equal(metric(core, 'entities.identity.selfReclaimed'), 1);
+    E.registerAdapterClaims(core, ADAPTER, { selfClaims: [{ kind: 'account', namespace: ADAPTER, id: 'u-her-03', verifiedBy: 'platform' }], principalClaims: [] });
+    assert.equal(metric(core, 'entities.identity.selfReclaimed'), 1, '幂等');
+  } finally { await t.cleanup(); }
+});
+
+test('一个群友两份档案（入群通知只有账号、提炼从通知文字里读出名字另立一份）：账号有了这个群的名片以后，修复把两份挂 same', async () => {
+  const t = await entitiesCore({ name: 'member-two-halves' });
+  try {
+    const { core } = t;
+    const E = core.mods.entities;
+    E.ensureSelf(core);
+    const k1 = core.keys.settingKey(ADAPTER, 'G1');
+    // 入群通知：只有账号
+    const acctOnly = E.resolveActor(core, { claims: [{ kind: 'account', namespace: ADAPTER, id: 'u-jie-09', verifiedBy: 'platform' }] }, ctx(k1)).entityId;
+    // 提炼从通知文字里读出名字，另立了一份只有名字的（名字是别人叫的）
+    const named = mk(core, [['新来的阿杰', k1]], { kind: 'mention' });
+    fact(core, { subject: named, speaker: acctOnly });
+    assert.deepEqual(E.repairMentionGhosts(core), { retracted: 0, linked: 0 }, '账号还没有名字：对不上');
+    // 他后来带着名片说话了（或者适配器从名单里给了通知一个名字，D162）
+    E.resolveActor(core, member('u-jie-09', '新来的阿杰', 'G1'), ctx(k1));
+    assert.deepEqual(E.repairMentionGhosts(core), { retracted: 0, linked: 1 });
+    assert.equal(linkOf(core, named, acctOnly)?.rel, 'same');
+    assert.equal(E.belief(core, acctOnly, named).rel, 'same');
+  } finally { await t.cleanup(); }
+});

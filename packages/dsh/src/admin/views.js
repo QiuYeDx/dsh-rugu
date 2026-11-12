@@ -258,6 +258,7 @@ export function createViews(deps) {
   }
   /**
    * 【D161】能选的人（core 的 pickable 列表）：不含收回的、不含场合，认成同一个人的几个档案并成一项。
+   * 【D162】每项带 stored（名下有没有事实、情节、原话、意图）。
    * 只往页面交它要的字段；读不出来返回 null（页面退回旧的做法）。
    */
   function pickable() {
@@ -270,6 +271,8 @@ export function createViews(deps) {
         members: Array.isArray(e.members) ? e.members.filter(Number.isSafeInteger).slice(0, 64) : [e.id],
         aliases: Array.isArray(e.aliases) ? e.aliases.filter((x) => typeof x === 'string' && x).slice(0, 8).map((x) => clip(x, 60)) : [],
         place: typeof e.place === 'string' && e.place ? e.place : null,
+        // 【D162】名下有没有东西（记忆页签的「全部的人」只列有的）；核心没给就当有
+        stored: e.stored !== false,
       }));
     } catch { return null; }
   }

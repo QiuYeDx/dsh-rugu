@@ -474,4 +474,20 @@ test('选人（D161）：记忆、规则、备份的数据里带能选的人（�
   assert.ok(r.people.includes(10) && r.people.includes(43));
   const b = (await s.view('backups')).body.data;
   assert.equal(b.pickable.length, m.pickable.length);
+  // D162：每项带着名下有没有东西（记忆页签只列有的；规则、部分恢复照旧是全部，所以列表本身不筛）
+  assert.equal(m.pickable.find((x) => x.id === 10).stored, true);
+  assert.equal(m.pickable.find((x) => x.id === 43).stored, false);
+  assert.ok(r.pickable.some((x) => x.stored === false), '规则的数据里照样有名下没东西的人');
+});
+
+test('选人（D162）：记忆页签的「全部的人」只列名下有东西的，记住的人不在了回到「全部的人」；规则、部分恢复照旧列全部', async () => {
+  const fs = await import('node:fs');
+  const page = fs.readFileSync(new URL('../../src/admin/page.html', import.meta.url), 'utf8');
+  const filters = page.slice(page.indexOf('function renderFilters()'), page.indexOf('function renderFilters()') + 800);
+  assert.match(filters, /personOpts\(\{ stored: true \}\)/);
+  assert.match(filters, /pickedPerson\(s\.entityId, \{ stored: true \}\)/);
+  const rule = page.slice(page.indexOf('function ruleForm()'), page.indexOf('function ruleForm()') + 800);
+  assert.match(rule, /const entityOpts = personOpts\(\);/);
+  const restore = page.slice(page.indexOf('async function partialRestore('), page.indexOf('async function partialRestore(') + 200);
+  assert.match(restore, /const people = personOpts\(\);/);
 });

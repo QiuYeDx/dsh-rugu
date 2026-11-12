@@ -44,7 +44,7 @@ const CURSOR_PREFIX = 'conv.';
 
 /**
  * @typedef {object} QqAdapterConfig      都来自主人的私有配置（§11.6），仓库里没有任何账号
- * @property {string} [selfAccount]        她自己的账号（selfClaims）
+ * @property {string} [selfAccount]        她自己的账号（selfClaims）；不写就用平台缓存里认出来的登录账号（D162）
  * @property {string[]} [selfNames]        她的名字和昵称（认「叫她名字」、selfClaims 的保留名）
  * @property {string} [principalAccount]   主人账号；不给就读桥接 config.json 的 ownerQQ
  * @property {string} [principalLabel]     她对主人的称呼，默认「主人」
@@ -119,7 +119,22 @@ export function createQqBridgeAdapter(deps) {
     const c = cfg().principalAccount;
     return typeof c === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(c) ? c : bridgeCfg()?.ownerId;
   };
-  const selfId = () => (typeof cfg().selfAccount === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(cfg().selfAccount) ? cfg().selfAccount : undefined);
+  const ACCT = /^[A-Za-z0-9_-]{1,64}$/;
+  /** 配置里写了她的账号（selfAccount）就用它。 */
+  const configuredSelf = () => (typeof cfg().selfAccount === 'string' && ACCT.test(cfg().selfAccount) ? cfg().selfAccount : undefined);
+  /**
+   * 她自己的账号：配置里写了就用配置的；没写（首次设置不问它，多半没写）就用平台缓存里认出来的登录账号（D162，qq/names.js）。
+   * 都没有 → undefined（名单里认不出她那一行，D160 之前的样子）。每次都重新问：配置会热加载，缓存晚一点才读得到也接得上。
+   * 测试换进来的 platformNames 没有 selfAccount 也行。
+   */
+  const selfId = () => {
+    const c = configuredSelf();
+    if (c) return c;
+    try {
+      const p = platformNames.selfAccount?.();
+      return typeof p === 'string' && ACCT.test(p) ? p : undefined;
+    } catch { return undefined; }
+  };
   /** 宿主的总开关（§10.1）：这个场合是 off 就不感知。不给 gate 就一律感知；gate 出错按 off（fail closed）。 */
   const gateOk = (settingId) => { try { return typeof deps.gate !== 'function' || deps.gate(settingId) !== false; } catch { return false; } };
 
@@ -304,10 +319,12 @@ export function createQqBridgeAdapter(deps) {
     const { kind } = splitKey(key);
     const list = [...msgs];
     const rs = rosterFor(key, list);
+    const me = selfId();
     return {
       key, kind, settingId: settingOf(key), salt, selfNames: selfNames(), now: io.now(),
       known: knownOf(key, list, rs),
-      selfAccount: selfId(), ownerAccount: ownerId(), selfCard: rs.selfCard, roster: rs.roster, principalLabel: principalLabel(),
+      selfAccount: me, selfVerifiedBy: me && configuredSelf() ? 'config' : 'platform',
+      ownerAccount: ownerId(), selfCard: rs.selfCard, roster: rs.roster, principalLabel: principalLabel(),
     };
   }
   /**
@@ -787,7 +804,8 @@ export function createQqBridgeAdapter(deps) {
     selfClaims() {
       const out = [];
       const id = selfId();
-      if (id) out.push({ kind: 'account', namespace: ADAPTER_ID, id, verifiedBy: 'config' });
+      // 配置里写的是主人说的（config）；平台缓存认出来的是平台说的（platform，D162）
+      if (id) out.push({ kind: 'account', namespace: ADAPTER_ID, id, verifiedBy: configuredSelf() ? 'config' : 'platform' });
       for (const name of selfNames()) out.push({ kind: 'display-name', name, observedAt: io.now() });
       return out;
     },
@@ -839,7 +857,7 @@ export function createQqBridgeAdapter(deps) {
       // 平台上的群名（D111）：读不到不算失败——没起名字的群照样用「一个 QQ 群」，主人可以在管理页起名字
       const pn = platformNames.status();
       items.push({ id: 'platform-names', name: 'platform-names', ok: true, level: pn.ok ? 'ok' : 'info',
-        label: pn.ok ? `QQ：从 SnowLuma 的缓存里读到 ${pn.groups} 个群的名字${pn.members > 0 ? `和 ${pn.members} 条群成员的名字` : ''}（只读，不调 QQ）`
+        label: pn.ok ? `QQ：从 SnowLuma 的缓存里读到 ${pn.groups} 个群的名字${pn.members > 0 ? `和 ${pn.members} 条群成员的名字` : ''}${pn.selfKnown && !configuredSelf() ? '，认出了她自己的账号' : ''}（只读，不调 QQ）`
           : pn.reason === 'off' ? 'QQ：没有读平台上的群名（配置关掉了，或不知道 SnowLuma 在哪）：没起名字的群显示成「一个 QQ 群」，可以在管理页起名字'
             : 'QQ：读不到 SnowLuma 缓存里的群名：没起名字的群显示成「一个 QQ 群」，可以在管理页起名字' });
       add('principal', !!ownerId(), 'QQ：知道主人的账号', '不知道主人的账号：主人私聊认不出来', 'warn');

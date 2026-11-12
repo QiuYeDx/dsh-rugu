@@ -199,7 +199,9 @@ const VIEWS = {
    *   - 不列收回的（retracted）、不列场合（kind='setting'）；
    *   - 认成同一个人的几个档案（信念层 rel='same'）并成一项：代表档案按 有身份证据 > established > 被提到的天数多 > id 小 挑，
    *     members 是这一组全部档案（含收回的：按人筛时它们名下的东西照样看得到），aliases 是组里别的不同的名字；
-   *   - 一组都没有名字的不列；place 是代表的名字作为群名片用在了哪个场合（同名的两项靠它分开，没有就是 null）。
+   *   - 一组都没有名字的不列；place 是代表的名字作为群名片用在了哪个场合（同名的两项靠它分开，没有就是 null）；
+   *   - 【D162】stored：组里（含收回的）任何一个档案名下有没有东西——事实、情节、他说的原话、意图，和按人筛展开的是同样四样。
+   *     记忆页签的「全部的人」只列有东西的（选了也是空的那种不列）；规则、部分恢复照旧列全部。
    * 顺序和 entities 一样（激活高的、最近提到的在前；一组按它排得最前的那个档案算）；最多 q.limit（默认 500，上限 1000）项。
    */
   pickable(core, q) {
@@ -222,6 +224,12 @@ const VIEWS = {
     const before = (a, b) => { const x = rank(a); const y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
     const placeOf = core.store.prepare(`SELECT scope_setting_key AS k FROM entity_names WHERE entity_id = ? AND text_raw = ? AND scope_setting_key <> ''
                                         ORDER BY count DESC, last DESC LIMIT 1`);
+    // 【D162】名下有没有东西：和按人筛展开的是同样的四张表（事实、情节、他说的原话、意图），组里任何一个档案有就算。
+    // 情节的参与者在 JSON 里，没法按人查索引：扫一遍取全部参与者；另外三张按索引逐个问
+    const inEpisodes = new Set(core.store.all('SELECT DISTINCT CAST(x.value AS INTEGER) AS id FROM episodes t, json_each(t.participants_json) x').map((r) => r.id));
+    const hasRows = core.store.prepare(`SELECT 1 AS x WHERE EXISTS (SELECT 1 FROM assertion_entities WHERE entity_id = ?1)
+        OR EXISTS (SELECT 1 FROM percepts WHERE actor_entity_id = ?1) OR EXISTS (SELECT 1 FROM intentions WHERE target_entity_id = ?1)`);
+    const storedUnder = (list) => list.some((r) => inEpisodes.has(r.id) || !!hasRows.get(r.id));
     const items = [];
     for (const list of groups.values()) {
       const alive = list.filter((r) => r.status !== 'retracted');
@@ -232,7 +240,7 @@ const VIEWS = {
       const name = nm(named);
       const aliases = [...new Set(alive.map(nm).filter((n) => n && n !== name))].slice(0, 8);
       items.push({ id: rep.id, name, kind: rep.kind, isSelf: alive.some((r) => !!r.is_self), status: rep.status,
-        members: list.map((r) => r.id).sort((a, b) => a - b), aliases, place: placeOf.get(named.id, name)?.k ?? null });
+        members: list.map((r) => r.id).sort((a, b) => a - b), aliases, place: placeOf.get(named.id, name)?.k ?? null, stored: storedUnder(list) });
     }
     return { items: items.slice(0, cap), total: items.length, next: undefined };
   },

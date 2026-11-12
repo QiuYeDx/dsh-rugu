@@ -62,5 +62,6 @@ test('「@名字」按账号反查：她 → self；主人 → 账号 + 主人�
   assert.ok(claims.includes('display-name'), '路人甲：只有名字');
   assert.ok(!JSON.stringify(o.mentions).includes('"我"'));
   const mine = ok(toObservation(projectMessage(msgs[2]), ctx, { attention: 'attended' }));
-  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name]), [['display-name', '星野小满']]);
+  // D162：知道她的账号时，她自己的行也带上它（核心靠它把这个账号记成她的）
+  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name ?? c.id]), [['account', me], ['display-name', '星野小满']]);
 });

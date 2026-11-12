@@ -12,7 +12,7 @@ import { createPlatformNames } from '../../../src/adapters/qq/names.js';
 import { projectMessage } from '../../../src/adapters/qq/files.js';
 import { toObservation, knownNames, atNames, selfCardOf } from '../../../src/adapters/qq/messages.js';
 import { createQqBridgeAdapter } from '../../../src/adapters/qq-bridge.js';
-import { rid, randomDigits, salt as mkSalt, inMsg, selfMsg, fakeTimers, fakeFs, fakeSink, fakeLog, socialFile } from '../helpers.js';
+import { rid, randomDigits, salt as mkSalt, inMsg, selfMsg, pokeMsg, noticeMsg, fakeTimers, fakeFs, fakeSink, fakeLog, socialFile } from '../helpers.js';
 
 const T0 = Date.UTC(2026, 10, 12, 3, 0, 0);
 const ok = (o) => { const r = validateObservation(o); assert.ok(r.ok, JSON.stringify(r.errors)); return r.value; };
@@ -167,7 +167,7 @@ test('「@她在平台上的名字」→ 她，带着这个名字；她自己的
   assert.equal(o.mentions[0].claims[0].scope, ctx.settingId);
   assert.deepEqual(said(ctx, talker, '@小雪 在吗').mentions.map(shape), ['self:'], '配置里的名字已经在 selfClaims 里了');
   const mine = ok(toObservation(projectMessage(selfMsg('在的', T0 + 10)), ctx, { attention: 'attended' }));
-  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name, c.scope]), [['display-name', '小满同学', ctx.settingId]]);
+  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name ?? c.id, c.scope]), [['account', me, undefined], ['display-name', '小满同学', ctx.settingId]]);
   // 她的账号出现在文字里（「@<她的账号>」）换成的也是这个名字
   assert.equal(ctx.known.get(me), '小满同学');
 });
@@ -180,7 +180,7 @@ test('两个人同名 → 只有名字；没有名单 → 照旧（她的行不�
   const bare = groupCtx({ me, msgs: [] });
   assert.deepEqual(said(bare, talker, '@阿明你好').mentions.map(shape), ['name:阿明你好'], '没有名单：照旧');
   const mine = ok(toObservation(projectMessage(selfMsg('在的', T0 + 10)), bare, { attention: 'attended' }));
-  assert.deepEqual(mine.actor.claims, []);
+  assert.deepEqual(mine.actor.claims.map((c) => c.kind), ['account'], '没有名单：她的行只带账号，没有名字');
 });
 
 test('主人：认出账号带主人的声明；顶替用的称呼不当他的名字记', () => {
@@ -229,7 +229,122 @@ test('QQ 适配器：群里按平台名单认「@」；她的行（真的桥接�
   assert.equal(heard.addressed, 'mentions-her');
   assert.deepEqual(heard.mentions.map(shape), ['self:小满同学', 'account+name:阿明']);
   const mine = obs.find((o) => o.kind === 'self-utterance');
-  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name]), [['display-name', '小满同学']]);
+  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name ?? c.verifiedBy]), [['account', 'config'], ['display-name', '小满同学']]);
   const pn = adapter.selfCheck().find((c) => c.id === 'platform-names');
   assert.ok(!pn.label.includes('阿明') && !pn.label.includes(ids.quiet), '自检里没有名字和账号');
+});
+
+// ── 【D162】她自己的账号从平台缓存认出来（主人的配置里多半没写 selfAccount）──
+/** 几个账号子目录，每个一份假库：dirs = {子目录名: st}。 */
+function namesOverDirs(dirs, log) {
+  return createPlatformNames({
+    dir: () => 'X:/sl', now: () => 0, minIntervalMs: 0, memberIntervalMs: 0, listDirs: () => Object.keys(dirs),
+    stat: () => ({ size: 1, mtimeMs: 1 }), openDb: (f) => fakeDb(dirs[path.basename(path.dirname(f))])(), log,
+  });
+}
+const dbWith = (rows) => ({ groupCols: GROUP_COLS, memberCols: MEMBER_COLS, groups: [], members: rows });
+const row = (g, u, nickname) => ({ group_id: Number(g), uin: Number(u), nickname, card: '', updated_at: 1 });
+
+test('她的账号：子目录名像个账号、又在这个库的每一个群里都有 → 认出来；状态里只有 selfKnown，日志里没有账号', () => {
+  const [g1, g2, me, owner, pal] = [randomDigits(), randomDigits(), randomDigits(), randomDigits(), randomDigits()];
+  const log = fakeLog();
+  const n = namesOverDirs({ [me]: dbWith([row(g1, me, '小满同学'), row(g1, owner, '老周'), row(g1, pal, '阿明'), row(g2, me, '小满同学'), row(g2, owner, '老周')]) }, log);
+  assert.equal(n.selfAccount(), me);
+  const s = n.status();
+  assert.equal(s.selfKnown, true);
+  assert.ok(!JSON.stringify(s).includes(me), '状态里没有账号');
+  log.assertNoText(me, owner);
+});
+
+test('她的账号：子目录名不像账号、这个账号缺了一个群、两个子目录都满足、没有群 → 不认（null）', () => {
+  const [g1, g2, me, other] = [randomDigits(), randomDigits(), randomDigits(), randomDigits()];
+  const rowsOf = (u) => [row(g1, u, '某甲'), row(g2, u, '某甲')];
+  assert.equal(namesOverDirs({ 'bot-data': dbWith(rowsOf(me)) }).selfAccount(), null, '目录名不像账号');
+  assert.equal(namesOverDirs({ [me]: dbWith([row(g1, me, '某甲'), row(g2, other, '某乙')]) }).selfAccount(), null, '缺了一个群');
+  const two = namesOverDirs({ [me]: dbWith(rowsOf(me)), [other]: dbWith(rowsOf(other)) });
+  assert.equal(two.selfAccount(), null, '两个子目录都满足：说不清');
+  assert.equal(two.status().selfKnown, false);
+  assert.equal(namesOverDirs({ [me]: dbWith([]) }).selfAccount(), null, '没有群');
+  // 一个满足、一个不满足（它自己不在它的名单里）：认满足的那个
+  assert.equal(namesOverDirs({ [me]: dbWith(rowsOf(me)), [other]: dbWith(rowsOf(me)) }).selfAccount(), me);
+});
+
+/** 一个群的 QQ 适配器：platformNames 是假的（members，和可选的 selfAccount）。 */
+function rosterAdapter({ roster, ids, config = {}, selfAccount, recent }) {
+  const timers = fakeTimers();
+  const ffs = fakeFs(timers);
+  const bridgeDir = path.join('X:', 'fake-bridge');
+  const state = path.join(bridgeDir, 'state');
+  const K = `group:${ids.g}`;
+  ffs.write(path.join(bridgeDir, 'config.json'), { ownerQQ: ids.owner, allow: { groups: [ids.g] }, socialV2: { agentPreset: 'qq-chat-v2' } }, { events: false });
+  ffs.write(path.join(state, 'mode.json'), { mode: 'reserved2' }, { events: false });
+  ffs.write(path.join(state, 'sessions.json'), { sessions: {} }, { events: false });
+  const log = fakeLog();
+  const adapter = createQqBridgeAdapter({
+    paths: { bridgeDir }, salt: mkSalt(), readFile: ffs.readFile, stat: ffs.stat, watch: ffs.watch, timers, now: timers.now, log,
+    config: { selfNames: ['小雪'], ...config },
+    platformNames: {
+      group: () => null,
+      members: (id) => (id === ids.g ? new Map(roster) : new Map()),
+      ...(selfAccount !== undefined ? { selfAccount: () => selfAccount } : {}),
+      status: () => ({ ok: true, groups: 1, members: roster.size, reason: null, selfKnown: !!selfAccount }),
+    },
+  });
+  const sink = fakeSink();
+  ffs.write(path.join(state, 'social-v2.json'), socialFile({ [K]: { recent: recent(timers.now()) } }), { events: false });
+  adapter.start(sink);
+  timers.advance(300);
+  return { adapter, obs: sink.batches.flatMap((b) => b.o), log };
+}
+
+test('QQ 适配器：配置里没写她的账号、平台缓存认出来了 →「@她的平台名」是她；她的行带名字和账号（platform）；文字里她的账号换成她的名字', () => {
+  const ids = { owner: randomDigits(), me: randomDigits(), talker: randomDigits(), g: randomDigits() };
+  const roster = new Map([[ids.me, '小满同学'], [ids.talker, '路过的人']]);
+  const { adapter, obs, log } = rosterAdapter({
+    roster, ids, selfAccount: ids.me,
+    recent: (now) => [
+      inMsg({ seq: 1, userId: ids.talker, sender: '路过的人', text: `@小满同学在吗 @${ids.me}`, time: now - 1000 }),
+      selfMsg('在的', now - 500),
+    ],
+  });
+  const heard = obs.find((o) => o.kind === 'utterance');
+  assert.equal(heard.addressed, 'mentions-her');
+  assert.deepEqual(heard.mentions.map(shape), ['self:小满同学'], '不是一个带着她账号的「别人」');
+  assert.ok(!heard.text.includes(ids.me), '她的账号换成她的名字');
+  const mine = obs.find((o) => o.kind === 'self-utterance');
+  assert.deepEqual(mine.actor.claims.map((c) => [c.kind, c.name ?? c.verifiedBy]), [['account', 'platform'], ['display-name', '小满同学']]);
+  assert.equal(mine.actor.claims[0].id, ids.me);
+  assert.deepEqual(adapter.selfClaims().filter((c) => c.kind === 'account').map((c) => [c.id, c.verifiedBy]), [[ids.me, 'platform']]);
+  const pn = adapter.selfCheck().find((c) => c.id === 'platform-names');
+  assert.ok(pn.label.includes('认出了她自己的账号') && !pn.label.includes(ids.me));
+  log.assertNoText(ids.me, ids.talker);
+});
+
+test('QQ 适配器：配置里写了她的账号就用配置的（平台认出的是别人也不管）；平台认不出时和 D160 一样', () => {
+  const ids = { owner: randomDigits(), me: randomDigits(), other: randomDigits(), talker: randomDigits(), g: randomDigits() };
+  const roster = new Map([[ids.me, '小满同学'], [ids.other, '阿明'], [ids.talker, '路过的人']]);
+  const recent = (now) => [inMsg({ seq: 1, userId: ids.talker, sender: '路过的人', text: '@小满同学 @阿明', time: now - 1000 }), selfMsg('在的', now - 500)];
+  const a = rosterAdapter({ roster, ids, config: { selfAccount: ids.me }, selfAccount: ids.other, recent });
+  assert.deepEqual(a.obs.find((o) => o.kind === 'utterance').mentions.map(shape), ['self:小满同学', 'account+name:阿明']);
+  assert.deepEqual(a.adapter.selfClaims().filter((c) => c.kind === 'account').map((c) => [c.id, c.verifiedBy]), [[ids.me, 'config']]);
+  const b = rosterAdapter({ roster, ids, selfAccount: null, recent });
+  assert.deepEqual(b.obs.find((o) => o.kind === 'utterance').mentions.map(shape), ['account+name:小满同学', 'account+name:阿明'], '认不出她：和 D160 一样');
+  assert.deepEqual(b.obs.find((o) => o.kind === 'self-utterance').actor.claims, []);
+  assert.deepEqual(b.adapter.selfClaims().filter((c) => c.kind === 'account'), []);
+});
+
+test('只带着账号的人（入群通知、被拍的人）：带上名单里平台给他显示的名字；通知的 sender（「系统通知」）照旧不当名字', () => {
+  const [me, newbie, pal, quiet] = [rid('u'), rid('u'), rid('u'), rid('u')];
+  const roster = new Map([[me, '小满同学'], [newbie, '新来的阿杰'], [pal, '阿明'], [quiet, '阿花']]);
+  const ctx = groupCtx({ roster, me });
+  const at = (m) => ok(toObservation(projectMessage(m), ctx, { attention: 'peripheral' }));
+  const join = at(noticeMsg({ seq: 4, userId: newbie, name: '新来的阿杰', time: T0 + 3 }));
+  assert.deepEqual(join.actor.claims.map((c) => [c.kind, c.name ?? c.id, c.scope]), [['account', newbie, undefined], ['display-name', '新来的阿杰', ctx.settingId]]);
+  assert.deepEqual(at(noticeMsg({ seq: 5, userId: rid('u'), name: '路人', time: T0 + 4 })).actor.claims.map((c) => c.kind), ['account'], '名单里没有：只有账号');
+  const poke = at(pokeMsg({ seq: 6, userId: pal, sender: '阿明', targetId: quiet, time: T0 + 5 }));
+  assert.deepEqual(poke.actor.claims.map((c) => c.kind), ['account', 'display-name'], '拍的人：sender 就是名字，不重复');
+  assert.deepEqual(poke.mentions.map(shape), ['account+name:阿花']);
+  const pokeMe = at(pokeMsg({ seq: 7, userId: pal, sender: '阿明', targetId: me, time: T0 + 6 }));
+  assert.deepEqual(pokeMe.mentions.map(shape), ['self:'], '被拍的是她的账号：是她');
+  assert.equal(pokeMe.addressed, 'to-her');
 });

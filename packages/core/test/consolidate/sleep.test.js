@@ -605,3 +605,26 @@ test('常驻区标脏（§10.4，只标脏）：白天写了小结、时间维�
     assert.deepEqual(w.rec.markResidentDirty, [null, null, null], '印象在「重要的人」里');
   } finally { await w.cleanup(); }
 });
+
+test('第 5 步先跑一遍认人的修复（D162，不调模型）：白天刚有了名字的人，提炼按名字另立的那份档案当晚挂上 same', async () => {
+  const llm = new FakeLLM({ fallback: { sleep: [] } });
+  const w = await world({ llm });
+  try {
+    const { core } = w;
+    const E = core.mods.entities;
+    const ns = 'zq';
+    const k1 = core.keys.settingKey(ns, 'G1');
+    const ctx = { adapterId: ns, settingKey: k1, at: T0 };
+    // 入群时只有账号；提炼从通知文字里读出名字另立了一份
+    const acctOnly = E.resolveActor(core, { claims: [{ kind: 'account', namespace: ns, id: 'u-jie-09', verifiedBy: 'platform' }] }, ctx).entityId;
+    const named = Number(core.store.run("INSERT INTO entities(kind, status, individual, created_at, updated_at) VALUES ('person', 'provisional', 1, ?, ?)", T0, T0).lastInsertRowid);
+    core.store.run(`INSERT INTO entity_names(entity_id, text_raw, text_norm, scope_setting_key, name_kind, first, last)
+                    VALUES (?, '新来的阿杰', ?, ?, 'mention', ?, ?)`, named, E.normalizeName('新来的阿杰'), k1, T0, T0);
+    // 白天他带着名片说话了
+    E.resolveActor(core, { claims: [{ kind: 'account', namespace: ns, id: 'u-jie-09', verifiedBy: 'platform' }, { kind: 'display-name', name: '新来的阿杰', scope: 'G1', observedAt: T0 }] }, ctx);
+    const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
+    const step5 = r.steps.find((s) => s.name === 'entities');
+    assert.equal(step5.detail?.ghosts?.linked, 1, JSON.stringify(step5));
+    assert.equal(E.belief(core, acctOnly, named).rel, 'same');
+  } finally { await w.cleanup(); }
+});

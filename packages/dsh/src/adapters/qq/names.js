@@ -16,6 +16,11 @@
 //   读法和群名一样：只读、文件变了才重读、读坏了留着已经知道的、有行数上限（一共 10 万行、每个群 5000 人）；
 //   只是最快 memberIntervalMs（默认 5 分钟）重读一次——成员行随每条消息更新（last_sent_time），库文件几乎一直在变。
 //   账号只在内存里（members() 交给适配器反查「@名字」用）：不进日志、状态和页面，状态里只有数字。
+// 【D162】她自己的账号：主人的私有配置里多半没写 selfAccount（首次设置不问它），D160 却靠它认出名单里哪一行是她。
+//   SnowLuma 的缓存按登录的账号分目录：<目录>/data/<登录的账号>/。一个子目录算她的账号，要同时满足——目录名像个账号（纯数字），
+//   而且这个账号在这个库自己的 group_members 里每一个群都有（至少一个群）。只看「在每个群里」不够：主人往往也在她的每个群里；
+//   只看目录名也不够：目录可能是别的东西。几个子目录都满足 → 说不清，当不知道（主人得自己配 selfAccount）。
+//   和名单一起读、一起留：读坏了留着已经知道的；账号同样只在内存里，状态里只有 selfKnown（知不知道）。
 // 规矩：只用 node 内置模块；名字、路径、账号都不进日志（只记事件名和数字）。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +31,8 @@ const MEMBER_NEEDED = ['group_id', 'uin', 'nickname', 'card'];
 const MEMBER_ROWS_MAX = 100_000;
 const MEMBERS_PER_GROUP_MAX = 5000;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** 像个 QQ 号：纯数字、5 到 12 位、不以 0 开头。 */
+const ACCOUNT_RE = /^[1-9]\d{4,11}$/;
 
 /** 名字里去掉控制字符、折叠空白；太长的截到 60 字。 */
 function cleanName(v) {
@@ -70,6 +77,8 @@ export function createPlatformNames(o) {
   let members = new Map();
   let memberCount = 0;
   let membersReadAt = -Infinity;
+  /** 【D162】登录的账号（她自己的），认不出是 null。只在内存里。 @type {string|null} */
+  let selfAcct = null;
   let state = { ok: false, reason: 'not-read', files: 0, membersOk: false, membersReason: 'not-read' };
   const stats = { reads: 0, errors: 0 };
 
@@ -108,16 +117,24 @@ export function createPlatformNames(o) {
     }
     return true;
   }
-  /** 【D160】一个库里的 group_members → next（群号 → 账号 → 名字）。同一个人在几个库里都有时认 updated_at 新的。 */
-  function readMembers(db, next) {
+  /**
+   * 【D160】一个库里的 group_members → next（群号 → 账号 → 名字）。同一个人在几个库里都有时认 updated_at 新的。
+   * 【D162】owner 是这个库所在子目录的名字（像个账号时才给）：返回它是不是在这个库的每一个群里都有一行（至少一个群）。
+   * @returns {false|{mine: boolean}}   false = 表结构不认识
+   */
+  function readMembers(db, next, owner) {
     const cols = new Set(db.prepare('PRAGMA table_info(group_members)').all().map((c) => c.name));
     if (!MEMBER_NEEDED.every((c) => cols.has(c))) return false;
     const hasAt = cols.has('updated_at');
     const rows = db.prepare(`SELECT group_id, uin, nickname, card${hasAt ? ', updated_at' : ''} FROM group_members LIMIT ${MEMBER_ROWS_MAX}`).all();
+    const seen = new Set();
+    const ownerIn = new Set();
     for (const r of rows) {
       const g = String(r.group_id ?? '');
       const u = String(r.uin ?? '');
       if (!ID_RE.test(g) || !ID_RE.test(u)) continue;
+      seen.add(g);
+      if (owner && u === owner) ownerIn.add(g);
       const name = cleanName(r.card) || cleanName(r.nickname);
       if (!name) continue;
       let m = next.get(g);
@@ -127,7 +144,7 @@ export function createPlatformNames(o) {
       if (prev ? prev.at > at : m.size >= MEMBERS_PER_GROUP_MAX) continue;
       m.set(u, { name, at });
     }
-    return true;
+    return { mine: !!owner && seen.size > 0 && ownerIn.size === seen.size };
   }
   function readAll(list, withMembers) {
     const next = new Map();
@@ -136,6 +153,8 @@ export function createPlatformNames(o) {
     let membersOk = 0;
     let reason = list.length ? 'schema' : 'no-db';
     let membersReason = list.length ? 'schema' : 'no-db';
+    /** 【D162】哪些子目录的名字是登录的账号（见文件头） */
+    const owners = [];
     for (const f of list) {
       let db = null;
       try {
@@ -152,20 +171,24 @@ export function createPlatformNames(o) {
       // 名单读不出来不影响群名（反过来也一样）
       if (withMembers) {
         try {
-          if (readMembers(db, nextMembers)) membersOk += 1;
+          const sub = path.basename(path.dirname(f));
+          const r = readMembers(db, nextMembers, ACCOUNT_RE.test(sub) ? sub : null);
+          if (r) { membersOk += 1; if (r.mine) owners.push(path.basename(path.dirname(f))); }
         } catch (e) { warn('qq.names.members', e); membersReason = 'unreadable'; }
       }
       try { db.close(); } catch { /* 已关 */ }
     }
     stats.reads += 1;
-    return { next, ok, reason, nextMembers, membersOk, membersReason };
+    // 正好一个子目录满足才算；几个都满足就说不清
+    const self = owners.length === 1 ? owners[0] : null;
+    return { next, ok, reason, nextMembers, membersOk, membersReason, self };
   }
   function refresh() {
     const t = o.now();
     let dir = null;
     try { dir = o.dir(); } catch { dir = null; }
     if (!dir) {
-      groups = new Map(); members = new Map(); memberCount = 0; stampKey = null; lastDir = null;
+      groups = new Map(); members = new Map(); memberCount = 0; stampKey = null; lastDir = null; selfAcct = null;
       state = { ok: false, reason: 'off', files: 0, membersOk: false, membersReason: 'off' };
       return;
     }
@@ -185,6 +208,8 @@ export function createPlatformNames(o) {
         members = new Map([...r.nextMembers].map(([g, m]) => [g, new Map([...m].map(([u, x]) => [u, x.name]))]));
         memberCount = [...members.values()].reduce((s, m) => s + m.size, 0);
       }
+      // 【D162】她的账号：每个库都读到了才重新认（有一个读坏了，可能正是另一个也满足的子目录：留着已经知道的）
+      if (r.membersReason !== 'unreadable') selfAcct = r.self;
       if (r.membersReason !== 'unreadable') membersReadAt = t;
       ms = { membersOk: r.membersOk > 0, membersReason: r.membersOk > 0 ? null : r.membersReason };
     }
@@ -218,10 +243,19 @@ export function createPlatformNames(o) {
       const m = members.get(String(groupId));
       return m ? new Map(m) : new Map();
     },
-    /** 只有状态和数字（自检、管理页用）：读没读到、读到几个群、名单里一共几个人。不带路径、名字、账号。 */
+    /**
+     * 【D162】缓存里登录的账号（她自己的）：子目录名像个账号、又在这个库的每一个群里都有，而且只有一个子目录这样（见文件头）。
+     * 认不出、说不清、没有名单返回 null。只给适配器在内存里用，不往外交。
+     * @returns {string|null}
+     */
+    selfAccount() {
+      try { refresh(); } catch { return selfAcct; }
+      return selfAcct;
+    },
+    /** 只有状态和数字（自检、管理页用）：读没读到、读到几个群、名单里一共几个人、认没认出她的账号。不带路径、名字、账号。 */
     status() {
       try { refresh(); } catch { /* 下面照报 */ }
-      return { ...state, groups: groups.size, members: memberCount, ...stats };
+      return { ...state, groups: groups.size, members: memberCount, selfKnown: !!selfAcct, ...stats };
     },
   };
 }

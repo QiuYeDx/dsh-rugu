@@ -166,7 +166,8 @@ export const PRINCIPAL_CLAIM = Object.freeze({ kind: 'principal', strength: 'con
  * @property {string[]} selfNames
  * @property {Map<string, string>} known 账号 → 名字（换掉 text 里的账号原值用）
  * @property {number} now
- * @property {string} [selfAccount]      她的账号（配置给的；只在内存里）
+ * @property {string} [selfAccount]      她的账号（配置给的，或 D162 平台缓存认出来的；只在内存里）
+ * @property {'config'|'platform'} [selfVerifiedBy]   她的账号是谁说的：配置写的 config，平台缓存认出来的 platform
  * @property {string} [ownerAccount]     主人的账号
  * @property {string} [selfCard]         她在这个群里平台上显示的名字（D160：成员名单里她那一行；没有名单时退回她自己那几行的 sender）
  * @property {Map<string, string>} [roster]   【D160】这个群的成员名单：账号 → 平台上显示的名字（只在内存里）；没有名单就不给
@@ -220,9 +221,12 @@ export function toObservation(m, ctx, opt) {
     // 她自己的群名片也记成她的名字（只在这个场合算数，D108）：别人 @ 这个名片时认得出是她，不另造一个「人」。
     // 【D160】真的桥接把她的行一律写成「我」，名片只能从成员名单来（ctx.selfCard）
     const card = group ? cardOf(m.sender) || ctx.selfCard || '' : '';
+    // 【D162】知道她的账号（配置写的，或平台缓存认出来的）就带上：核心靠它把这个账号记成她的——适配器注册之后才认出来的也接得上，
+    // 以前被当成别人记下的这个账号也归还给她（核心 attachOwnAccounts）
+    const mine = ctx.selfAccount ? [accountClaim(ctx.selfAccount, ctx.selfVerifiedBy === 'config' ? 'config' : 'platform')] : [];
     return clean({
       ...base,
-      actor: { self: true, claims: card ? [{ kind: 'display-name', name: card, scope: settingId, observedAt: m.time }] : [] },
+      actor: { self: true, claims: [...mine, ...(card ? [{ kind: 'display-name', name: card, scope: settingId, observedAt: m.time }] : [])] },
       kind: opt.onMyBehalf ? 'on-my-behalf' : 'self-utterance',
       addressed: 'by-her',
       attention: 'attended',
@@ -235,13 +239,22 @@ export function toObservation(m, ctx, opt) {
   const claims = [];
   if (m.userId) claims.push(accountClaim(m.userId));
   const name = group && m.sender && m.sender !== m.userId && !/^\d{5,12}$/.test(m.sender) ? m.sender.trim().slice(0, 60) : '';
+  // 入群这类通知的 sender 是桥接写的「系统通知」，不是这个人的名字：不取
   if (name && m.kind !== 'notice') claims.push({ kind: 'display-name', name, scope: settingId, observedAt: m.time });
+  // 【D162】群里只带着账号、没有名字的人（入群通知、拍一拍里被拍的人）：名单里有他就带上平台给他显示的名字——
+  // 这是平台自己的，不是从通知文字里读出来的。不带的话核心只记下一个没名字的账号，提炼又从通知文字里读出名字，另立一份只有名字的档案
+  const rosterName = (acct) => {
+    const n = group && acct ? ctx.roster?.get(acct) : '';
+    return typeof n === 'string' && n.trim() ? [{ kind: 'display-name', name: n.trim().slice(0, 60), scope: settingId, observedAt: m.time }] : [];
+  };
+  if (m.userId && !claims.some((c) => c.kind === 'display-name')) claims.push(...rosterName(m.userId));
   if (m.isOwner) claims.push({ ...PRINCIPAL_CLAIM });
   const actor = { claims };
 
   if (m.kind === 'poke') {
-    const target = m.poke?.targetIsSelf || m.quoteTargetIsSelf ? { self: true, claims: [] }
-      : m.poke?.targetId ? { claims: [accountClaim(m.poke.targetId)] } : null;
+    // 被拍的是她的账号（桥接没标出来时）也是她
+    const target = m.poke?.targetIsSelf || m.quoteTargetIsSelf || (ctx.selfAccount && m.poke?.targetId === ctx.selfAccount) ? { self: true, claims: [] }
+      : m.poke?.targetId ? { claims: [accountClaim(m.poke.targetId), ...rosterName(m.poke.targetId)] } : null;
     return clean({
       ...base, actor, kind: 'action', mentions: target ? [target] : undefined,
       addressed: target?.self || !group ? 'to-her' : 'ambient',

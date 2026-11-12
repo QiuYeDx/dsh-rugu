@@ -17,7 +17,7 @@ import {
   getEntity, createEntity, markDay, setDisplay, addName, addDescriptor, identityKeys, findEvidence, attachEvidence,
   nameNorms, identityNames, claimedNames, accountsClash, namespacesOf, flushEmbeds, bump, warn, errName, STRENGTH_RANK, namesChanged,
 } from './records.js';
-import { ensureSelf, ensurePrincipal, isReservedOwner } from './own.js';
+import { ensureSelf, ensurePrincipal, isReservedOwner, reclaimOwnAccount } from './own.js';
 import { link, sameGroup } from './links.js';
 import { repairMentionGhosts } from './repair.js';
 
@@ -70,12 +70,13 @@ export function resolveActor(core, actor, ctx) {
     // 她自己
     if (actor.self === true) {
       const id = ensureSelf(core);
-      attachOwnAccounts(core, id, accounts, ctx.adapterId, null);
+      const reclaimed = attachOwnAccounts(core, id, accounts, ctx.adapterId, null, { self: true });
       const before = core.store.get('SELECT COUNT(*) AS n FROM entity_names WHERE entity_id = ?', id)?.n ?? 0;
       recordActorNames(core, id, { claims }, c2, { nameOnly: false });
       // 她有了一个新名字（第一次在某个群里说话，带着她的群名片）：顺手撤掉用这个名字造出来的「假人」（评审：原来只在启动时撤，
-      // 撤之前那些假人一直让带着她名片的话被当成「点了别人」）；撤了的名字匹配器随之重建
-      if ((core.store.get('SELECT COUNT(*) AS n FROM entity_names WHERE entity_id = ?', id)?.n ?? 0) > before) {
+      // 撤之前那些假人一直让带着她名片的话被当成「点了别人」）；撤了的名字匹配器随之重建。
+      // 【D162】她的账号刚从别的档案那里拿回来也跑：先记名字、再修复——那个档案没了证据、名字又都是她的，才撤得掉
+      if (reclaimed > 0 || (core.store.get('SELECT COUNT(*) AS n FROM entity_names WHERE entity_id = ?', id)?.n ?? 0) > before) {
         try { if (repairMentionGhosts(core).retracted) namesChanged(core); } catch { /* 下次启动再撤 */ }
       }
       markSeen(core, id, at);
@@ -186,13 +187,28 @@ function bestStrength(core, id) {
   return best;
 }
 
-/** 她自己 / 主人的 ActorRef 里带的账号：还没归属的挂上去；已经属于别人的不动（记一笔冲突）。 */
-function attachOwnAccounts(core, id, accounts, adapterId, strengthOverride) {
+/**
+ * 她自己 / 主人的 ActorRef 里带的账号：还没归属的挂上去；已经属于别人的不动（记一笔冲突）。
+ * 【D162】她自己的 ActorRef（self: true，不是主人的 claim）带着核实过的账号、而这个账号挂在一个没有管理权限的别的档案上：
+ * 证据改挂到她身上（own.js 的 reclaimOwnAccount）——适配器说「self: true」就是在说「这是她」，哪个账号是她的也由它说。
+ * 那个档案还有自己的东西（说过话等）就和她挂 same；什么都没有了的不在这里撤：调用方接着记名字、再跑修复。
+ * 有管理权限的照旧是冲突；主人的 claim 不走这条。返回改挂了几条。
+ */
+function attachOwnAccounts(core, id, accounts, adapterId, strengthOverride, { self = false } = {}) {
+  let reclaimed = 0;
   for (const c of accounts) {
     const k = identityKeys(core, c);
-    const r = attachEvidence(core, id, k, strengthOverride ?? strengthOf(c), { adapter: adapterId, via: 'actor' });
-    if (r === 'conflict') { bump(core, 'entities.identity.conflict'); warn(core, 'entities.identity.conflict', { entity: id }); }
+    const strength = strengthOverride ?? strengthOf(c);
+    const r = attachEvidence(core, id, k, strength, { adapter: adapterId, via: 'actor' });
+    if (r !== 'conflict') continue;
+    if (self && STRENGTH_RANK[c.verifiedBy] !== undefined) {
+      const ev = findEvidence(core, k);
+      if (ev && reclaimOwnAccount(core, id, ev, strength).moved) { reclaimed += 1; continue; }
+    }
+    bump(core, 'entities.identity.conflict');
+    warn(core, 'entities.identity.conflict', { entity: id });
   }
+  return reclaimed;
 }
 
 // ── resolveExtracted ─────────────────────────────────────────────────────

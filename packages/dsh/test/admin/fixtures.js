@@ -314,7 +314,9 @@ export function makeFakePm(o = {}) {
     // D161：能选的人（照核心 pickable 的形状）：不列收回的、场合；44 和 10 认成同一个人；25 和 43 同名，靠 place 分开
     pickable: () => entities.filter((e) => e.status !== 'retracted' && e.kind !== 'setting' && e.name && e.id !== 44).map((e) => ({
       id: e.id, name: e.name, kind: e.kind, isSelf: !!e.isSelf, status: e.status, members: e.id === 10 ? [10, 44] : [e.id],
-      aliases: e.id === 10 ? ['明哥'] : [], place: e.id === 25 ? 'sk-group-small' : e.id === 43 ? 'sk-group-big' : null })),
+      aliases: e.id === 10 ? ['明哥'] : [], place: e.id === 25 ? 'sk-group-small' : e.id === 43 ? 'sk-group-big' : null,
+      // D162：名下有没有东西——编的事实、情节、原话只挂在 1 和 10～30 上，40 以后的什么都没有（记忆页签的「全部的人」不列它们）
+      stored: e.id < 40 })),
     intentions: () => intentions,
     percepts: (q) => percepts.filter((p) => (!q.q || String(p.text ?? '').includes(q.q)) && (!q.settingKey || p.settingKey === q.settingKey) && (!q.entityId || p.actorEntityId === q.entityId)),
     windows: (q) => windows.filter((w) => (!q.q || String(w.text ?? '').includes(q.q)) && (!q.settingKey || w.settingKey === q.settingKey)),

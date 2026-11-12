@@ -444,11 +444,16 @@ async function runSleep(core, at, signal) {
   await step(3, 'generalize', async () => wrap(await generalizeStep(core, { run, signal, at })), { llm: true });
   await step(4, 'reflect', async () => wrap(await reflectStep(core, { run, signal, at })), { llm: true });
   await step(5, 'entities', async () => {
+    // 先（D162，纯代码，不调模型）：把认人的规矩再用一遍（entities.repairMentionGhosts，启动时和她有了新名字时也跑）——
+    // 白天有人刚有了名字（入群时只有账号，后来带着名片说话了），提炼按名字另立的那份档案今晚就和他挂上 same，不用等下次启动
+    let ghosts;
+    try { ghosts = core.mods.entities.repairMentionGhosts(core); } catch (e) { ghosts = { skipped: `error:${errCode(e)}` }; }
     const ids = entitiesNeedingImpressions(core).slice(0, p.impressions.perCall);
     const pairs = maybeSamePairs(core, { limit: p.impressions.maybeSamePerCall, at });
-    if (!ids.length && !pairs.length) return { skipped: 'nothing-new' };
-    if (run.calls >= run.max) return { skipped: 'llm-cap' };
-    return wrap(await impressionsBatch(core, ids, { run, signal, at, pairs }));
+    if (!ids.length && !pairs.length) return { skipped: 'nothing-new', detail: { ghosts } };
+    if (run.calls >= run.max) return { skipped: 'llm-cap', detail: { ghosts } };
+    const r = wrap(await impressionsBatch(core, ids, { run, signal, at, pairs }));
+    return { ...r, detail: { ...(r.detail ?? {}), ghosts } };
   });
   await step(6, 'time', async () => {
     const t = timeMaintenanceImpl(core, at);

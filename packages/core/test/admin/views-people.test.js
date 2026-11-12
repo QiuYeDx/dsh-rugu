@@ -97,3 +97,19 @@ test('按人筛：展开成那个人名下的全部档案（原话、事实、�
   const days = core.mods.admin.list(core, { view: 'days', of: 'percepts', entityId: w.ming, month: new Date(core.now()).toISOString().slice(0, 7) });
   assert.equal(days.items.reduce((s, x) => s + x.n, 0), 3);
 }));
+
+test('pickable 的 stored（D162）：组里任何一个档案名下有事实、情节、他说的原话或意图才算有东西；收回的组员名下的也算', withCore('adm-pick-stored', (core) => {
+  const w = world(core);
+  const item = (id) => core.mods.admin.list(core, { view: 'pickable' }).items.find((x) => x.members.includes(id));
+  for (const id of [w.ming, w.maybe, w.pet, w.hong1, w.hong2, w.me]) assert.equal(item(id).stored, false, `${id} 名下什么都没有`);
+  seedPercept(core, { settingKey: w.sk1, actor: w.mingGhost, text: '收回的档案名下的话' });
+  assert.equal(item(w.ming).stored, true, '收回的组员说过话：这个人名下有东西');
+  seedAssertion(core, { text: '关于阿明明', subjects: [w.maybe], settingKey: w.sk1 });
+  assert.equal(item(w.maybe).stored, true, '事实');
+  seedEpisode(core, { settingKey: w.sk1, participants: [w.pet] });
+  assert.equal(item(w.pet).stored, true, '情节');
+  core.store.run("INSERT INTO intentions(act, text, origin, state, target_entity_id, formed_at, created_at, updated_at) VALUES ('ask', '问问小红', 'self-care', 'formed', ?, ?, ?, ?)",
+    w.hong1, core.now(), core.now(), core.now());
+  assert.equal(item(w.hong1).stored, true, '意图');
+  assert.equal(item(w.hong2).stored, false, '同名的另一个人不跟着');
+}));

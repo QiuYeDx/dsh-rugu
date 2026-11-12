@@ -13,7 +13,7 @@ import {
   state, getEntity, createEntity, addName, identityKeys, findEvidence, attachEvidence, moveEvidence,
   flushEmbeds, namesChanged, bump, warn, errName, RIGHTS_DECIDERS, markDirty,
 } from './records.js';
-import { ensureSelf as ensureSelfImpl, ensurePrincipal as ensurePrincipalImpl } from './own.js';
+import { ensureSelf as ensureSelfImpl, ensurePrincipal as ensurePrincipalImpl, reclaimOwnAccount } from './own.js';
 import {
   resolveActor as resolveActorImpl, resolveExtracted as resolveExtractedImpl, candidates as candidatesImpl,
   noteMentionInternal, corroboration, descriptorRowsFor,
@@ -115,6 +115,8 @@ const VERIFIED = new Set(['platform', 'config', 'owner']);
  * 保留名（她的名字、主人的称呼）标 reserved。可重复调用（幂等）。
  * 配置里的账号之前已经按普通说话人建过档案的（适配器晚注册、主人后来才配上）：证据改挂到她自己 / 主人，旧档案链接成同一个人
  * （主人的是主人亲手写的配置 → decided_by='owner'；她自己的 → 'platform'）。
+ * 【D162】她自己的账号：只从没有管理权限的档案上拿（有的算冲突）；拿走以后那个档案什么都没有了（没说过话、没别的证据和关系描述）就不挂 same，
+ * 最后跑一遍修复把它撤掉（「@她的平台名」被当成普通群友立出来的档案就是这样）；计数 entities.identity.selfReclaimed。
  * @param {import('../core-types.js').CoreContext} core
  * @param {string} adapterId
  * @param {{selfClaims: import('../contract/types.js').IdentityClaim[], principalClaims: import('../contract/types.js').IdentityClaim[]}} claims
@@ -124,14 +126,17 @@ export function registerAdapterClaims(core, adapterId, claims) {
   core.store.tx(() => {
     const selfId = ensureSelfImpl(core);
     const principalId = ensurePrincipalImpl(core);
-    applyOwnClaims(core, adapterId, selfId, claims?.selfClaims, null, principalId, 'platform');
+    const reclaimed = applyOwnClaims(core, adapterId, selfId, claims?.selfClaims, null, principalId, 'platform', { self: true });
     applyOwnClaims(core, adapterId, principalId, claims?.principalClaims, 'config', selfId, 'owner');
+    // 【D162】她的账号从别的档案那里拿回来了：名字都记完以后跑一遍修复（那个档案没了证据、名字又都是她的就撤掉）
+    if (reclaimed > 0) repairMentionGhosts(core);
     flushEmbeds(core);
   });
 }
 
-function applyOwnClaims(core, adapterId, ownerId, list, strengthOverride, otherOwnId, linkDecider) {
+function applyOwnClaims(core, adapterId, ownerId, list, strengthOverride, otherOwnId, linkDecider, { self = false } = {}) {
   const at = core.now();
+  let reclaimed = 0;
   for (const c of Array.isArray(list) ? list : []) {
     if (!c || typeof c !== 'object') continue;
     if (c.kind === 'account' && typeof c.namespace === 'string' && typeof c.id === 'string') {
@@ -142,6 +147,15 @@ function applyOwnClaims(core, adapterId, ownerId, list, strengthOverride, otherO
       else if (ex.entity_id === otherOwnId) {
         bump(core, 'entities.identity.conflict');                       // 同一个账号既配成她又配成主人：不动，报警
         warn(core, 'entities.identity.conflict', { entity: ownerId, other: otherOwnId });
+      } else if (self) {
+        // 【D162】她的账号在别的档案上：和 resolve.js 的 attachOwnAccounts 同一条规矩（own.js 的 reclaimOwnAccount）——
+        // 有管理权限的不动、算冲突；拿回来以后那个档案还有自己的东西就和她挂 same，什么都没有了的交给修复（registerAdapterClaims 最后跑）
+        const r = reclaimOwnAccount(core, ownerId, ex, strength);
+        if (r.moved) reclaimed += 1;
+        else {
+          bump(core, 'entities.identity.conflict');
+          warn(core, 'entities.identity.conflict', { entity: ownerId });
+        }
       } else {
         moveEvidence(core, ex.id, ownerId, strength);
         linkImpl(core, ownerId, ex.entity_id, { rel: 'same', confidence: 1, evidence: ['adapter-claims'], decidedBy: linkDecider, at });
@@ -154,6 +168,7 @@ function applyOwnClaims(core, adapterId, ownerId, list, strengthOverride, otherO
       addName(core, ownerId, { raw: c.name, kind: 'config', scope, reserved: true, at: Number.isFinite(c.observedAt) ? c.observedAt : at });
     }
   }
+  return reclaimed;
 }
 
 /**
