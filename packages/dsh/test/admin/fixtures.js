@@ -5,6 +5,7 @@
 import { createConfig } from 'rugu-core';
 import { createBudget } from '../../src/ports/budget.js';
 import { HOST_DEFAULTS } from '../../src/host/config.js';
+import { makeStarmap } from './starmap-fixtures.js';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -146,11 +147,17 @@ const LONG = '他说下个月要搬去另一个城市工作，房子已经在看
 
 /**
  * 假 pm（核心 API 的管理面）。
- * @param {{scenario?: 'normal'|'empty'|'errors', now?: number}} [o]
+ * scenario：normal / empty / errors；另有两个只管星图（D163）的：big（星图约 2 万颗星，量性能用；别的视图同 normal）、
+ * old（老核心：没有 admin.starmap；别的视图同 normal）。
+ * @param {{scenario?: 'normal'|'empty'|'errors'|'big'|'old', now?: number, clock?: () => number}} [o]
+ *   clock：星图的「现在」（预览里用真的时间往前走，实时增量才看得到新的想起）；不给就是固定的 now
  */
 export function makeFakePm(o = {}) {
   const scenario = o.scenario ?? 'normal';
   const now = o.now ?? Date.UTC(2026, 10, 4, 6, 30);
+  const clock = o.clock ?? (() => now);
+  let sky = null;
+  const skyOf = () => (sky ??= makeStarmap({ now, size: scenario === 'big' ? 'big' : 'normal' }));
   const R = rng(11);
   const full = scenario !== 'empty';
   // 「有记忆 / 没记忆」评测最近一次的结果（D126，编的；和 scripts/memory-eval.mjs 的用例同名）
@@ -556,6 +563,26 @@ export function makeFakePm(o = {}) {
             gaps: [], unverified: 1, failed: 1, totalBytes: backups.reduce((n, b) => n + b.size, 0) };
         },
       },
+      // 星图（D163）：照核心的契约（设计 §3.1）编的；errors 抛错，empty 没有星，old 没有这个接口（见下面）
+      starmap(q = {}) {
+        rec('admin.starmap', q);
+        if (scenario === 'errors') throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' });
+        if (q.peek) {
+          if (!Array.isArray(q.peek) || q.peek.length > 24) throw err('CONTRACT', 'admin.starmap 不合契约：peek 最多 24 个引用');
+          return scenario === 'empty' ? { items: [] } : skyOf().peek(q.peek);
+        }
+        const at = clock();
+        if (q.since) {
+          if (scenario === 'empty') return { now: at, rev: '0.0.0.0.0', cursor: { inj: 0, trace: 0, told: 0 }, traces: [], recalls: [], tells: [] };
+          return skyOf().live(q.since, at);
+        }
+        if (scenario === 'empty') {
+          return { now: at, rev: '0.0.0.0.0', cursor: { inj: 0, trace: 0, told: 0 }, params: { ageFloorMs: 180_000, timeUnitMs: HOUR }, t0: null,
+            people: [{ id: 1, name: '', self: true, principal: false, closeness: null, n: 0 }], places: [], stars: { cols: ['ref', 'k', 'sub', 't', 't2', 'place', 'who', 'st', 'sup', 'imp', 'cert', 'val', 'b'], rows: [] },
+            traces: [], recalls: [], tells: [], mood: [], heard: [], nights: [], dropped: 0, counts: { percepts: 0, episode: 0, fact: 0, plan: 0, lesson: 0 } };
+        }
+        return skyOf().snapshot(at);
+      },
       embedding: {
         health: () => (scenario === 'empty'
           ? { mode: 'thread', reason: null, dense: false, breakerOpen: true, activeSpace: null, activeUnproducible: false, shadow: null, queue: {}, device: null, readOnlyThreads: true }
@@ -569,6 +596,7 @@ export function makeFakePm(o = {}) {
       },
     },
   };
+  if (scenario === 'old') delete pm.admin.starmap;
   return pm;
 }
 

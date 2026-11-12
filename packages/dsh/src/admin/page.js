@@ -4,12 +4,26 @@
 import fs from 'node:fs';
 
 const PAGE_URL = new URL('./page.html', import.meta.url);
+// 星图（D163）的脚本单独一个文件，渲染时塞进 page.html 主脚本前面的占位处（同一个带 nonce 的 <script>）
+const STARMAP_URL = new URL('./starmap.client.js', import.meta.url);
+export const STARMAP_SLOT = '__PM_STARMAP__';
 let cached = null;
+let starmapCached = null;
 
 /** 读 page.html（只读一次；本地预览设 PM_ADMIN_PAGE_NOCACHE=1 时每次重读，改了页面不用重启）。 */
 export function pageTemplate() {
   if (cached == null || process.env.PM_ADMIN_PAGE_NOCACHE === '1') cached = fs.readFileSync(PAGE_URL, 'utf8');
   return cached;
+}
+
+/** 读 starmap.client.js（同上，只读一次）。文件里不能有 </script（会提前结束脚本块）。 */
+export function starmapScript() {
+  if (starmapCached == null || process.env.PM_ADMIN_PAGE_NOCACHE === '1') {
+    const src = fs.readFileSync(STARMAP_URL, 'utf8');
+    if (/<\/script/i.test(src)) throw new Error('starmap.client.js 里不能出现 </script');
+    starmapCached = src;
+  }
+  return starmapCached;
 }
 
 /**
@@ -18,7 +32,9 @@ export function pageTemplate() {
  */
 export function renderPage({ nonce, token }) {
   if (!/^[A-Za-z0-9+/=]+$/.test(nonce) || !/^[A-Za-z0-9_-]+$/.test(token)) throw new TypeError('nonce / token 格式不对');
-  return pageTemplate().replaceAll('__PM_NONCE__', nonce).replaceAll('__PM_TOKEN__', token);
+  // 先填 nonce 和令牌，再塞星图脚本（用函数替换：脚本里的 $& 之类不会被当成替换模式）
+  const script = starmapScript();
+  return pageTemplate().replaceAll('__PM_NONCE__', nonce).replaceAll('__PM_TOKEN__', token).replace(STARMAP_SLOT, () => script);
 }
 
 /** 管理页的 CSP。 */

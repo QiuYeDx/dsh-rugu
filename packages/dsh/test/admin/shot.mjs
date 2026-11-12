@@ -15,10 +15,12 @@ const chrome = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const port = Number(process.env.CDP_PORT) || 9341;
 const profile = path.resolve(process.env.PROFILE || path.join(outDir, '..', 'chrome-shot-profile'));
 fs.rmSync(profile, { recursive: true, force: true });
+// CHROME_ARGS='--a --b'：额外的启动参数（例如无头 Chrome 要 WebGL 时加 --enable-unsafe-swiftshader --use-angle=swiftshader）
+const extraArgs = (process.env.CHROME_ARGS ?? '').split(/\s+/).filter(Boolean);
 // SHOW_SCROLLBARS=1：不加 --hide-scrollbars，截图里能看到真实的滚动条（滚动条样式要靠这个审）
 const showBars = process.env.SHOW_SCROLLBARS === '1';
 const proc = spawn(chrome, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-  '--disable-extensions', '--disable-sync', '--mute-audio', ...(showBars ? [] : ['--hide-scrollbars']), '--window-size=1280,900', '--lang=zh-CN', 'about:blank'], { stdio: 'ignore' });
+  '--disable-extensions', '--disable-sync', '--mute-audio', ...(showBars ? [] : ['--hide-scrollbars']), '--window-size=1280,900', '--lang=zh-CN', ...extraArgs, 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let targets;
 for (let i = 0; i < 150; i++) { try { targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); break; } catch { await sleep(200); } }
