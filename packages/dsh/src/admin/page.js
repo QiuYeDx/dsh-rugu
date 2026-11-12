@@ -49,6 +49,8 @@ export const UI_SCRIPTS = Object.freeze([
   ['places', new URL('./ui/places.js', import.meta.url)],
   ['settings', new URL('./ui/settings.js', import.meta.url)],
   ['wizard', new URL('./ui/wizard.js', import.meta.url)],
+  // 【D171】星图的脚本（和旧页面是同一个文件）：记忆 · 星图 用 window.__pmStarmap.mount 的新挂载（工具条和详情由 memory.js 画）
+  ['starmap', new URL('./starmap.client.js', import.meta.url)],
 ]);
 /** 各去处自己的样式（类名带模块前缀）；读不到的跳过。 */
 export const UI_STYLES = Object.freeze([

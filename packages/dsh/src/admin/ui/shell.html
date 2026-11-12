@@ -335,7 +335,7 @@ details.more > .body { padding-top: 8px; }
 .skel { border-radius: 6px; background: var(--secondary); height: 14px; }
 
 /* ── 浮层：菜单、提示条、对话框、侧面板 ─────────────────────────────────── */
-.menu { position: fixed; z-index: 70; min-width: 188px; max-width: calc(100vw - 32px); padding: 6px; border-radius: var(--radius-lg); background: var(--popover); border: 1px solid var(--border); box-shadow: var(--shadow-float); transform-origin: top; animation: pop var(--duration-fast) var(--ease-out-quint); }
+.menu { position: fixed; z-index: 70; min-width: 188px; max-width: calc(100vw - 32px); max-height: min(440px, calc(100vh - 24px)); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border-radius: var(--radius-lg); background: var(--popover); border: 1px solid var(--border); box-shadow: var(--shadow-float); transform-origin: top; animation: pop var(--duration-fast) var(--ease-out-quint); }
 @keyframes pop { from { opacity: 0; transform: scale(0.98) translateY(-4px); } }
 .menu [role^="menuitem"] { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 6px 10px; border: 0; border-radius: 6px; background: none; color: var(--foreground); font-size: 14px; letter-spacing: 0; text-align: left; }
 .menu [role^="menuitem"]:focus-visible, .menu [role^="menuitem"]:hover { outline: none; background: var(--accent); }

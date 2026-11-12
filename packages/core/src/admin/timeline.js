@@ -261,3 +261,6 @@ export function dayCounts(core, q, spec) {
                                       ORDER BY ${spec.time} ${d}, ${spec.key ?? 't.id'} ${d} LIMIT 1`, ...params)?.t ?? null;
   return { items: rows.map((r) => ({ day: new Date(Number(r.d) * DAY).toISOString().slice(0, 10), n: Number(r.n) })), first: edge('ASC'), last: edge('DESC'), tzOffsetMin: tz };
 }
+
+// 【D171】合并的记忆列表（feed.js）按同样的口径圈范围、下推搜索。
+export { scopeOf };

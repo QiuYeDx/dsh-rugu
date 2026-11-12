@@ -1,7 +1,11 @@
 // 管理页的「星图」页签（D163）：把她的记忆画成一片能交互、能按时间回放的星空。
 // 一颗星是一条记忆（经历、知道的事、约定和打算、做事的经验），亮度是「此刻想不想得起来」（和核心 dynamics/actr.js 同一个式子，按痕迹现算）。
 // 这个文件是一个普通脚本，由 page.js 渲染时塞进 page.html 主脚本前面的占位处（同一个带 nonce 的块）；它只往 window 上挂
-//   window.__pmStarmap = { mount(el, deps) → {show, hide, refresh}, lib }
+//   window.__pmStarmap = { mount(el, deps) → {show, hide, refresh, control}, lib }
+// 两种挂载（D171）：旧页面不给 deps.external，星图自己带工具条和详情卡（照旧）；新页面（ui/memory.js）给 deps.external，
+// 星图只画星空和时间轴，工具条和详情由页面用自己的组件画：页面经 control 改摆法、种类、场合、搜索、演示、放大，
+// 星图经 external 的回调把数据交给页面（onModel：种类计数、场合；onSelect：选中的那颗星；onSearch：搜索结果；onState：读不出来、老核心）。
+// 新页面也是同一个文件，单独一个 <script>（page.js 的 UI_SCRIPTS 里登记）；星空的绘制、数据、回放逻辑两种挂载完全一样。
 // lib 是不碰 DOM 的纯函数（亮度、布局、时间刻度），测试里用 vm 单独加载它。
 // 约束（和管理页一样）：CSP 只许带 nonce 的脚本和样式；不拼 HTML 字符串（记忆内容、名字是别人可控的字符串，一律文本节点）；
 // 不动态执行代码、不起后台线程；样式只经 el.style.x 或 CSS 变量。没有外部库：WebGL 和布局都在这里写。
@@ -443,11 +447,14 @@ void main() {
   };
 
   /**
-   * @param {HTMLElement} el   页签的容器
-   * @param {any} deps         管理页现成的工具：{h, add, clear, api, openMemory, errorBox, loading, toast, go, reduce}
+   * @param {HTMLElement} el   页签的容器（新页面：放星空的容器）
+   * @param {any} deps         管理页现成的工具：{h, add, clear, api, openMemory, errorBox, loading, toast, go, reduce}；
+   *                           新页面另给 external：{onModel?(info), onSelect?(info|null), onSearch?(info), onState?(state), maxRoot?: HTMLElement}
    */
   function mount(el, deps) {
     const { h, clear, api } = deps;
+    /** 新页面的挂载（D171）：工具条和详情交给页面；没给就是旧页面，照旧自己画。 */
+    const ext = deps.external && typeof deps.external === 'object' ? deps.external : null;
     const reduceMq = deps.reduce ?? matchMedia('(prefers-reduced-motion: reduce)');
     const force2d = /(?:^|[?&])starmap=2d(?:&|$)/.test(location.search);
     // ── 状态 ──
@@ -521,7 +528,9 @@ void main() {
     const maxBtn = h('button', { type: 'button', class: 'pm-btn sm pm-sm-max', title: '放大' }, icon(IC.max), h('span', null, '放大'));
     const bar = h('div', { class: 'pm-sm-bar' }, viewSeg, h('div', { class: 'pm-sm-kinds', role: 'group', 'aria-label': '种类（点一下只看 / 不看这一种）' }, kindBtns),
       h('span', { class: 'pm-sm-grow' }), h('div', { class: 'pm-sm-tools' }, placeSel, searchBox, searchInfo, demoBtn, maxBtn));
-    const root = h('div', { class: 'pm-sm' }, bar, sky);
+    const root = ext ? h('div', { class: 'pm-sm pm-sm-ext' }, sky) : h('div', { class: 'pm-sm' }, bar, sky);
+    /** 放大时铺满的那一块：旧页面是星图自己（工具条在里面）；新页面是页面给的容器（它的工具条、星空、详情都在里面）。 */
+    const maxEl = ext?.maxRoot ?? root;
     clear(el, root);
 
     /** 读不出来、老核心：同样一片深色天空，中间一段说明。 */
@@ -545,11 +554,12 @@ void main() {
       try { snap = await api.get('starmap'); } catch (e) {
         S.loading = false;
         if (soft) return;
+        ext?.onState?.('error');
         clear(el, stateBox('星图读不出来', `${e?.message ?? e}。记忆本身没有动，过一会儿再试；一直这样就去「诊断」页签看看。`, h('button', { type: 'button', class: 'pm-sm-sbtn', onclick: () => { clear(el, root); load(); } }, '重试')));
         return;
       }
       S.loading = false;
-      if (snap?.unsupported) { clear(el, stateBox('这个版本的核心还画不了星图', '星图要更新到带「星图」的核心才看得到。插件更新、重启 DSH 后再来看；记忆本身不受影响，在「记忆」页签里照常能看。', h('button', { type: 'button', class: 'pm-sm-sbtn', onclick: () => deps.go?.('memory') }, '去看记忆列表'))); return; }
+      if (snap?.unsupported) { ext?.onState?.('unsupported'); clear(el, stateBox('这个版本的核心还画不了星图', '星图要更新到带「星图」的核心才看得到。插件更新、重启 DSH 后再来看；记忆本身不受影响，在「记忆」页签里照常能看。', h('button', { type: 'button', class: 'pm-sm-sbtn', onclick: () => deps.go?.('memory') }, '去看记忆列表'))); return; }
       const selRef = S.sel >= 0 ? S.m?.ref[S.sel] : null;
       S.m = buildModel(snap);
       S.clockBase = S.m.now; S.perfBase = performance.now(); S.lastSnapAt = Date.now();
@@ -562,6 +572,8 @@ void main() {
       ensureGfx();
       uploadStatic();
       fillPlaces(); fillKinds(); updateCaption(); updateTimeUi();
+      ext?.onState?.(n ? 'ready' : 'empty');
+      emitModel();
       S.brightT = NaN; S.alphaDirty = true; S.dataDirty = true; S.moved0 = soft && S.moved0; S.moved1 = soft && S.moved1;
       resize(true);
       lineKey.hidden = !n;
@@ -610,6 +622,16 @@ void main() {
       const c = [0, 0, 0, 0];
       for (let i = 0; i < S.m.n; i++) c[S.m.kind[i]]++;
       kindBtns.forEach((b, i) => { b.lastChild.textContent = fmtInt(c[i]); });
+    }
+    /** 新页面（D171）：工具条要的东西——种类和计数、场合的选项、现在的摆法 / 场合 / 演示 / 放大。 */
+    function emitModel() {
+      if (!ext?.onModel || !S.m) return;
+      const c = [0, 0, 0, 0];
+      for (let i = 0; i < S.m.n; i++) c[S.m.kind[i]]++;
+      const places = [{ value: 'all', label: '全部场合' }, ...S.m.places.map((p, i) => ({ value: String(i), label: placeName(i), n: p.n ?? 0 }))];
+      if (S.m.place.some((x) => x === -1)) places.push({ value: '-1', label: '没记下在哪儿' });
+      ext.onModel({ n: S.m.n, dropped: S.m.dropped ?? 0, kinds: KINDS.map((k, i) => ({ name: k.name, color: rgbCss(k.rgb), n: c[i], on: S.kinds[i] })),
+        places, place: S.place, view: S.view, demo: S.demo, max: S.max });
     }
     function updateCaption() {
       const m = S.m;
@@ -745,7 +767,7 @@ void main() {
       if (S.view === 'people') {
         const s = Math.max(S.cam0.sx, S.fit0.sx * 3);
         S.moved0 = true;
-        tweenTo(0, { sx: s, sy: s, ox: S.W / 2 - S.lp.p[i * 2] * s - (S.narrow ? 0 : 150), oy: (S.H - TL_H) / 2 - S.lp.p[i * 2 + 1] * s });
+        tweenTo(0, { sx: s, sy: s, ox: S.W / 2 - S.lp.p[i * 2] * s - (S.narrow || ext ? 0 : 150), oy: (S.H - TL_H) / 2 - S.lp.p[i * 2 + 1] * s });
       } else {
         const sx = Math.max(S.cam1.sx, (S.W - GUTTER()) / (2 * 24));
         S.moved1 = true;
@@ -760,6 +782,7 @@ void main() {
       const to = v === 'time' ? 1 : 0;
       if (reduced()) { S.mix = to; S.mixAnim = null; } else S.mixAnim = { from: S.mix, to, t0: performance.now(), dur: 1150 };
       updateCaption(); kick();
+      emitModel();
     }
 
     // ── 时间 ──
@@ -1473,7 +1496,7 @@ void main() {
       if (i >= 0) showCard(i); else hideCard();
       kick();
     }
-    function hideCard() { card.hidden = true; clear(card); }
+    function hideCard() { card.hidden = true; clear(card); ext?.onSelect?.(null); }
     function showCard(i, refresh = false) {
       const m = S.m;
       if (!refresh || card.hidden) card.scrollTop = 0;
@@ -1494,6 +1517,17 @@ void main() {
           : peek ? h('div', { class: 'pm-sm-card-txt' }, peek.title ? h('b', null, peek.title) : null, peek.text && peek.text !== peek.title ? h('p', null, peek.text) : null)
             : h('p', { class: 'pm-sm-card-txt muted' }, '读不到内容（可能刚被隐藏或删掉）');
       const last = recs.filter((r) => r[0] <= S.T).slice(-5).reverse();
+      if (ext) {
+        // 新页面（D171）：详情由页面画；亮度曲线这块画布还是星图画（页面把它放进自己的面板）
+        ext.onSelect?.({ ref, i, refresh, kindName: kindLine(i), color: rgbCss(KINDS[m.kind[i]].rgb), demo: S.demo,
+          peek: S.demo ? null : peek, when, place: placeName(m.place[i]), who: aboutWho(i), status, cert: m.cert[i] ? CERT[m.cert[i]] ?? null : null,
+          newer: supBy >= 0 ? () => { select(supBy); focusStar(supBy); } : null, older: replaced >= 0 ? () => { select(replaced); focusStar(replaced); } : null,
+          bright: Math.round(nowB * 100), live: S.live, traces: m.trStart[i + 1] - m.trStart[i], recalls: recs.length, tells: tels.length,
+          last: last.map((r) => ({ when: fmtWhen(r[0]), place: placeName(r[1]), layer: LAYERS[r[2]].name, color: LAYERS[r[2]].css })),
+          curve, open: () => deps.openMemory?.(ref), close: () => select(-1) });
+        requestAnimationFrame(() => { if (curve.isConnected) drawCurve(curve, i); });
+        return;
+      }
       clear(card,
         h('div', { class: 'pm-sm-card-h' }, dot, h('span', null, kindLine(i)), h('button', { type: 'button', class: 'pm-x', 'aria-label': '关掉', onclick: () => select(-1) }, '×')),
         body,
@@ -1552,38 +1586,42 @@ void main() {
     async function runSearch(q) {
       const seq = ++searchSeq;
       S.searchQ = q;
-      if (!q) { S.search = null; searchInfo.hidden = true; S.alphaDirty = true; kick(); return; }
+      if (!q) { S.search = null; searchInfo.hidden = true; S.alphaDirty = true; kick(); ext?.onSearch?.({ q: '', n: null }); return; }
       searchInfo.hidden = false; clear(searchInfo, '在搜…');
+      ext?.onSearch?.({ q, busy: true });
       try {
         const lists = await Promise.all(['assertions', 'episodes'].map((list) => api.get('memories', { list, q, limit: 200 }).catch(() => ({ items: [] }))));
         if (seq !== searchSeq) return;
         const set = new Set();
         for (const l of lists) for (const x of l.items ?? []) { const i = S.m.refIdx.get(x.ref); if (i != null) set.add(i); }
         S.search = set; S.alphaDirty = true;
+        ext?.onSearch?.({ q, n: set.size });
         clear(searchInfo, set.size ? `搜到 ${fmtInt(set.size)} 颗` : '没有搜到', h('button', { type: 'button', class: 'pm-x sm', 'aria-label': '清掉搜索', onclick: () => { searchIn.value = ''; runSearch(''); } }, '×'));
         kick();
-      } catch (e) { if (seq === searchSeq) clear(searchInfo, `搜不了：${e?.message ?? e}`); }
+      } catch (e) { if (seq === searchSeq) { clear(searchInfo, `搜不了：${e?.message ?? e}`); ext?.onSearch?.({ q, error: String(e?.message ?? e) }); } }
     }
     searchIn.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(searchIn.value.trim()), 450); });
     searchIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(searchTimer); runSearch(searchIn.value.trim()); } if (e.key === 'Escape' && searchIn.value) { e.stopPropagation(); searchIn.value = ''; runSearch(''); } });
-    demoBtn.addEventListener('click', () => {
-      S.demo = !S.demo; store.set(DEMO_KEY, S.demo ? '1' : null); demoBtn.setAttribute('aria-pressed', String(S.demo));
+    function setDemo(on) {
+      S.demo = !!on; store.set(DEMO_KEY, S.demo ? '1' : null); demoBtn.setAttribute('aria-pressed', String(S.demo));
       if (S.m) { fillPlaces(); if (S.sel >= 0) showCard(S.sel, true); }
-      hideTip(); kick();
-    });
+      hideTip(); kick(); emitModel();
+    }
+    demoBtn.addEventListener('click', () => setDemo(!S.demo));
     function setMax(on) {
       S.max = on;
-      if (!on && document.fullscreenElement === root) document.exitFullscreen?.().catch(() => {});
-      root.classList.toggle('max', on);
+      if (!on && document.fullscreenElement === maxEl) document.exitFullscreen?.().catch(() => {});
+      maxEl.classList.toggle(ext ? 'mem-sky-max' : 'max', on);
       document.documentElement.classList.toggle('pm-sm-maxed', on);
       maxBtn.replaceChildren(icon(on ? IC.min : IC.max), h('span', null, on ? '缩回' : '放大'));
       maxBtn.title = on ? '缩回（Esc）' : '放大';
       requestAnimationFrame(() => { fitHeight(); resize(true); });
+      emitModel();
     }
     maxBtn.addEventListener('click', async () => {
       const want = !S.max;
       // 能全屏就全屏（单独打开时）；在 DSH 的 iframe 里没有全屏权限，就填满 iframe
-      if (want && document.fullscreenEnabled && root.requestFullscreen) { try { await root.requestFullscreen(); S.fs = true; setMax(true); return; } catch { /* 填满 iframe */ } }
+      if (want && document.fullscreenEnabled && maxEl.requestFullscreen) { try { await maxEl.requestFullscreen(); S.fs = true; setMax(true); return; } catch { /* 填满 iframe */ } }
       if (!want && document.fullscreenElement) { try { await document.exitFullscreen(); } catch { /* 已经退了 */ } }
       setMax(want);
     });
@@ -1591,7 +1629,7 @@ void main() {
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.max && S.visible && e.target === document.body) { e.preventDefault(); escape(); } });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && S.visible) { kick(); schedulePoll(); } });
     reduceMq.addEventListener?.('change', () => { if (reduced()) { S.mixAnim = null; S.mix = S.view === 'time' ? 1 : 0; } kick(); });
-    if (typeof ResizeObserver === 'function') { new ResizeObserver(() => { resize(); trackLater(); }).observe(sky); new ResizeObserver(() => { if (S.visible) fitHeight(); }).observe(bar); }
+    if (typeof ResizeObserver === 'function') { new ResizeObserver(() => { resize(); trackLater(); }).observe(sky); if (!ext) new ResizeObserver(() => { if (S.visible) fitHeight(); }).observe(bar); }
     window.addEventListener('resize', () => { if (S.visible) fitHeight(); });
 
 
@@ -1603,6 +1641,15 @@ void main() {
       },
       hide() { S.visible = false; cancelAnimationFrame(raf); raf = 0; lastTs = 0; clearTimeout(pollTimer); hideTip(); if (S.max) setMax(false); },
       refresh() { return load(true); },
+      /** 新页面（D171）的工具条用：改摆法、种类、场合、搜索、演示、放大，关掉选中的星。 */
+      control: {
+        setView, setDemo, select, escape,
+        setKind(i, on) { if (!(i in S.kinds)) return; S.kinds[i] = !!on; kindBtns[i].setAttribute('aria-pressed', String(S.kinds[i])); S.alphaDirty = true; kick(); emitModel(); },
+        setPlace(v) { S.place = String(v); placeSel.value = S.place; S.alphaDirty = true; kick(); emitModel(); },
+        search(q) { return runSearch(String(q ?? '').trim()); },
+        toggleMax() { maxBtn.click(); },
+        state: () => ({ view: S.view, kinds: [...S.kinds], place: S.place, demo: S.demo, max: S.max, sel: S.sel }),
+      },
       /** 调试和截图验收用：画法、星数、最近的帧耗时（毫秒）。 */
       stats() {
         const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);

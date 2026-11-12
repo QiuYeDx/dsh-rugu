@@ -438,3 +438,27 @@ export function setEvalResult(core, r) {
   setMetaJson(core.store, EVAL_KEY, v);
   return v;
 }
+
+// ── 【D171】管理页「记忆」：合并的记忆列表、按天计数、人物（只读，只读库也能用；口径和代价见 feed.js） ─────────
+import * as feedMod from './feed.js';
+/**
+ * 事实、经历、打算、经验按时间混排的一页（游标翻页；筛选：种类、状态、版本、人——连同他名下全部档案、场合、时间、搜索）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {object} [q]
+ * @returns {{items: object[], total: number|null, next?: string, prev?: string, order: string, kinds: string[], settings: object, names: object, readOnly: boolean}}
+ */
+export function feed(core, q) { return feedMod.feed(core, q ?? {}); }
+/**
+ * 合并列表的按天计数（月历用）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {object} q
+ * @returns {{items: {day: string, n: number}[], first: number|null, last: number|null, tzOffsetMin: number}}
+ */
+export function feedDays(core, q) { return feedMod.feedDays(core, q ?? {}); }
+/**
+ * 人物卡片（一个人一项）；给 id 时只给这个人，带详情。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{id?: number, limit?: number}} [q]
+ * @returns {{items: object[], total: number, readOnly: boolean, detail?: object}}
+ */
+export function people(core, q) { return feedMod.people(core, q ?? {}); }

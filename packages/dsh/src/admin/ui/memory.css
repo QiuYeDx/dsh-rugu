@@ -1,2 +1,235 @@
-/* 记忆（memory.js）的样式。类名都带 mem- 前缀；公共组件的样式在 shell.html，不要另起一套。
-   确认过的样稿里这一页的样式可以照搬过来，改成 mem- 前缀。 */
+/* 记忆（memory.js，D171）。类名都带 mem- 前缀；公共的列表行、下拉、面板、对话框用 shell.html 里的。
+   例外：pm-sm-* 是星图（starmap.client.js）自己画的星空和时间轴的类名，新页面里的样式写在这里（旧页面的在 page.html 里，两边各一份）。 */
+
+/* ── 列表 ──────────────────────────────────────────────────────────────── */
+.mem-toolbar { margin-bottom: 4px; }
+.mem-toolbar.spaced { margin-bottom: 16px; }
+.mem-toolbar .search input:disabled { cursor: not-allowed; }
+.mem-ro { margin: 12px 0 4px; }
+.mem-dayhead { display: flex; align-items: baseline; gap: 8px; margin: 28px 0 4px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--foreground); }
+.mem-list > .mem-dayhead:first-child { margin-top: 12px; }
+.mem-dayhead span { font-weight: 400; color: var(--muted-foreground); }
+.mem-row.mem-dim .ttl { color: var(--muted-foreground); }
+.mem-row .ttl .tag { margin-left: 2px; }
+.mem-pager { display: flex; justify-content: center; }
+.mem-pager:empty { display: none; }
+.mem-pager.top { margin-top: 12px; }
+.mem-pager .loading { padding: 24px 16px; }
+.mem-more { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 24px; }
+.mem-endnote { margin-top: 24px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); text-align: center; }
+.mem-more .mem-endnote { margin-top: 0; }
+.mem-sentinel { height: 1px; }
+.mem-faint { color: var(--muted-foreground); }
+.mem-mono { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
+
+/* 多选时底部的操作条（照样稿：毛玻璃、浮在底部中间） */
+.mem-bulk { position: fixed; z-index: 40; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 16px; border-radius: var(--radius-xl); background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border); box-shadow: var(--shadow-glass); font-size: 14px; white-space: nowrap; animation: mem-up var(--duration-base) var(--ease-out-quint); }
+.mem-bulk .n { font-weight: 500; font-variant-numeric: tabular-nums; }
+.mem-bulk .acts { display: flex; gap: 6px; }
+@keyframes mem-up { from { opacity: 0; transform: translate(-50%, 8px); } }
+
+/* ── 详情面板 ─────────────────────────────────────────────────────────── */
+.mem-big { font-size: 17px; line-height: 28px; font-weight: 500; overflow-wrap: anywhere; }
+.mem-big + .meta { margin-top: 8px; }
+.mem-p { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.mem-p + .mem-p { margin-top: 6px; }
+.mem-ss { margin-top: 28px; }
+.mem-ss > h3 { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--muted-foreground); margin-bottom: 8px; letter-spacing: 0.02em; }
+.mem-ss > .list { margin-top: -4px; }
+.mem-src { padding: 12px 0; border-top: 1px solid var(--border); }
+.mem-ss > h3 + .mem-src { border-top: 0; padding-top: 0; }
+.mem-src .q { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.mem-src.cur .q { font-weight: 500; }
+.mem-src-go { margin-top: 6px; font-size: 14px; }
+.mem-src > .mem-src-go { margin-top: 4px; }
+.mem-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 14px; }
+.mem-sfoot { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.mem-sfoot .sp { flex: 1; }
+.mem-ro-foot { flex: 1 1 100%; font-size: 13px; line-height: 18px; color: var(--muted-foreground); }
+.mem-purge-list > div + div { margin-top: 4px; }
+
+/* 自定时间段、跳到某一天 */
+.mem-range { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mem-range .field + .field { margin-top: 0; }
+.mem-cal-dlg { width: min(400px, calc(100vw - 32px)); }
+.mem-cal-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mem-cal-t { font-size: 15px; font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.mem-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; min-height: 248px; align-content: start; }
+.mem-cal .loading { grid-column: 1 / -1; padding: 80px 0; }
+.mem-cal-w { font-size: 12px; line-height: 24px; text-align: center; color: var(--muted-foreground); }
+.mem-cal-d { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; height: 40px; border: 0; border-radius: var(--radius-md); background: none;
+  color: var(--foreground); font-size: 14px; font-variant-numeric: tabular-nums; transition: background var(--duration-fast); }
+.mem-cal-d small { font-size: 10px; line-height: 12px; color: var(--muted-foreground); }
+.mem-cal-d:disabled { color: var(--muted-foreground); opacity: 0.45; cursor: default; }
+.mem-cal-d.l1 { background: color-mix(in oklab, var(--blue-soft) 45%, transparent); }
+.mem-cal-d.l2 { background: color-mix(in oklab, var(--blue-soft) 75%, transparent); }
+.mem-cal-d.l3, .mem-cal-d.l4 { background: var(--blue-soft); }
+.mem-cal-d.l4 small, .mem-cal-d.l3 small { color: var(--blue); }
+@media (hover: hover) and (pointer: fine) { .mem-cal-d:not(:disabled):hover { background: var(--hover); } }
+.mem-cal-note { font-size: 13px; line-height: 18px; }
+
+/* ── 人物 ─────────────────────────────────────────────────────────────── */
+.mem-merge { margin-bottom: 20px; }
+.mem-psearch { flex: 0 1 360px; }
+.mem-pcount { font-size: 13px; }
+.mem-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.mem-pcard { position: relative; display: flex; gap: 12px; padding: 16px; border-radius: var(--radius-xl); min-width: 0; transition: box-shadow var(--duration-fast), border-color var(--duration-fast); }
+@media (hover: hover) and (pointer: fine) { .mem-pcard:hover { border-color: color-mix(in oklab, var(--foreground) 16%, transparent); box-shadow: var(--shadow-float); } }
+.mem-pcard:has(.hit:focus-visible) { outline: 2px solid var(--ring); outline-offset: 2px; }
+.mem-pcard .main { flex: 1; min-width: 0; }
+.mem-pcard .nm { font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.mem-pcard .imp { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.mem-plead { width: 36px; height: 36px; }
+.mem-plead.big { width: 48px; height: 48px; font-size: 18px; }
+.mem-phead { display: flex; gap: 14px; align-items: center; }
+.mem-phead .meta { margin-top: 2px; }
+.mem-names { display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 22px; }
+.mem-name { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.mem-name b { font-weight: 500; }
+.mem-name span { font-size: 13px; color: var(--muted-foreground); }
+.mem-wd { margin-top: 4px; }
+
+/* ── 星图：工具条跟主题，星空永远是深色的（浅色主题下是一块圆角的深色画布，外面一圈细边 + 卡片阴影） ── */
+.mem-skybar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.mem-skybar .seg { flex: none; }
+.mem-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.mem-kchip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--background);
+  font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--foreground); white-space: nowrap; transition: background var(--duration-fast), color var(--duration-fast), border-color var(--duration-fast); }
+.mem-kchip i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mem-kchip .n { color: var(--muted-foreground); font-variant-numeric: tabular-nums; font-weight: 400; }
+.mem-kchip[aria-pressed="false"] { color: var(--muted-foreground); border-style: dashed; }
+.mem-kchip[aria-pressed="false"] i { opacity: 0.35; }
+@media (hover: hover) and (pointer: fine) { .mem-kchip:hover { background: var(--hover); } }
+.mem-skybar .end { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.mem-slot { display: contents; }
+.mem-skysearch { width: 150px; height: 32px; }
+.mem-hits { font-size: 13px; color: var(--muted-foreground); white-space: nowrap; }
+.mem-hits:empty { display: none; }
+.mem-skyw { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 20px; align-items: start; }
+.mem-skyroot.bare .mem-skyw { grid-template-columns: minmax(0, 1fr); }
+.mem-skyroot.bare .mem-starpanel { display: none; }
+.mem-sky { min-width: 0; }
+.mem-starpanel { padding: 20px; border-radius: var(--radius-xl); font-size: 14px; line-height: 22px; position: sticky; top: 84px; }
+.mem-starpanel .kv { gap: 4px 16px; margin-top: 16px; }
+.mem-starpanel .mem-ss { margin-top: 20px; }
+.mem-sp-empty { color: var(--muted-foreground); }
+.mem-sp-empty > svg { color: var(--gold-ink); margin-bottom: 8px; }
+.mem-sp-empty p + p { margin-top: 6px; font-size: 13px; line-height: 18px; }
+.mem-sp-h { display: flex; align-items: center; gap: 8px; margin: -6px -8px 0 0; font-size: 13px; color: var(--muted-foreground); }
+.mem-sp-h > span:first-of-type { flex: none; white-space: nowrap; }
+.mem-sp-h .when { margin-left: auto; min-width: 0; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mem-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mem-sp-body { margin-top: 8px; }
+.mem-sp-t { font-size: 15px; line-height: 24px; font-weight: 600; overflow-wrap: anywhere; }
+.mem-curve { margin-top: 8px; border-radius: 10px; overflow: hidden; background: #0A0E18; }
+.mem-curve canvas { display: block; width: 100%; height: 78px; }
+.mem-recs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 18px; }
+.mem-recs li { display: grid; grid-template-columns: 14px auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--foreground); }
+.mem-recs i { width: 12px; border-top: 1.5px dashed; }
+.mem-recs .p { color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-sp-f { margin-top: 20px; }
+/* 放大：页面给的这一块（工具条 + 星空 + 小卡）铺满窗口；DSH 的 iframe 里没有全屏权限时就铺满 iframe */
+html.pm-sm-maxed { overflow: hidden; }
+.mem-skyroot.mem-sky-max { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; padding: 12px 16px 16px; background: var(--background); }
+.mem-skyroot:fullscreen { padding: 12px 16px 16px; background: var(--background); }
+.mem-sky-max .mem-skyw { flex: 1; min-height: 0; align-items: stretch; }
+.mem-sky-max .mem-sky, .mem-sky-max .pm-sm, .mem-sky-max .pm-sm-sky { height: 100%; max-height: none; }
+.mem-sky-max .mem-starpanel { position: static; overflow: auto; }
+
+/* 星图自己画的部分（星空、说明、提示、时间轴）：和旧页面 page.html 里的同一套，只是换成这里的 token */
+.pm-sm { display: flex; flex-direction: column; min-width: 0; }
+.pm-sm-sky { position: relative; height: max(400px, calc(100vh - 300px)); max-height: 900px; min-height: 0; border-radius: var(--radius-2xl); overflow: hidden; color: #E8ECF4;
+  background: radial-gradient(120% 90% at 50% 38%, #0E1424 0%, #080B14 55%, #05070D 100%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), var(--shadow-card);
+  user-select: none; -webkit-user-select: none; touch-action: none; outline: none; font-size: 13px; line-height: 1.5; }
+.pm-sm-sky:focus-visible { box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 0 0 2px var(--ring); }
+.pm-sm-sky.grab { cursor: grabbing; }
+.pm-sm-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.pm-sm-cap { position: absolute; left: 20px; top: 16px; right: 20px; display: flex; flex-direction: column; gap: 1px; pointer-events: none; text-shadow: 0 1px 8px rgba(0,0,0,.7); }
+.pm-sm-cap > b { font-size: 13px; font-weight: 600; letter-spacing: .2px; color: #F2F4F8; }
+.pm-sm-cap-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.pm-sm-cap small { font-size: 12px; color: rgba(232,236,244,.66); }
+.pm-sm-cap-link { pointer-events: auto; appearance: none; border: 0; background: none; padding: 0; font-size: 12px; color: #9DBCFF; cursor: pointer; white-space: nowrap; }
+.pm-sm-cap-link:hover { text-decoration: underline; }
+.pm-sm-key { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin-top: 3px; font-size: 12px; color: rgba(232,236,244,.6); }
+.pm-sm-key .it { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pm-sm-key .ln { width: 18px; border-top: 2px solid var(--c); }
+.pm-sm-key .ln.dash { border-top-style: dashed; }
+.pm-sm-key .ring { width: 9px; height: 9px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--c); }
+.pm-sm-sky.narrow .pm-sm-key { display: none; }
+.pm-sm-sky.narrow .pm-sm-note { top: auto; bottom: 92px; }
+.pm-sm-note { position: absolute; right: 12px; top: 12px; max-width: min(420px, calc(100% - 24px)); padding: 5px 10px; border-radius: 8px; background: rgba(255,196,120,.14); border: 1px solid rgba(255,196,120,.3); color: #FFE2BD; font-size: 12px; }
+.pm-sm-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; pointer-events: none; }
+.pm-sm-msg-in { display: inline-flex; align-items: center; gap: 10px; color: rgba(232,236,244,.8); font-size: 13px; }
+.pm-sm-msg-in.col { flex-direction: column; gap: 6px; max-width: 340px; }
+.pm-sm-msg-in.col b { font-size: 17px; line-height: 24px; color: #F2F4F8; }
+.pm-sm-msg-in.col span { color: rgba(232,236,244,.66); line-height: 1.6; font-size: 14px; }
+.pm-sm-msg .pm-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.2); border-top-color: rgba(255,255,255,.8); animation: spin 0.8s linear infinite; }
+.pm-sm-state .pm-sm-msg { pointer-events: auto; }
+.pm-sm-state .pm-sm-msg-in.col { max-width: 380px; gap: 8px; }
+.pm-sm-state .pm-sm-sbtn { margin-top: 6px; }
+.pm-sm-tip { position: absolute; z-index: 3; max-width: 320px; padding: 8px 11px; border-radius: 10px; background: rgba(14,17,27,.95); border: 1px solid rgba(255,255,255,.11); box-shadow: 0 8px 28px rgba(0,0,0,.45); pointer-events: none; font-size: 12.5px; line-height: 1.55; color: #E8ECF4; }
+.pm-sm-tip .m { display: flex; align-items: center; gap: 6px; color: rgba(232,236,244,.7); font-size: 12px; }
+.pm-sm-tip .m.s { margin-top: 3px; color: rgba(232,236,244,.55); }
+.pm-sm-tip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.pm-sm-tip .x { margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: #F2F4F8; }
+.pm-sm-card { display: none; }
+.pm-sm-tl { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; padding: 8px 14px; display: flex; flex-direction: column; gap: 4px; background: linear-gradient(rgba(5,7,13,0), rgba(5,7,13,.82) 34%, rgba(5,7,13,.94)); }
+.pm-sm-tl-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pm-sm-grow { flex: 1 1 0; min-width: 0; }
+.pm-sm-time { font-size: 13px; color: #E8ECF4; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pm-sm-speeds { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: rgba(255,255,255,.06); }
+.pm-sm-speeds .pm-sm-sbtn { border-color: transparent; background: none; height: 24px; padding: 0 9px; }
+.pm-sm-speeds .pm-sm-sbtn[aria-pressed=true] { background: rgba(255,255,255,.16); color: #fff; }
+.pm-sm-sbtn { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06); color: rgba(232,236,244,.86); font-size: 12.5px; letter-spacing: 0; cursor: pointer; white-space: nowrap; flex: none; transition: background-color .15s, color .15s, border-color .15s; }
+@media (hover: hover) and (pointer: fine) { .pm-sm-sbtn:hover { background: rgba(255,255,255,.13); color: #fff; } }
+.pm-sm-sbtn:focus-visible, .pm-sm-track:focus-visible, .pm-sm-cap-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.pm-sm-sbtn.icon { width: 30px; padding: 0; }
+.pm-sm-sbtn svg { pointer-events: none; }
+.pm-sm-sbtn.now .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(232,236,244,.4); }
+.pm-sm-sbtn.now[aria-pressed=true] { color: #E9DCBB; border-color: rgba(214,200,166,.45); background: rgba(214,200,166,.12); }
+.pm-sm-sbtn.now[aria-pressed=true] .dot { background: #D6C8A6; animation: mem-pulse 1.8s ease-in-out infinite; }
+@keyframes mem-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(214,200,166,.55); } 50% { box-shadow: 0 0 0 4px rgba(214,200,166,0); } }
+.pm-sm-track { position: relative; height: 32px; cursor: pointer; border-radius: 6px; touch-action: none; }
+.pm-sm-track-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* ── 成长 ─────────────────────────────────────────────────────────────── */
+.mem-now { padding: 20px 24px; }
+.mem-now p { font-size: 17px; line-height: 30px; overflow-wrap: anywhere; }
+.mem-mode { margin-top: 12px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); }
+.mem-grow { align-items: flex-start; }
+.mem-grow > .trail { position: absolute; top: 10px; right: 8px; }
+.mem-grow .ttl { padding-right: 36px; }
+.mem-grow + .mem-grow::before { left: 12px; right: 12px; }
+.mem-diff { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 22px; }
+.mem-diff > div { display: flex; gap: 10px; padding: 6px 12px; border-radius: 8px; background: var(--secondary); overflow-wrap: anywhere; }
+.mem-diff .sign { width: 10px; flex: none; color: var(--muted-foreground); font-family: var(--font-mono); }
+.mem-diff .del { color: var(--muted-foreground); }
+.mem-diff .del > span:last-child { text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--muted-foreground) 60%, transparent); }
+.mem-diff .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mem-grow .meta { margin-top: 8px; }
+.mem-ev { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; line-height: 18px; position: relative; z-index: 1; }
+.mem-more-sec { margin-top: 40px; }
+
+/* ── 窄屏 ─────────────────────────────────────────────────────────────── */
+@media (max-width: 960px) {
+  .mem-skyw { grid-template-columns: minmax(0, 1fr); }
+  .mem-starpanel { position: static; }
+}
+@media (max-width: 760px) {
+  .mem-skybar .end { margin-left: 0; justify-content: flex-start; flex: 1 1 100%; }
+  .mem-skysearch { flex: 1 1 160px; width: auto; }
+}
+@media (max-width: 560px) {
+  .mem-bulk { left: 16px; right: 16px; transform: none; justify-content: space-between; padding-left: 12px; animation: none; }
+  .mem-bulk .acts { gap: 4px; }
+  .mem-bulk .acts .btn-sm { padding: 0 10px; }
+  .mem-range { grid-template-columns: 1fr; }
+  .mem-people { grid-template-columns: minmax(0, 1fr); }
+  .mem-psearch { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-sm-sbtn.now[aria-pressed=true] .dot { animation: none; }
+}
