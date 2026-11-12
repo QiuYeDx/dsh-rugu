@@ -240,7 +240,7 @@ export {};
  * @property {number} budgetChars
  * @property {AbortSignal} [signal]
  */
-/** @typedef {'people'|'recentFromPresent'|'todaySoFar'|'gap'|'warmStart'|'recalled'|'awarePrivate'|'intentions'|'working'|'lessons'|'pointBack'|'recollect'|'outline'|'look'} Layer */
+/** @typedef {'people'|'recentFromPresent'|'todaySoFar'|'gap'|'warmStart'|'recalled'|'awarePrivate'|'intentions'|'working'|'sinceHere'|'lessons'|'pointBack'|'recollect'|'outline'|'look'} Layer */
 /**
  * 一条已过关口①的记忆（§9.3.6：每条都能对上一次判定）。omit 的不出现。
  * @typedef {object} RecallItem

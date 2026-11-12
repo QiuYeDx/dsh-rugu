@@ -425,11 +425,13 @@ test('D133：诊断看得到注入预算——每天超了几轮、因为预算�
   inject(core, 'sess-aaaa-1111', 'n-1', gated(core, [['a1']]), { chars: 200 });
   ctx.confirmInjection(core, 'sess-aaaa-1111', 'n-1');
   const day = new Date(core.now()).toISOString().slice(0, 10);
-  for (const [name, v] of [['context.pack.over.day', 2], ['context.pack.over.rolling', 1], ['context.pack.budgetDropped', 7], ['context.pointBack', 3], ['context.pointBack.capped', 1]]) {
+  for (const [name, v] of [['context.pack.over.day', 2], ['context.pack.over.rolling', 1], ['context.pack.budgetDropped', 7], ['context.pointBack', 3], ['context.pointBack.capped', 1],
+    ['context.sinceHere.turns', 4], ['context.sinceHere.items', 9]]) {
     core.store.run('INSERT INTO metrics(day, name, value) VALUES (?, ?, ?)', day, name, v);
   }
   const h = ctx.recallHealth(core);
-  assert.deepEqual(h.days[0].inject, { overDay: 2, overRolling: 1, budgetDropped: 7, pointBack: 3, pointBackCapped: 1 }, '指回去的次数（D146）也在这里');
+  assert.deepEqual(h.days[0].inject, { overDay: 2, overRolling: 1, budgetDropped: 7, pointBack: 3, pointBackCapped: 1, sinceHereTurns: 4, sinceHereItems: 9 },
+    '指回去的次数（D146）、这之后他的事给了几轮几条（D164）也在这里');
   const a = h.injectBudget.find((s) => s.session === 'sess-aaa');
   assert.deepEqual(a, { session: 'sess-aaa', adapter: ADAPTER, dayUsed: 200, dayLimit: null, rollingUsed: 200, rollingLimit: Math.round(0.25 * N * 100), steps: N + 1 });
   const b = h.injectBudget.find((s) => s.session === 'sess-bbb');

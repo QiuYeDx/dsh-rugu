@@ -12,6 +12,10 @@
 //     她自己开口的一轮（空闲唤醒，D132；定时提醒到点，D144）没有「眼前这个人」，按「她要对谁说」取（addresseesFor：一对一就是对方，
 //     群里是她最近在别处来往过、又在这里的人；提醒对得上对象、他又在这里时他在最前）；这些人也算在场（人物卡、在场者近况、
 //     对着他的意图），「今天到目前为止」也给。
+//   - sinceHere（这之后他的事，D164，since.js）：对工作记忆的那批人，她和他上次在这里说完话以后、她在别处知道的关于他的事，一件一行、
+//     按要紧排（平滑打分，见 since.js）；第一步就同步挑好候选（零 LLM、不抽样），照常过关口①、本周期给过的不再给（有了结果的计划
+//     状态在上次给了以后才变的再给一次）。普通回想也找到的同一条，打包时这一层先拿（同一条只占一个位置）；这一层装不下的照样能经普通回想给出来。
+//     有自己的预算（context.sinceHere），不占整块的上限和每天额度。她自己开口的一轮交给关口①时排在最前，别的轮排在想起来的后面。
 // 「看起来在问过去」（§6.6、§8.5）：对她说的话看起来在问过去，就把这一轮切到有意回想（τ_del、可以等到 3 秒）。
 // 重新开始（§10.5、§17 Q6）：只给常驻区和长期记忆，不给「这里最近在聊什么」（暖启动、时间间隔、重新开始前不久的原文），
 // 等下一次压缩结束再恢复。
@@ -22,10 +26,11 @@
 import { refOf, parseRef, bumpMetric } from '../store/index.js';
 import { sameId } from '../contract/index.js';
 import { pack, countSent, pointBackOf } from './pack.js';
-import { loadSession, sentTags, budgetState, noteInteraction, clearWarm, pendingLayers, pointBackCounts } from './ledger.js';
+import { loadSession, sentTags, budgetState, noteInteraction, clearWarm, pendingLayers, pointBackCounts, lastGivenAt } from './ledger.js';
 import { needsRefresh, refreshResident, swapStaged, isRestoring, noteSettingId } from './resident.js';
 import { activateExtras, cardFor, bestImpression, burstGap, bestName } from './people.js';
 import { buildWorking } from './working.js';
+import { sinceHereFor } from './since.js';
 import { recallDiag } from './diag.js';
 import { recollectNote, recollectOrder } from './recollect.js';
 import { sanitize, clip, charLen, whenText, nowText, spanText, dayStart, newTraceId, HOUR_MS, MINUTE_MS } from './text.js';
@@ -194,8 +199,13 @@ function cachedFor(core, s, { exactOnly = false } = {}) {
   if (session && ((session.gap_ack_at != null && session.gap_ack_at >= entry.at) || pendingLayers(core, session).has('gap'))) {
     list = list.filter((e) => e.layer !== 'gap');
   }
+  // 这之后他的事（D164）：再给一次的计划，到这一刻还没给过新状态的才照旧再给（缓存算好以后已经给了的，不再给）
+  const resend = new Set((entry.resend ?? []).filter((x) => {
+    const g = session ? lastGivenAt(core, session, [x.ref]).get(x.ref) : null;
+    return !(Number.isFinite(g) && g >= x.changedAt);
+  }).map((x) => x.ref));
   const items = pack(list, {
-    cfg, mode: entry.mode, sent: session ? sentTags(core, session) : new Set(), budgetChars: cfg.context.blockMaxChars,
+    cfg, mode: entry.mode, sent: session ? sentTags(core, session) : new Set(), budgetChars: cfg.context.blockMaxChars, resend,
     budget: budgetState(core, session, core.now()), ...(entry.recollectTier ? { recollectTier: entry.recollectTier } : {}),
   });
   return { hit: true, items, degradeLevel: entry.degradeLevel };
@@ -411,6 +421,18 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
     guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries: wm.entries, degradeLevel: degrade(core), mode, at, partial: true, triggerEntityId }));
   }
 
+  // 0c. 这之后他的事（D164，since.js）：对工作记忆的同一批人，同步、零 LLM 挑好候选（她和他上次在这里说完话以后她在别处知道的、关于他的事）。
+  //     能不能说照常由下面的关口①判。预取时不做（和工作记忆一样）；她调记忆工具想一件事（D148）时不做：那一次只要和那件事有关的
+  const toolAsk = opt.mode === 'deliberate' && typeof opt.query === 'string' && !!opt.query.trim();
+  //     有了结果的计划本周期给过的：上次给的时间从这个周期的注入记录里查（ledger.lastGivenAt），早于这次状态变化就再给一次（resend）
+  const givenAt = (ref) => (session ? lastGivenAt(core, session, [ref]).get(ref) ?? null : null);
+  const sinceHere = prefetch || toolAsk ? null
+    : guard('since-here', () => sinceHereFor(core, { key, persons: wmTriggers.map((t) => t.entityId), oneOnOne: !!target?.audience?.oneOnOne,
+      at, cfg, selfId, sent, givenAt }), null);
+  const sinceRefs = new Set((sinceHere?.groups ?? []).flatMap((g) => [g.lead, g.outcome]).filter(Boolean));
+  const resendList = (sinceHere?.groups ?? []).filter((g) => g.regive).map((g) => ({ ref: g.lead, changedAt: g.knownAt }));
+  const resend = new Set(resendList.map((x) => x.ref));
+
   // 1. 候选（未过关口①）。抛错（不是到点：到点 retrieve 自己返回已有的）且剩下的时间还够，就再试一次（D117）。
   //    每一步最多等它自己的截止时间 + context.stageGraceMs：超过了（不该有：retrieve、关口①都自己守截止时间）算这一步超时，按没有接着算
   const graceMs = Math.max(0, cfg.context.stageGraceMs ?? 250);
@@ -447,6 +469,8 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
   // 有意回想只去掉这一轮工作记忆里真的给了的：本周期已经给过她的那几条照常经回想、按「已发过」去重，
   // 什么都没给出来时集成层据此说「前面已经有了」，不说成想不起来（D95）
   const wmGiven = new Set(wm.entries.map((e) => e.ref));
+  // 这之后他的事（D164）挑中的不在这里去掉：两层都有同一条时打包按优先级让这一层先拿（同一条只占一个位置，不占想起来的名额）；
+  // 这一层因为字数装不下的，照样能经普通回想给出来
   const recalledItems = (Array.isArray(cset?.items) ? cset.items : []).filter((c) => !(mode === 'deliberate' ? wmGiven : wm.admitted).has(c?.ref))
     // 有意回想的工具：只靠「在场」那一路来的近况（他刚才在别处说的、和要想的事不相干的）不放
     .filter((c) => !asked || !isPresentRoute(c) || asked.byRoute(c) || asked.byText(textOfRef(core, c?.ref)));
@@ -489,6 +513,20 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
 
   const extras = [];
   const addExtra = (x) => { extras.push(x); slots.push({ ...x, order: order++ * 10 }); };
+
+  // 这之后他的事（D164）：一件一组（计划和它的结果同一组、只占一个名额，计划在前）；层内顺序就是 since.js 排好的先后
+  for (const g of sinceHere?.groups ?? []) {
+    const n = order++ * 10;
+    const group = `h:${g.lead}`;
+    const lead = { ref: g.lead, layer: 'sinceHere', role: g.outcome ? 'plan' : 'fact', group, person: g.person };
+    extras.push(lead);
+    slots.push({ ...lead, order: n });
+    if (g.outcome) {
+      const o = { ref: g.outcome, layer: 'sinceHere', role: 'outcome', group, person: g.person };
+      extras.push(o);
+      slots.push({ ...o, order: n + 1 });
+    }
+  }
 
   // 时间间隔和暖启动只在真实的新消息到来时给（§10.4「第一条真实消息到来时」、§10.5）；提醒、空闲唤醒不算
   const realMsg = s.trigger === 'message';
@@ -549,7 +587,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
   for (const c of recalledItems) if (c?.ref && !scored.has(c.ref)) scored.set(c.ref, c);
   for (const c of guard('activate', () => activateExtras(core, extras.filter((x) => !scored.has(x.ref)), { at, mode, seed }) ?? [], [])) if (c?.ref) scored.set(c.ref, c);
   const pool = slots.filter((x) => scored.has(x.ref));
-  const toGate = gateOrder(pool).map((r) => scored.get(r));
+  const toGate = gateOrder(pool, { sinceFirst: selfTurn }).map((r) => scored.get(r));
   let gated = [];
   if (toGate.length) {
     try {
@@ -582,13 +620,14 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
 
   // 6. 缓存（给 recallCached），然后按这个会话去重、打包。预取时替这一轮先判的不进这份缓存：它按预计的污点判，
   // 只用来让第二段的结论提前进判定缓存（按污点分开），不直接交给宿主
-  if (!prefetch) guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries, degradeLevel, mode, at, triggerEntityId, ...(rcEff ? { recollectTier: rcEff } : {}) }));
+  if (!prefetch) guard('cache', () => core.state.context.cache.set(cacheKey, { latestId, entries, degradeLevel, mode, at, triggerEntityId, ...(rcEff ? { recollectTier: rcEff } : {}),
+    ...(resendList.length ? { resend: resendList } : {}) }));
   // 算不出预算（D133）：这一轮不限（和原来「今天还没用」一样），记忆效果优先
   const budget = guard('budget', () => budgetState(core, session, at), () => ({ dayUsed: 0, dayLimit: Infinity, rollingLeft: Infinity }));
   // 打包出错：退回只打包工作记忆（她眼前这个人的那几句最要紧）
   let packed = {};
   const rcTier = rcEff ? { recollectTier: rcEff } : {};
-  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall, ...rcTier }),
+  let items = guard('pack', () => pack(entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall, resend, ...rcTier }),
     () => guard('pack-working', () => pack(wm.entries, { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: packed, recallFirst: toolRecall, ...rcTier }), []));
   // 6a. 指回去（D146）：这一轮是别人直接对她说的话开启的（她自己开启的轮、旁听的轮、记忆工具那条路都不算——工具那条路有 D95 的提示），
   //     回想排在这一轮新给的「想起来的 / 在场者近况」前面的条目这个周期已经给过、被去重掉了：给一行指回去，和别的条目一起再打包一次
@@ -602,7 +641,7 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
     }), null);
     if (pb?.entries.length) {
       const again = {};
-      const repacked = guard('pack', () => pack([...entries, ...pb.entries], { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: again, ...rcTier }), null);
+      const repacked = guard('pack', () => pack([...entries, ...pb.entries], { cfg, mode, sent, budgetChars: opt.budgetChars, budget, report: again, resend, ...rcTier }), null);
       if (repacked) { items = repacked; packed = again; }
     }
     if (!core.readOnly) {
@@ -621,6 +660,13 @@ async function compute(core, s, opt, { traceId, background, prefetch = false, pi
     } catch { /* 只是计数 */ }
   }
   if (!background) guard('continuity', () => noteContinuity(core, wm.top, items));
+  // 这之后他的事（D164）：这一轮给出了至少一条的轮数、给了几条（前台、可写时）
+  if (!background && !core.readOnly && sinceRefs.size) {
+    try {
+      const n = items.filter((i) => i.layer === 'sinceHere').length;
+      if (n) { bumpMetric(core.store, 'context.sinceHere.turns'); bumpMetric(core.store, 'context.sinceHere.items', n); }
+    } catch { /* 只是计数 */ }
+  }
 
   if (!background && session) {
     guard('ledger-write', () => {
@@ -725,22 +771,33 @@ function routeRecalled(core, items, { key, at, tz, restart, restartAt, cfg, plai
  * @param {{ref: string, layer: string}[]} pool
  * @returns {string[]}
  */
-function gateOrder(pool) {
+function gateOrder(pool, { sinceFirst = false } = {}) {
   const near = [];
   const rest = [];
+  const since = [];
   const seen = new Set();
+  // 同一条普通回想也找到了（两层都有）时按这一层排
+  const sinceSet = new Set(pool.filter((x) => x.layer === 'sinceHere').map((x) => x.ref));
   for (const x of pool) {
     if (seen.has(x.ref)) continue;
     seen.add(x.ref);
-    (x.layer === 'recentFromPresent' ? near : rest).push(x.ref);
+    (sinceSet.has(x.ref) ? since : x.layer === 'recentFromPresent' ? near : rest).push(x.ref);
   }
   const out = [];
   for (let i = 0; i < Math.max(near.length, rest.length); i++) {
     if (i < rest.length) out.push(rest[i]);
     if (i < near.length) out.push(near[i]);
   }
-  return out;
+  // 这之后他的事（D164）：她自己开口的一轮没有内容线索，这一层就是最要紧的，排在最前；有人对她说话的轮排在想起来的后面
+  // （别让它挤掉对着问题想起来的东西的第二段名额）
+  if (sinceFirst) return [...since, ...out];
+  const plain = new Set(pool.filter((x) => PLAIN_RECALL.has(x.layer)).map((x) => x.ref));
+  let cut = 0;
+  out.forEach((r, i) => { if (plain.has(r)) cut = i + 1; });
+  return [...out.slice(0, cut), ...since, ...out.slice(cut)];
 }
+// 「想起来的」那几层（D164 排关口①的顺序用）：对着这一轮的话想起来的
+const PLAIN_RECALL = new Set(['recalled', 'recollect', 'outline']);
 
 /**
  * 「在场者近况」那一路找到的（§8.2 第五路；和 retrieve/pipeline.js 的 viaPresent 同一个判断）：在场的人刚才在别处说的、做的。
@@ -1113,6 +1170,24 @@ function renderSlots(core, pool, { gmap, scored, at, tz, key, mode, cfg, selfId,
       } else {
         push(slot, g, r.rendered, r);
       }
+      return;
+    }
+    if (slot.layer === 'sinceHere') {
+      // 这之后他的事（D164）：能说、说个大概的才有一行（只能暗示、还在想的这一层不出现，也不给暗示）。计划照普通事实渲染，状态的说法
+      // 沿用 retrieve.render 的（「（后来做完了，今晚 18:01）」）；它的结果跟在后面一行「结果：……」，同一组、只占一个名额。计划不能说时结果自己一行
+      if (!CONTENT.has(g.verdict)) return;
+      const chars = Math.max(20, Math.floor(cfg.context.sinceHere?.itemChars ?? 100));
+      if (slot.role === 'outcome') {
+        const plan = pool.find((x) => x.layer === 'sinceHere' && x.group === slot.group && x.role === 'plan');
+        const pg = plan ? gmap.get(plan.ref) : null;
+        const withPlan = !!pg && CONTENT.has(pg.verdict);
+        const head = withPlan ? '结果：' : '';
+        const r = content(slot, g, chars - charLen(head));
+        if (r) push(slot, g, `${head}${r.rendered}`, r);
+        return;
+      }
+      const r = content(slot, g, chars);
+      if (r) push(slot, g, r.rendered, r);
       return;
     }
     if (slot.layer === 'outline') {

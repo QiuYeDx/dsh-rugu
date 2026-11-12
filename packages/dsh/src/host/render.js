@@ -14,6 +14,11 @@ export const WORKING_TITLES = Object.freeze({
   // 只讲这一段是干什么的、标签什么意思（他最新的说法算数；「私下」「当着那边的人」= 这里有人当时没听到），说不说由她掂量
   purpose: '眼前这个人在别处跟你说的、你回他的：让你接着那件事往下聊。他最新的说法是现在算数的（比这里更早的聊天记录新）；标着「私下」「当着那边的人」的，是这里有人当时没听到。',
 });
+/**
+ * 「这之后他的事」那一节的小标题（D164）：两种写法一样。一对一时就是对方；群里几个人时每一行的来源说法里本来就写着是谁的事。
+ * 括号里那半句是这一层存在的理由：有结果了的事她不知道就会去问（实测问题 #69）。
+ */
+export const SINCE_HERE_TITLE = '上次在这里说完话以后，你在别处知道的他那边的事（已经有结果的就别再问了）：';
 /** 「指回去」那一节的小标题（D146）：两种写法一样，只说这是什么。 */
 export const POINT_BACK_TITLE = '跟这句话最有关的，前面已经想起过（往上看）：';
 /** 回忆那一节的小标题（D155）：被问到以前的事时想起来的，按时间排好；开头一行是「找了哪儿」。 */
@@ -40,6 +45,8 @@ const BASE_SECTIONS = [
   // 用法说明是通用的（D110）：跟他定好的事跟着人走，同一件事以最新的为准；不认任何词，例子都不写。每一轮都占字数，写短（评审）
   // 小标题按写法换（D125，WORKING_TITLES）；这里是默认的「详细指引」
   { layers: ['working'], title: WORKING_TITLES.guided, max: 320 },
+  // 这之后他的事（D164）：紧跟在工作记忆后面。核心已经把每行截到 context.sinceHere.itemChars（计划的结果那一行前面多「结果：」三个字），这里只兜底
+  { layers: ['sinceHere'], title: SINCE_HERE_TITLE, max: 140 },
   // 指回去（D146）：被直接追问、最相关的那条前面已经给过时，核心给一行（那一条的来源说法和内容的开头，已经截短）。
   // 紧跟在工作记忆后面、单独一个小标题：要显眼，又不和这一轮新想起来的混在一起
   { layers: ['pointBack'], title: POINT_BACK_TITLE, max: 100 },
@@ -59,9 +66,11 @@ const BASE_SECTIONS = [
 
 const itemText = (it, max) => clip(sanitizeForPrompt(it?.rendered ?? ''), max);
 
-/** 字数紧时谁先拿到（和核心 pack 的优先级同一个口径，D108）：你想着的 > 工作记忆 > 时间间隔 > 她的经验（D124）> 指回去（D146）> 其余按展示顺序。 */
+/** 字数紧时谁先拿到（和核心 pack 的优先级同一个口径，D108）：你想着的 > 工作记忆 > 这之后他的事（D164）> 时间间隔 > 她的经验（D124）> 指回去（D146）> 其余按展示顺序。 */
 // 指回去（D146）排在她的经验后面：只有一两行，又是这一轮最相关的
-const ALLOC_ORDER = ['intentions', 'working', 'gap', 'lessons', 'pointBack'];
+// 这之后他的事（D164）在核心里有自己的预算（不占核心整块的 900 字）；到了这里块里有这一层时整块的上限相应加大（renderInjectBlock 的
+// inject.sinceHereChars），它排在工作记忆后面先拿到的字数正好是加出来的那些，不挤工作记忆、也不挤「想起来的」
+const ALLOC_ORDER = ['intentions', 'working', 'sinceHere', 'gap', 'lessons', 'pointBack'];
 
 /**
  * 先按优先级分字数（你想着的、工作记忆、时间间隔先拿；工作记忆里最新的先拿），再按 SECTIONS 的展示顺序排出来。
@@ -147,7 +156,7 @@ export function renderBlock(items, { head: head0 = null, maxChars = 1400, style 
 export function renderInjectBlock(layers, { inject = {}, style = 'guided' } = {}) {
   const items = Array.isArray(layers?.items) ? layers.items : [];
   const rcTurn = items.some((it) => it?.layer === 'recollect' || it?.layer === 'outline');
-  const maxChars = (inject.blockMaxChars ?? 1400) + (rcTurn ? Math.max(0, inject.recollectChars ?? 2400) : 0);
+  const maxChars = (inject.blockMaxChars ?? 1400) + (rcTurn ? Math.max(0, inject.recollectChars ?? 2400) : 0) + sinceHereRoom(items, inject);
   const r = renderBlock(items, { maxChars, style, note: rcTurn ? String(layers?.recollect?.note ?? '') : '' });
   return { ...r, recollect: recollectLog(layers, rcTurn) };
 }
@@ -164,6 +173,21 @@ export function renderRecallResult(layers, { tools = {}, style = 'guided' } = {}
   const rcTurn = items.some((it) => it?.layer === 'recollect' || it?.layer === 'outline');
   const r = renderToolResult(items, { style, ...(rcTurn ? { maxChars: Math.max(1600, tools.recollectChars ?? 4600), note: String(layers?.recollect?.note ?? '') } : {}) });
   return { ...r, recollect: recollectLog(layers, rcTurn) };
+}
+/**
+ * 「这之后他的事」（D164）那一节实际要占的字数（小标题 + 每行，和 renderBlock 同一个算法），最多 inject.sinceHereChars（默认 400）：
+ * 块里有这一层时整块的上限加这么多（照 D155 回忆那一轮的先例）。没有这一层加 0。
+ */
+function sinceHereRoom(items, inject) {
+  const cap = Math.max(0, inject.sinceHereChars ?? 400);
+  const sec = BASE_SECTIONS.find((x) => x.layers.includes('sinceHere'));
+  let n = 0;
+  for (const it of items) {
+    if (it?.layer !== 'sinceHere') continue;
+    const t = itemText(it, sec.max);
+    if (t) n += charLen(`- ${t}`) + 1;
+  }
+  return n ? Math.min(cap, n + charLen(SINCE_HERE_TITLE) + 1) : 0;
 }
 const recollectLog = (layers, rcTurn) => (rcTurn && layers?.recollect?.log && typeof layers.recollect.log === 'object' && !Array.isArray(layers.recollect.log)
   ? layers.recollect.log : null);

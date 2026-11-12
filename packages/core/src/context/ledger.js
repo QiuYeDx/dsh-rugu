@@ -429,6 +429,28 @@ export function pointBackCounts(core, s) {
   return out;
 }
 
+/**
+ * 这个会话本周期几条记忆各自最后一次给她的时间（D164：有了结果的计划状态变了要再给一次，看它上次给的时间早不早于这次状态变化）。
+ * 只从注入日志推，不另存（已发名单 sent_items_json 不带时间；为这一件事给它加时间要动会话行的格式，不值得）：本周期送达的真实注入块
+ * + 还在等确认的，按 ts。「指回去」那一行不算给过（它只是指回前面那一条）。只扫文字里含这条引用的行。
+ * @param {string[]} refs
+ * @returns {Map<string, number>} ref → 最后一次给的时间
+ */
+export function lastGivenAt(core, s, refs) {
+  const out = new Map();
+  if (!s?.session_id || !refs?.length) return out;
+  const live = livePending(core, s);
+  for (const ref of new Set(refs)) {
+    const rows = core.store.all(`SELECT ts, items_json FROM injections WHERE session_id = ? AND cycle = ? AND mode = 'live'
+        AND (seen = 1${live.length ? ` OR nonce IN (${live.map(() => '?').join(',')})` : ''}) AND instr(items_json, ?) > 0 ORDER BY ts DESC`,
+    s.session_id, s.cycle, ...live, `"${ref}"`);
+    for (const row of rows) {
+      if (safeJson(row.items_json, []).some((it) => it?.id === ref && it.layer !== POINT_BACK_LAYER)) { out.set(ref, row.ts); break; }
+    }
+  }
+  return out;
+}
+
 const UNMETERED = new Set(UNMETERED_LAYERS);
 /**
  * 一行注入日志里受限的字数（D133）：「你想着的」和工作记忆（UNMETERED_LAYERS）不受限，也不记账。

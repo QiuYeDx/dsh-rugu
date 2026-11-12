@@ -3224,6 +3224,8 @@ html.pm-sm-maxed{overflow:hidden}
             ['因为预算没放进去', `${fmtNum(t.inject?.budgetDropped ?? 0)} 条`],
             // 【D146】被直接追问、最相关的那条前面已经给过时，给一行指回去；同一条本周期指回的次数到了上限就不再指
             ['被追问时指回前面给过的', `${fmtNum(t.inject?.pointBack ?? 0)} 行${t.inject?.pointBackCapped ? `（到了次数上限没再指 ${fmtNum(t.inject.pointBackCapped)} 条）` : ''}`],
+            // 【D164】这之后他的事：重新在一个场合接上话时，上次在这里说完话以后她在别处知道的、关于眼前这个人的事
+            ['「这之后他的事」', `${fmtNum(t.inject?.sinceHereTurns ?? 0)} 轮给过，共 ${fmtNum(t.inject?.sinceHereItems ?? 0)} 条`],
           ]),
           // 各活跃会话：今天已用 / 上限、滚动窗口已用 / 上限（窗口还没记满或档位不限时写「不限」）；用完了的标提醒色
           r.injectBudget?.length ? h('div', { class: 'pm-sec' }, h('h3', null, '各会话的注入预算（字）'),

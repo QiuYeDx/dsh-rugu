@@ -754,8 +754,8 @@ function parseIds(json) {
   try { const v = JSON.parse(json ?? '[]'); return Array.isArray(v) ? v.map(Number).filter((x) => Number.isSafeInteger(x) && x > 0) : []; } catch { return []; }
 }
 
-/** 触发者本人 + 权利层确认的同一个人（和 discretion 的 rightsEquivalents 同一个口径；读不到权利层的口径就只有他自己）。 */
-function equivalents(core, trig) {
+/** 触发者本人 + 权利层确认的同一个人（和 discretion 的 rightsEquivalents 同一个口径；读不到权利层的口径就只有他自己）。经 retrieve.samePeople 导出（D164）。 */
+export function equivalents(core, trig) {
   const deciders = (() => { try { return [...(core.mods.discretion.RIGHTS_DECIDERS ?? [])]; } catch { return []; } })();
   const out = [trig];
   if (!deciders.length) return out;

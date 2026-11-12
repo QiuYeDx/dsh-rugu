@@ -174,6 +174,8 @@ export function recallHealth(core, opt = {}) {
         budgetDropped: m.get('context.pack.budgetDropped') ?? 0,
         // 指回去（D146）：给了几行；同一条本周期指回的次数到了上限、没再指的条数
         pointBack: m.get('context.pointBack') ?? 0, pointBackCapped: m.get('context.pointBack.capped') ?? 0,
+        // 这之后他的事（D164）：给出了至少一条的轮数、一共给了几条
+        sinceHereTurns: m.get('context.sinceHere.turns') ?? 0, sinceHereItems: m.get('context.sinceHere.items') ?? 0,
       },
     });
   }

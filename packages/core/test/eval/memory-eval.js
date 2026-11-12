@@ -219,6 +219,42 @@ export const CASES = Object.freeze([
     },
   },
   {
+    id: 'self-open-busy', name: '她自己开口：他在别处聊得多，半小时前的要紧事（计划有了结果）照样知道', source: 'D164（实测问题 #69、用户反馈第 38 轮）',
+    async run(w) {
+      w.say('oneOnOne', 'principal', '下午好困');
+      w.say('oneOnOne', 'her', '喝杯咖啡');
+      await w.flush();
+      const ann = w.say('groupA', 'principal', '今晚六点抢演出票');
+      await w.flush();
+      const P = w.perceptOf(ann).actor_entity_id;
+      // 提炼替身：计划和结果直接写进来（和提炼写进来的走同一个 encode 的写入）
+      const write = (o, text, imp, plan) => {
+        const p = w.perceptOf(o);
+        return w.core.mods.encode.writeAssertion(w.core, { subjects: [P], predicate: plan ? '计划' : '近况', value: null, text, kindHint: plan ? 'plan' : 'event',
+          certainty: 'stated', confidence: 0.9, imp, ...(plan ? { plan: { agent: P, status: 'planned' } } : {}),
+          sources: [{ perceptId: p.id, speaker: P, asserter: P, mode: 'told_to_her', hop: 0, confidence: 0.9, at: p.at }], norm: {}, w: 1 });
+      };
+      const planId = write(ann, '主人今晚六点抢演出票', 5, true);
+      w.clock.advance(20 * MIN);
+      w.say('oneOnOne', 'her', '抢票前正好看看这个视频');
+      w.clock.advance(44 * MIN);
+      const got = w.say('groupA', 'principal', '抢到周六的了');
+      w.say('groupA', 'her', '太好了');
+      await w.flush();
+      const outId = write(got, '主人抢到了周六的票', 6, false);
+      w.core.mods.encode.transitionPlan(w.core, planId, 'done', { at: w.clock.now(), evidencePerceptId: w.perceptOf(got).id, outcomeRef: `a${outId}` });
+      w.clock.advance(16 * MIN);
+      for (let i = 0; i < 11; i++) {
+        w.say('groupB', 'principal', `夜宵吃什么好呢${i}`, {}, 30_000);
+        w.say('groupB', 'her', `白饭配咸菜${i}`, {}, 30_000);
+      }
+      await w.flush();
+      const since = w.clock.now();
+      const r = await w.selfTurn('oneOnOne', { sessionId: 'eval-dm-busy' });
+      return score(/抢到了周六的票/, r, w.sessionText('oneOnOne', since));
+    },
+  },
+  {
     id: 'secret', name: '叮嘱过别外传：第二天在私聊里接得上，在别的群里不往外说', source: '用户反馈第 12 轮（R12-4）',
     async run(w) {
       const s = w.say('oneOnOne', 'principal', '我下个月要换工作了，这事先别外传');

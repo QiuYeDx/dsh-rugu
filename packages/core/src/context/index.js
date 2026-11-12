@@ -89,7 +89,7 @@ export function coreBlock(core, settingId) {
 
 /**
  * recall()：retrieve.recall 取候选 → discretion.targetFor + gate → 分层（recalled / awarePrivate / recentFromPresent，
- * 加本模块自己组的 people / todaySoFar / gap / warmStart / intentions）→ retrieve.render → 去掉这个会话本周期已发过的
+ * 加本模块自己组的 people / todaySoFar / gap / warmStart / intentions / sinceHere（D164：这之后他的事，since.js））→ retrieve.render → 去掉这个会话本周期已发过的
  * （sessions.sent_items_json）→ 按 opt.budgetChars 和 config.context.layers 打包。返回的每条都有 appraisalRef。
  * 别人直接对她说的话开启的一轮，回想排在这一轮新给的前面的条目本周期已经给过时，加一层 pointBack：那一条的一行「指回去」
  * （沿用这一轮对它的判定，D146；config.context.pointBack）。

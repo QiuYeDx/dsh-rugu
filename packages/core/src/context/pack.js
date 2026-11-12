@@ -16,14 +16,16 @@ const LEAD_DECIDES = new Set(['people', 'intentions']);
  */
 // 回忆（D155、D156：回忆的细节、那段时间的经过、翻看）也不记账：被问到时她要的就是这些，不该挤占之后几轮浮现的额度（设计「回忆」§5.3）；
 // 它们自己有这一档的上限（recall.recollect），只在被直接问到、她调记忆工具时才有
-export const UNMETERED_LAYERS = Object.freeze(['intentions', 'working', 'recollect', 'outline', 'look']);
+// 这之后他的事（D164）也不记账：和工作记忆一样是确定给的一小栏，有自己的条数和字数（context.sinceHere），不该挤占之后几轮浮现的额度
+export const UNMETERED_LAYERS = Object.freeze(['intentions', 'working', 'sinceHere', 'recollect', 'outline', 'look']);
 
 /** 输出（展示）顺序：先交代背景，再是想起来的，最后是她想着要做的。 */
 // 工作记忆（眼前这个人刚在别处跟她说的、她回他的）紧跟在时间间隔后面：这是这一轮最要紧的上下文
 // 她的经验（D124）放在「你想着的」前面：做事的时候用得上
 // 指回去（D146）紧跟在工作记忆后面：这一轮最相关的那条在她上下文更前面，这一行把她指回去，要显眼
 // 回忆（D155）的结果放在原来「想起来的」的位置（在它前面）
-export const DISPLAY_ORDER = ['gap', 'working', 'pointBack', 'warmStart', 'people', 'recentFromPresent', 'todaySoFar', 'outline', 'recollect', 'recalled', 'awarePrivate', 'lessons', 'intentions'];
+// 这之后他的事（D164）紧跟在工作记忆后面：工作记忆是他在别处说的话，这一层是那之后他的事有了什么变化
+export const DISPLAY_ORDER = ['gap', 'working', 'sinceHere', 'pointBack', 'warmStart', 'people', 'recentFromPresent', 'todaySoFar', 'outline', 'recollect', 'recalled', 'awarePrivate', 'lessons', 'intentions'];
 // 预算紧时谁先拿到：你想着的 > 工作记忆 > 时间间隔 > 她的经验（D124）> 指回去（D146）> （被直接问到时）想起来的和在场者近况 > 人物卡 > 想起来的和在场者近况 > 心里有数
 // > 今天到目前为止 > 暖启动。工作记忆有自己的预算（recall.working.budgetChars），不受每天额度和滚动窗口限制（D100）。
 // 「想起来的」和「在场者近况」是同一次回想按同一个激活排出来的（retrieve 给两组各自的名额，再按 A 合并），放在同一档里
@@ -35,11 +37,12 @@ const RECALL_TIER = Object.freeze(['outline', 'recollect', 'recalled', 'recentFr
 export const POINT_BACK_LAYER = 'pointBack';
 // 她的经验（D124）：按范围对上才有、最多两三行，排在时间间隔后面（做事时用得上，又不多占）
 // 指回去（D146）排在她的经验后面、人物卡和想起来的那一档前面：它在这一轮回想里排得比这一轮新给的都靠前，又只有一两行，先拿到位置
-const PRIORITY_DELIBERATE = ['intentions', 'working', 'gap', 'lessons', POINT_BACK_LAYER, RECALL_TIER, 'people', 'awarePrivate', 'todaySoFar', 'warmStart'];
-const PRIORITY_INVOLUNTARY = ['intentions', 'working', 'gap', 'lessons', POINT_BACK_LAYER, 'people', RECALL_TIER, 'awarePrivate', 'todaySoFar', 'warmStart'];
+// 这之后他的事（D164）排在工作记忆后面：它有自己的预算（ownBudget），排在哪儿都不和别的层抢整块的字数，只是同一个人的事先定
+const PRIORITY_DELIBERATE = ['intentions', 'working', 'sinceHere', 'gap', 'lessons', POINT_BACK_LAYER, RECALL_TIER, 'people', 'awarePrivate', 'todaySoFar', 'warmStart'];
+const PRIORITY_INVOLUNTARY = ['intentions', 'working', 'sinceHere', 'gap', 'lessons', POINT_BACK_LAYER, 'people', RECALL_TIER, 'awarePrivate', 'todaySoFar', 'warmStart'];
 // 她自己调记忆工具认真想一件事（D148，opt.recallFirst）：按问题找到的先拿到位置、排在最前；工作记忆（context 已经只留了和问题有关的那几段）排在后面
-const PRIORITY_RECALL_FIRST = [POINT_BACK_LAYER, RECALL_TIER, 'lessons', 'intentions', 'working', 'people', 'awarePrivate', 'todaySoFar', 'gap', 'warmStart'];
-const DISPLAY_RECALL_FIRST = ['pointBack', 'outline', 'recollect', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'intentions', 'gap', 'warmStart'];
+const PRIORITY_RECALL_FIRST = [POINT_BACK_LAYER, RECALL_TIER, 'lessons', 'intentions', 'working', 'sinceHere', 'people', 'awarePrivate', 'todaySoFar', 'gap', 'warmStart'];
+const DISPLAY_RECALL_FIRST = ['pointBack', 'outline', 'recollect', 'recalled', 'recentFromPresent', 'awarePrivate', 'todaySoFar', 'lessons', 'people', 'working', 'sinceHere', 'intentions', 'gap', 'warmStart'];
 
 /**
  * @typedef {object} Entry   渲染好、还没去重和打包的一条
@@ -83,6 +86,9 @@ function capsOf(cfg, mode, rcTier = null) {
     // 工作记忆：条数和字数在 context/working.js 里按 A 装好了（maxLines、budgetChars 按渲染好的字数，含场合说明和来源说明）；
     // 只受它自己的 budgetChars，不占整块的 blockMaxChars（D108：原来意图先占了 900 字里的一块，最新的几行工作记忆被挤掉）
     working: { groups: Infinity, chars: cfg.recall.working?.budgetChars ?? 800, ownBudget: true },
+    // 这之后他的事（D164）：一件一组（计划和它的结果同一组），最多 context.sinceHere.maxItems 组、chars 字；有自己的预算，
+    // 和工作记忆一样不占整块的 blockMaxChars、不受每天额度和滚动窗口限制（UNMETERED_LAYERS），也不和「想起来的」抢名额
+    sinceHere: { groups: Math.max(0, Math.floor(cfg.context.sinceHere?.maxItems ?? 4)), chars: cfg.context.sinceHere?.chars ?? 400, ownBudget: true },
     // 指回去（D146）：每条已经截到 context.pointBack.chars 字，条数由 pointBackOf 管（这里再按 max 兜一道）
     pointBack: { groups: Math.max(0, Math.floor(cfg.context.pointBack?.max ?? 2)), chars: Infinity },
     // 回忆（D155）：这一档（工具 / 自动触发，随花费档位）的条数和总字数；有自己的预算，不占整块的 blockMaxChars（被判成回忆的那一轮
@@ -99,11 +105,13 @@ function capsOf(cfg, mode, rcTier = null) {
  * @param {Set<string>} sent
  * @returns {(e: Entry) => boolean}
  */
-function sentTest(sent) {
+function sentTest(sent, resend = null) {
   const sentRef = (ref, aware) => sent.has(ref) || (aware && sent.has(`${ref}~aware`));
   return (e) => {
     // 指回去的那一行本来就是给已经给过的条目的（D146），不按「已发过」去掉
     if (e.layer === 'gap' || e.layer === POINT_BACK_LAYER || e.verdict === 'pending') return false;
+    // 这之后他的事（D164）：有了结果的计划，本周期给过、但给的时候还是旧状态的，再给一次（context 判好了放在 resend 里）。只认这一层
+    if (e.layer === 'sinceHere' && resend?.has(e.ref)) return false;
     const aware = e.verdict === 'aware_private';
     // 同一件事合并进这一条的（D156 merged）也一样：给过其中哪条，这条也算给过
     return [e.ref, ...(e.duplicates ?? []), ...(e.merged ?? [])].some((r) => sentRef(r, aware));
@@ -176,6 +184,7 @@ export function pointBackOf(entries, items, sent, { max, chars, perCycle, counts
  * @param {Entry[]} entries
  * opt.recallFirst（D148）：她自己调记忆工具的那一次——按问题找到的（想起来的、在场者近况、指回去）先分位置、排在最前，工作记忆排在后面。
  * opt.recollectTier（D155）：回忆这一层的名额（retrieve.recollectTier：条数、每条字数、总字数）；回忆这一层有自己的预算，不占整块的上限。
+ * opt.resend（D164）：「这之后他的事」那一层里本周期给过、但状态在那之后变了的计划的引用：在这一层不算给过。
  * @param {{cfg: object, mode: 'involuntary'|'deliberate', sent: Set<string>, budgetChars: number,
  *          budget: {dayUsed: number, dayLimit: number, rollingLeft: number}, report?: object, recallFirst?: boolean}} opt
  * @returns {import('../contract/types.js').RecallItem[]}
@@ -202,7 +211,7 @@ export function pack(entries, opt) {
   // 1. 去掉本周期已发过的（时间间隔不按条目去重：它的「只提示一次」由 gap_ack_at 管）。
   // 几乎一样的文字（MMR 合并进来的 duplicates）发过了也算这条发过：两段几乎一样的情节这一轮谁分高谁当代表，
   // 上一轮发的是另一段时不能把同样的话当新鲜事再给一遍
-  const isSent = sentTest(sent);
+  const isSent = sentTest(sent, opt.resend instanceof Set ? opt.resend : null);
   const groups = new Map();
   for (const e of entries) {
     if (allowed && !allowed.has(e.layer)) {

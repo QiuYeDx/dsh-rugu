@@ -163,10 +163,46 @@ test('D133：pack 的 report——超没超（每天 / 滚动窗口）、多少�
   assert.deepEqual(run(entries).map((i) => i.id).length, 5);
 });
 
-test('D133：pack 的 exempt 和预算记账用同一份不受限的层（「你想着的」、工作记忆；D156 起还有回忆的细节、经过、翻看）', () => {
-  assert.deepEqual([...UNMETERED_LAYERS].sort(), ['intentions', 'look', 'outline', 'recollect', 'working']);
+test('D133：pack 的 exempt 和预算记账用同一份不受限的层（「你想着的」、工作记忆；D156 起还有回忆的细节、经过、翻看；D164 这之后他的事）', () => {
+  assert.deepEqual([...UNMETERED_LAYERS].sort(), ['intentions', 'look', 'outline', 'recollect', 'sinceHere', 'working']);
   // 额度为 0 时这两层照给
   const items = run([E('t1', 'intentions', { chars: 50 }), E('w1', 'working', { chars: 50 }), E('a1', 'recalled', { chars: 10 })],
     { budget: { dayUsed: 0, dayLimit: 0, rollingLeft: Infinity } });
   assert.deepEqual(items.map((i) => i.id).sort(), ['t1', 'w1']);
+});
+
+test('D164：这之后他的事有自己的预算——不占整块的上限，不挤想起来的，也不被它挤；条数、字数按 context.sinceHere；额度用完照给', () => {
+  const C = cfg.context.sinceHere;
+  // 想起来的五条把整块（900）用到快满：这一层照样放得下，想起来的一条不少
+  const rec = Array.from({ length: 5 }, (_, i) => E(`a${i + 1}`, 'recalled', { chars: 110, order: 10 + i }));
+  const since = Array.from({ length: 6 }, (_, i) => E(`a${i + 50}`, 'sinceHere', { chars: 70, order: i }));
+  const items = run([...rec, E('n1', 'people', { group: 'p:1', chars: 170 }), ...since]);
+  const got = (l) => items.filter((i) => i.layer === l).map((i) => i.id);
+  assert.equal(got('recalled').length, 5, '想起来的一条没被挤掉');
+  assert.equal(got('sinceHere').length, Math.min(C.maxItems, Math.floor(C.chars / 70)), `这一层按自己的条数和字数：${got('sinceHere')}`);
+  assert.deepEqual(got('sinceHere'), since.slice(0, got('sinceHere').length).map((e) => e.ref), '按挑好的先后');
+  const own = items.filter((i) => i.layer !== 'sinceHere');
+  assert.ok(total(own) <= cfg.context.blockMaxChars, '其余各层照旧 ≤ 整块的上限');
+  // 反过来：这一层满了也不占想起来的名额（不带这一层时想起来的给出的完全一样）
+  assert.deepEqual(run([...rec, E('n1', 'people', { group: 'p:1', chars: 170 })]).filter((i) => i.layer === 'recalled').map((i) => i.id), got('recalled'));
+  // 计划和它的结果一组，只占一个名额：四组（第一组两条）都放得下
+  const grouped = [E('a70', 'sinceHere', { group: 'h:a70', chars: 40, order: 0 }), E('a71', 'sinceHere', { group: 'h:a70', chars: 40, order: 1 }),
+    ...[2, 3, 4].map((k) => E(`a7${k}`, 'sinceHere', { chars: 40, order: k * 10 }))];
+  assert.deepEqual(run(grouped).map((i) => i.id), ['a70', 'a71', 'a72', 'a73', 'a74']);
+  // 每天和滚动窗口的额度用完：这一层和工作记忆一样照给
+  const over = run([...since.slice(0, 2), E('a1', 'recalled', { chars: 10 })], { budget: { dayUsed: 0, dayLimit: 0, rollingLeft: Infinity } });
+  assert.deepEqual(over.map((i) => i.id), ['a50', 'a51']);
+  // 展示紧跟在工作记忆后面
+  const shown = run([E('a1', 'recalled'), E('a60', 'sinceHere'), E('w1', 'working')]).map((i) => i.layer);
+  assert.deepEqual(shown, ['working', 'sinceHere', 'recalled']);
+  const v = validateRecallLayers({ items, degradeLevel: 0, traceId: 't' });
+  assert.ok(v.ok, JSON.stringify(v.errors));
+});
+
+test('D164：resend 里的计划在「这之后他的事」这一层不算给过（状态变了再给一次）；别的层、别的条目照旧按已发过去掉', () => {
+  const entries = [E('a80', 'sinceHere'), E('a81', 'sinceHere'), E('a80', 'recalled')];
+  const sent = new Set(['a80', 'a81']);
+  assert.deepEqual(run(entries, { sent }).map((i) => i.id), []);
+  const items = pack(entries, { cfg, mode: 'involuntary', sent, budgetChars: 900, budget: free, resend: new Set(['a80']) });
+  assert.deepEqual(items.map((i) => [i.id, i.layer]), [['a80', 'sinceHere']]);
 });

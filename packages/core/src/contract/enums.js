@@ -38,7 +38,7 @@ export const OUTCOMES = f(['sent', 'failed', 'held', 'hidden']);
 
 export const SITUATION_TRIGGERS = f(['message', 'reminder', 'idle', 'relay']);
 export const RECALL_MODES = f(['involuntary', 'deliberate']);
-export const LAYERS = f(['people', 'recentFromPresent', 'todaySoFar', 'gap', 'warmStart', 'recalled', 'awarePrivate', 'intentions', 'working', 'lessons', 'pointBack', 'recollect', 'outline', 'look']);
+export const LAYERS = f(['people', 'recentFromPresent', 'todaySoFar', 'gap', 'warmStart', 'recalled', 'awarePrivate', 'intentions', 'working', 'sinceHere', 'lessons', 'pointBack', 'recollect', 'outline', 'look']);
 /** 工作记忆里一条「说出口」的档位（D101）：free 照常说 / careful 说之前关口②看一眼 / not-here 这里不替他说（只在话题上时才放进心里）。 */
 export const SPEAK_LEVELS = f(['free', 'careful', 'not-here']);
 // 工作记忆的段（D110）：约定的一串 / 闲聊 / 开着的事

@@ -550,6 +550,14 @@ export const DEFAULTS = deepFreeze({
     // max：一轮最多指回几条（0 = 不指）；chars：每条截到多少字（沿用那一条原来的渲染：来源说法 + 内容的开头）；
     // perCycle：同一条一个压缩周期里最多指回几次（防止每一轮都重复）
     pointBack: { max: 2, chars: 80, perCycle: 2 },
+    // 这之后他的事（D164）：重新在一个场合接上话时（最典型是她自己开口），对眼前这个人，她和他上次在这里说完话以后在别处知道的关于他的事，
+    // 一件一行、按要紧排。maxItems：最多几件（计划和它的结果算一件；几个人时第一个人优先，后面的人至少各留 1 件）；chars：这一层一共多少字
+    // （自己的预算，不占整块的上限、不受每天额度限制；= maxItems × itemChars，装得下全部挑中的，不然挑中了又装不下的只能靠普通回想）；
+    // itemChars：每行多少字。
+    // 排序是平滑的打分：重要度 + （有了结果的计划 ? resolvedBoost : 0）− log2(1 + 距现在的小时数 / ageScaleH)。刚发生的事里要紧的先说，
+    // 有了结果的计划稍占先（她不知道就会去问）；隔了几天的事让位给今天的事（ageScaleH 6：6 小时前的扣 1 分，一天前扣约 2.3、四天前扣约 4.1）。
+    // 没有硬的时间窗
+    sinceHere: { enabled: true, maxItems: 4, chars: 400, itemChars: 100, resolvedBoost: 2, ageScaleH: 6 },
     // 她自己调记忆工具（D148）：查到的排最前；工作记忆的段、只靠「在场」那一路来的近况，要和问题字面重合到 minSim（重合的词占较短一边的比例），
     // 或者 retrieve 稠密那一路把它排在前 denseTop 名以内才放（词法那一路的词里有实体词元，不算）
     toolRecall: { minSim: 0.3, denseTop: 5 },

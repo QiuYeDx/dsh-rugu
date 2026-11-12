@@ -58,7 +58,7 @@ function A(db, sql, ...params) {
 /** 想起的层 → 0 眼前的事 / 1 自己浮上来的 / 2 被问到去找的。 */
 function layerCode(layer) {
   const l = String(layer ?? '');
-  if (l === 'working' || l === 'pointBack') return 0;
+  if (l === 'working' || l === 'pointBack' || l === 'sinceHere') return 0;   // 这之后他的事（D164）也是眼前这个人的事
   if (l === 'recollect' || l === 'outline' || l.startsWith('memory_')) return 2;
   return 1;
 }

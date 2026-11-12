@@ -43,7 +43,9 @@ export const HOST_DEFAULTS = deepFreeze({
   // D117：deadlineMs 800 → 1500、graceMs 200 → 300（主人「哪怕提高一些允许的等待时长」；平常几十毫秒就回来，上限只在慢的时候用上）
   // recollectChars（D155）：被判成回忆的那一轮（结果里有回忆那一层），整块的上限在 blockMaxChars 上再加这么多（核心回忆那一层自动触发的一档约 2000 字）；
   // 浮现的轮不变
-  inject: { deadlineMs: 1500, graceMs: 300, budgetChars: 900, blockMaxChars: 1400, recollectChars: 2400, onToolResults: true },
+  // sinceHereChars（D164）：块里有「这之后他的事」那一层时，整块的上限再加这一层实际占的字数（最多这么多；核心那一层默认 4 件 × 100 字）。
+  // 它和工作记忆一样在核心里有自己的预算，到这里也不该挤掉工作记忆和「想起来的」
+  inject: { deadlineMs: 1500, graceMs: 300, budgetChars: 900, blockMaxChars: 1400, recollectChars: 2400, sinceHereChars: 400, onToolResults: true },
   // seenFreshMs：读消息工具读到的、别人对她说的，最多早于这一轮开始多久还算她这一轮新看到的（记忆工具的触发消息候选，D114）
   // recollectChars（D155）：记忆工具的结果里有回忆那一层时，整个结果最多这么多字（核心工具那一档约 4000 字）；没有时照旧 1600
   tools: { presets: [], recallDeadlineMs: 8000, recallBudgetChars: 1200, recollectChars: 4600, seenFreshMs: 10 * MIN },

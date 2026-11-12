@@ -21,7 +21,7 @@ import { onPercepts as onPerceptsImpl, prefetch as prefetchImpl, cached as cache
   cachedRewrite as cachedRewriteImpl, parseRewrite as parseRewriteImpl } from './prefetch.js';
 import { buildIntent as buildIntentImpl } from './intent.js';
 import { backgroundForExtraction as backgroundImpl } from './background.js';
-import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, topicSimilarity } from './working.js';
+import { workingSet as workingSetImpl, recentPartners as recentPartnersImpl, topicSimilarity, equivalents as equivalentsImpl } from './working.js';
 import { staticLevel, storeOk } from './level.js';
 import { scopeOf as scopeOfImpl } from './scope.js';
 import { recollect as recollectImpl, recollectEnabled, recollectTier as recollectTierImpl } from './recollect.js';
@@ -307,6 +307,22 @@ export function recentPartners(core, q, opt) {
     metric(core, 'retrieve.working.error');
     log(core, 'warn', 'retrieve.partners.failed', { error: errKind(e) });
     return [];
+  }
+}
+
+/**
+ * 【补】这个人和权利层确认是同一个人的那几个档案（D164；同步、零 LLM）：工作记忆（workingSet、recentPartners）认「同一个人」用的就是这一份，
+ * context 的「这之后他的事」那一层照同一个口径。他本人在第一个。读不到权利层的口径就只有他自己；出错也只返回他自己。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {number} entityId
+ * @returns {number[]}
+ */
+export function samePeople(core, entityId) {
+  if (!Number.isSafeInteger(entityId)) return [];
+  try { return equivalentsImpl(core, entityId); } catch (e) {
+    metric(core, 'retrieve.working.error');
+    log(core, 'warn', 'retrieve.samePeople.failed', { error: errKind(e) });
+    return [entityId];
   }
 }
 
