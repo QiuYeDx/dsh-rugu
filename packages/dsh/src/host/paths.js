@@ -56,5 +56,6 @@ export function resolvePaths({ dshHome = resolveDshHome(), dataDir = '' } = {}) 
     exportDir: path.join(data, 'backup', 'export'),              // JSONL 导出（管理页下载，§12.4.7）
     budgetFile: path.join(data, 'host-budget.json'),             // 后台花费的当天计数（只有数字）
     hostStateFile: path.join(data, 'host-state.json'),           // 自检要比较的上一次的值（Ollama 版本等）
+    llmStateFile: path.join(data, 'host-llm.json'),              // 后台模型（D168）：自动钉住的那一对、各对的健康状态、上次试调（只有代码和数字）
   });
 }

@@ -40,6 +40,7 @@ export const API_MAP = [
   ['admin.pendingCount', [true], 'admin.pendingCount'],
   ['maintenance.runJobs', [{ maxJobs: 0 }], '(顶层)'],
   ['maintenance.sleep', [], 'consolidate.sleep'],
+  ['maintenance.resumeExtraction', [{ errorCodes: ['UNKNOWN_MODEL'] }], 'encode.resumeExtraction'],
   // 【补】（§7 的 D2、D4、D5 和管理页）
   ['cursor', ['zz', 'file'], 'intake.cursor'],
   ['modeOf', ['S1'], 'admin.modeFor'],

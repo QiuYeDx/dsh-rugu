@@ -154,10 +154,10 @@ export async function runSelfCheck(d) {
   } catch { /* 拿不到就不报 */ }
 
   // ── 模型 ──
-  const lc = h.llm ?? {};
-  const bad = Object.entries(lc.models ?? {}).filter(([, m]) => !(lc.allow ?? []).includes(m)).map(([u]) => u);
-  add('llm.allowlist', 'models', bad.length ? 'fail' : 'ok', bad.length ? `这些用途的模型不在允许清单里：${bad.join('、')}` : `后台模型都在允许清单里（${[...new Set(Object.values(lc.models ?? {}))].join('、')}）`,
-    bad.length ? { disables: bad.map((u) => `llm:${u}`) } : {});
+  // 后台模型（D168，代替原来那项永远是绿的「模型在允许清单里」）：两项都不花钱——
+  //   llm.target：选定的那一对在 DSH 里认不认得（服务商在不在、resolveModelInfo 认不认这个模型；别家服务商的错配在这里就抓住）；
+  //   llm.health：运行中的健康状态（配置类的错 = 不通过；暂时类的失败率高 = 提醒）
+  await llmItems(add, d.ports.llm, d.skipNetwork === true, d.now?.() ?? Date.now());
   if (!d.skipNetwork) {
     let eh = null;
     try { eh = await d.ports.embedding.checkHealth(); } catch { eh = null; }
@@ -280,6 +280,59 @@ export async function runSelfCheck(d) {
 
   const level = items.some((x) => x.level === 'fail') ? 'fail' : items.some((x) => x.level === 'warn') ? 'warn' : 'ok';
   return { at: d.now?.() ?? Date.now(), level, ok: level !== 'fail', items };
+}
+
+const pairText = (p) => `${p.provider} / ${p.model}`;
+const LLM_USES = ['glance', 'extract', 'sleep', 'summary', 'appraise', 'review', 'rewrite', 'perceive'];
+const ago = (t, at) => { const m = Math.max(0, Math.round((at - t) / 60_000)); return m < 1 ? '刚刚' : m < 60 ? `${m} 分钟前` : m < 48 * 60 ? `${Math.round(m / 60)} 小时前` : `${Math.round(m / 1440)} 天前`; };
+/** 后台模型的两项（D168）。llm 是 ports/llm.js 的端口；别的宿主的端口没有这些方法就只报一项「看不到」。 */
+async function llmItems(add, llm, skipNetwork, at) {
+  if (typeof llm?.health !== 'function') { add('llm.target', 'models', 'info', '看不到后台模型的选择（端口没有提供）'); return; }
+  const hv = llm.health();
+  if (hv.state === 'off') {
+    add('llm.target', 'models', 'info', '选的是「不用后台模型」：原话照记、能按原话 / 人 / 时间找回来；不会自己整理出事实和经历', { disables: ['background-llm'] });
+    return;
+  }
+  const rows = (hv.pairs ?? []);
+  const noPair = rows.find((r) => r.error && r.error !== 'MODEL_NOT_ALLOWED' && r.error !== 'NO_MODEL');
+  // 还没选的（升级前的配置）：手写的各用途模型要在允许清单里（原来那一项并到这里）
+  const notAllowed = typeof llm.target === 'function' ? LLM_USES.filter((u) => ['MODEL_NOT_ALLOWED', 'NO_MODEL'].includes(llm.target(u)?.error)) : [];
+  if (notAllowed.length) {
+    add('llm.target', 'models', 'fail', `这些用途的模型不在允许清单里：${notAllowed.join('、')}（配置文件的 host.llm.models / allow）`,
+      { hint: '到管理页「设置 → 后台模型」选一对（选了以后就不再看 models / allow）', disables: notAllowed.map((u) => `llm:${u}`) });
+  } else if (noPair) {
+    add('llm.target', 'models', 'fail', `后台模型选不出来（${noPair.error}）：DSH 里没有默认的模型，也还没在「设置 → 后台模型」里选`,
+      { hint: '到管理页「设置 → 后台模型」选一对、点「试一下」', disables: ['background-llm'] });
+  } else {
+    const named = rows.map((r) => `${pairText(r.pair)}${r.use === 'glance' ? '（第一眼）' : ''}`).join('、');
+    const how = hv.mode === 'chosen' ? '' : rows[0]?.source === 'pinned' ? '（升级前的配置，第一次成功时自动钉住的）' : '（还没选，按升级前的做法：主聊天的服务商 + deepseek-flash）';
+    if (skipNetwork || typeof llm.recognize !== 'function') add('llm.target', 'models', 'info', `后台模型：${named}${how}`);
+    else {
+      const bad = [];
+      const offCatalog = [];
+      for (const r of rows) {
+        let k = null;
+        try { k = await llm.recognize(r.pair); } catch { k = null; }
+        if (k && k.ok === false) bad.push({ pair: r.pair, code: k.code });
+        else if (k?.inCatalog === false) offCatalog.push(r.pair);
+      }
+      if (bad.length) {
+        add('llm.target', 'models', 'fail', `后台模型在 DSH 里认不出来：${bad.map((b) => `${pairText(b.pair)}（${b.code}）`).join('、')}`,
+          { hint: '到管理页「设置 → 后台模型」换一对、点「试一下」', disables: ['background-llm'] });
+      } else if (offCatalog.length) {
+        add('llm.target', 'models', 'warn', `后台模型 ${offCatalog.map(pairText).join('、')} 不在 DSH 列出的模型里（DSH 不按目录拦，能不能用以「试一下」为准）${how}`);
+      } else add('llm.target', 'models', 'ok', `后台模型 ${named} 在 DSH 里认得${how}`);
+    }
+  }
+  if (hv.state === 'down') {
+    add('llm.health', 'models', 'fail', `后台模型不工作（${hv.code ?? '配置有问题'}）${hv.fallback ? `：临时在用聊天的模型（${pairText(hv.fallback)}）顶着` : '：她记不住新的事、回想变少，聊天照常'}`,
+      { hint: '到管理页「设置 → 后台模型」换一对或者点「试一下」', disables: hv.fallback ? [] : ['background-llm'] });
+  } else if (hv.state === 'flaky') {
+    add('llm.health', 'models', 'warn', `后台模型最近不稳定（最近 30 分钟失败过半，${hv.code ?? '暂时的错误'}）：会自己重试`);
+  } else {
+    const last = rows.map((r) => r.lastOkAt).filter(Boolean).sort((a, b) => b - a)[0];
+    add('llm.health', 'models', last ? 'ok' : 'info', last ? `后台模型上一次调用成功在 ${ago(last, at)}` : '后台模型还没调用过（可以在「设置 → 后台模型」里点「试一下」）');
+  }
 }
 
 /** 预设一项（只有名字、来源、行数和代码；激活失败的诊断原文放 detail，只在管理页的诊断里看）。 */

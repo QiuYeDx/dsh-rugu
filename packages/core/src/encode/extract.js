@@ -38,16 +38,26 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 
 // ── 推迟、失败 ────────────────────────────────────────────────────────────
 
+/** 端口在错误上带的类别（D168）里，这两类不是这段内容的问题：后台模型配错了 / 主人关了后台模型。 */
+const LLM_WAIT_KINDS = new Set(['config', 'off']);
+/** 端口说后台模型现在用不了（可选的 ready()，D168；没有这个方法 = 一直能用）。 */
+function llmNotReady(core) {
+  try { return core.ports.llm.ready?.('extract') === false; } catch { return false; }
+}
+/** 等后台模型恢复的推迟原因（D168）：这类推迟的任务带 payload.waitLlm，恢复时由 resumeExtraction 提到现在。 */
+const WAIT_LLM = new Set(['no-llm', 'llm-down']);
+
 /** 推迟：这个任务作废，同一个范围另排一个，到点再跑（不消耗重试次数）。 */
 function defer(core, job, payload, reason) {
   const n = (payload.deferrals ?? 0) + 1;
   const base = param(core, 'extract.deferMs');
   const delay = Math.min(6 * HOUR, base * 2 ** Math.min(n - 1, 6));
+  const { waitLlm, ...rest } = payload;
   core.store.tx(() => {
     cancelJob(core.store, job.id);
     enqueueJob(core.store, {
       kind: job.kind, use: job.use ?? 'extract', priority: job.priority, dedupeKey: `${payload.baseKey ?? job.dedupe_key}#d${job.id}`,
-      scopeKey: job.scope_key, epFrom: job.ep_from, epTo: job.ep_to, payload: { ...payload, deferrals: n }, runAfter: core.now() + delay,
+      scopeKey: job.scope_key, epFrom: job.ep_from, epTo: job.ep_to, payload: { ...rest, deferrals: n, ...(WAIT_LLM.has(reason) ? { waitLlm: 1 } : {}) }, runAfter: core.now() + delay,
     });
   });
   bumpMetric(core.store, `encode.extract.deferred.${reason}`);
@@ -714,6 +724,8 @@ export async function runExtract(core, job, opt = {}) {
     }
     const seg = { settingKey, perceptIds: rows.map((p) => p.id), boundaryCertain: payload.boundaryCertain !== false, historical: !!payload.historical };
     if (!core.ports.llm) return defer(core, job, payload, 'no-llm');
+    // 后台模型现在不工作（D168：端口说的；配错了、主人选了「不用后台模型」）：不调、不占预算，等它恢复（resumeExtraction 把这些提到现在）
+    if (llmNotReady(core)) return defer(core, job, payload, 'llm-down');
     const background = await gatherBackground(core, seg, rows, opt);
     const prompt = buildExtractPrompt(core, seg, background);
     try { registerPromptVersion(core.store, 'extract', prompt.promptVer, EXTRACT_STATIC); } catch { /* 只读或版本已登记 */ }
@@ -722,7 +734,11 @@ export async function runExtract(core, job, opt = {}) {
     try { allowed = core.ports.budget.allow('extract', est, { sourceKey: settingKey, reserved: !!payload.reserved }); } catch { allowed = false; }
     if (!allowed) return defer(core, job, payload, 'budget');
     let res;
-    try { res = await callLlm(core, prompt, opt.signal); } catch (e) { return fail(core, job, errCode(e)); }
+    try { res = await callLlm(core, prompt, opt.signal); } catch (e) {
+      // 配置类的错（D168，端口在错误上带 kind）：不是这段内容的问题，不计重试、不进搁置的慢档，等后台模型恢复
+      if (LLM_WAIT_KINDS.has(e?.kind)) return defer(core, job, payload, 'llm-down');
+      return fail(core, job, errCode(e));
+    }
     usage = { tokensIn: res?.usage?.in ?? 0, tokensCached: res?.usage?.cached ?? 0, tokensOut: res?.usage?.out ?? 0 };
     const parsed = parseJsonl(res?.text ?? '');
     // 输出被上限截断（D141）：不当成功——前面的照写、封口的话，后半段该提炼出的东西就永远丢了

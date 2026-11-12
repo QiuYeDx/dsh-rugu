@@ -13,7 +13,9 @@ import path from 'node:path';
 import { createPersonaMemory } from 'rugu-core';
 import { validateBinding } from '../binding/index.js';
 import { buildPorts } from '../ports/index.js';
-import { createConfigStore } from './config.js';
+import { CONFIG_CODES } from '../ports/llm.js';
+import { createLlmSetup } from './llm-setup.js';
+import { createConfigStore, isLlmPair } from './config.js';
 import { resolveDshHome, resolvePaths, ensureKeyFile, MAIN_DB_FILE } from './paths.js';
 import { createLogger } from './log.js';
 import { createHookGuard } from './guard.js';
@@ -179,7 +181,15 @@ export function createHost(ctx, config = {}, deps = {}) {
     ownVramMb: () => ports?.embedding?.ownVramMb?.() ?? 0,
     onChange: (next) => { try { ports?.embedding?.onDeviceChange?.(next); ports?.rerank?.onDeviceChange?.(next); } catch { /* 忽略 */ } },
   });
-  ports = buildPorts({ ctxGet, configStore, paths, governor, log, clock, fetchImpl: deps.fetchImpl ?? globalThis.fetch, embeddingKey: createKeyReader(paths.embeddingKeyFile) });
+  ports = buildPorts({ ctxGet, configStore, paths, governor, log, clock, fetchImpl: deps.fetchImpl ?? globalThis.fetch, embeddingKey: createKeyReader(paths.embeddingKeyFile),
+    // D168：后台模型恢复了 → 因为它推迟的提炼马上补（升级前就因为配置类的错搁置了的段也算），照常受预算和后台队列的间隔管
+    onLlmRecover: (why) => {
+      const p = getPm();
+      if (!p?.maintenance?.resumeExtraction) return;
+      try { const r = p.maintenance.resumeExtraction({ errorCodes: [...CONFIG_CODES] }); log.info('llm.resume', { why, jobs: r?.jobs ?? 0, stalled: r?.stalled ?? 0 }); } catch (e) { log.warn('llm.resume', { error: errCode(e) }); }
+    } });
+  // 配置改了（换了一对、从「不用」切回来）：端口重新看一遍（切回来算恢复，补积压）
+  try { disposers.push(configStore.onHostChange(() => { try { ports.llm.configChanged?.(); } catch { /* 忽略 */ } })); } catch { /* 忽略 */ }
 
   /** 登记一个 DSH 绑定：认领、工具分类表、平台转义。 */
   const addBinding = (b, { active = true } = {}) => {
@@ -342,6 +352,7 @@ export function createHost(ctx, config = {}, deps = {}) {
 
   const embeddingSetup = createEmbeddingSetup({ hostConfig, setConfig, keyFile: paths.embeddingKeyFile, fetchImpl: deps.fetchImpl ?? globalThis.fetch, log, now, ...(deps.execFile ? { execFile: deps.execFile } : {}), noVectorsYet: dormant });
   const bridgeSetup = createBridgeSetup({ hostConfig, setConfig, sessionsDir: path.join(paths.dshHome, 'sessions'), log });
+  const llmSetup = createLlmSetup({ llm: ports.llm, setConfig, hostConfig, getPm });
   /** 首次设置走完：写配置，放行后面的开库。参数都是可选的，什么都不填也能完成。 */
   async function finishSetup(p) {
     if (!setupGate) throw codeError('CONFLICT', '已经设置过了');
@@ -350,7 +361,14 @@ export function createHost(ctx, config = {}, deps = {}) {
     if (p.principalLabel) self.principalLabel = p.principalLabel;
     const adapters = {};
     if (p.selfNames?.length) adapters.qq = { selfNames: p.selfNames };
+    // 后台模型（D168）：向导里没选的，钉在建议的那一对上（DSH 里有 DeepSeek 的通道、目录里有 deepseek-flash 就是它；否则聊天用的那一对）。
+    // 建议不出来（DSH 还没有任何模型）就不写：之后按升级前的做法解析，第一次成功再钉住；选不出来总览会说
+    let llm = null;
+    if (hostConfig().llm?.target == null) {
+      try { const s = (await llmSetup.list())?.suggest; if (isLlmPair({ provider: s?.provider, model: s?.model })) llm = { target: { provider: s.provider, model: s.model } }; } catch (e) { log.warn('setup.llm', { error: errCode(e) }); }
+    }
     const patch = { host: { setup: { completedAt: now(), acknowledged: true, inProgress: false, ...(p.offGroups?.length ? { offGroups: p.offGroups } : {}) },
+      ...(llm ? { llm } : {}),
       ...(Object.keys(self).length ? { self } : {}), ...(Object.keys(adapters).length ? { adapters } : {}), ...(p.presetName ? { preset: { name: p.presetName } } : {}) } };
     setConfig(patch, { confirm: true });
     log.info('setup.finished', {});
@@ -369,6 +387,8 @@ export function createHost(ctx, config = {}, deps = {}) {
   const hostApi = {
     embeddingSetup,
     bridgeSetup,
+    // D168：后台模型的选择、试一下、健康状态
+    llmSetup,
     setup: {
       /** needed：还没走首次设置；starting：走完了，核心还在打开。 */
       status: () => ({ needed: dormant(), starting: !dormant() && !fullAdmin && !openError, dataDir: paths.dataDir, configFile: paths.configFile, retention: '2y' }),

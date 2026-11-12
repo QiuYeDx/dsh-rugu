@@ -25,6 +25,7 @@ import * as T from './told.js';
 import * as WK from './working.js';
 import * as GL from './glance.js';
 import * as EX from './expire.js';
+import * as TR from './trial.js';
 
 export { STAGE1_RULES } from './stage1.js';
 export { TRIGGER_CLASSES, AUDIENCE_FEATURES, APPRAISE_PROMPT_VERSION } from './stage2.js';
@@ -418,6 +419,14 @@ export function repliedToTrigger(core, ref, triggerEntityId) {
  * @returns {Promise<void>}
  */
 export function glancesIdle(core) { return GL.whenIdle(core); }
+
+/**
+ * 【D168】「试一下」后台模型用的第一眼形状的请求（真实的第一眼提示词 + 编的一张卡片）和它的解析（真实的解析器）。纯函数，不碰库。
+ * @returns {{system: string, messages: {role: 'user', content: string}[], maxTokens: number, targets: number}}
+ */
+export function glanceTrialRequest() { return TR.glanceTrialRequest(); }
+/** @param {string} text @returns {{valid: number, bad: number, expected: number}} */
+export function parseGlanceTrial(text) { return TR.parseGlanceTrial(text); }
 
 /**
  * 【D158】回想那一轮开始时：焦点这句话结构上是旁听、第一眼还在排队或在看（它要判断这句话是不是在跟她说），把它排到最前、最多等 ms。

@@ -3,6 +3,7 @@
 // 每个视图各自兜错：某一块出错只让那一块显示「读不出来」，别的照常（总览不能因为备份目录读不了就整页空白）。
 import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride, mergeConfig, recallCaps } from 'rugu-core';
 import { InputError, nonNegInt, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
+import { verdictOf } from '../ports/llm.js';
 
 const DAY = 86_400_000;
 /** 今天 0 点（北京时间，UTC+8；管理页的「今天」只用来数次数）。 */
@@ -345,6 +346,13 @@ export function createViews(deps) {
     setup() { return hostOf('setup')?.status?.() ?? { needed: false }; },
     async embeddingSetup(q) { return part(() => hostOf('embeddingSetup').status({ url: typeof q?.url === 'string' ? q.url : '' }), 8000); },
     bridge(q) { return part(() => hostOf('bridgeSetup').status({ dir: typeof q?.dir === 'string' && q.dir ? q.dir : undefined })); },
+    // 后台模型（D168）：现在选的是哪一对、状态、是不是在顶着、正在补几段；summary 是诊断里「复制后台模型状态」的那一段（没有内容、地址、Key）
+    async llmSetup() {
+      const s = hostOf('llmSetup');
+      if (!s) return { unsupported: true };
+      const [status, summary] = await Promise.all([part(() => s.status()), part(() => s.summary())]);
+      return { status: status?.error ? status : llmHealthRow(status), summary: summary?.error ? summary : summary };
+    },
     // ── 总览：只有数字和状态（§13.1、§13.3） ──────────────────────────────
     async overview() {
       const st = await part(() => pm.status());
@@ -366,7 +374,7 @@ export function createViews(deps) {
         const since = now() - 7 * DAY;
         pending.growth = (pm.admin.growth.versions() ?? []).filter((v) => v.createdAt >= since && !v.revokedAt && v.createdBy !== 'owner').length;
       } catch { pending.growth = null; }
-      const [backup, embedding, spaces, retention, budget, gpu, hs] = await Promise.all([
+      const [backup, embedding, spaces, retention, budget, gpu, hs, llm] = await Promise.all([
         part(() => pm.admin.backup.overview()),
         part(() => pm.admin.embedding.health()),
         part(() => pm.admin.embedding.spaces()),
@@ -374,6 +382,7 @@ export function createViews(deps) {
         part(async () => budgetSummary(await hostOf('budget')?.status?.(), { embedding: cfg.host?.embedding })),
         gpuView(cfg.host),
         hostStatus(),
+        part(async () => (hostOf('llmSetup') ? llmHealthRow(await hostOf('llmSetup').status()) : null)),
       ]);
       // 自检：宿主状态里已经有上次的结果就用它（不为总览重跑一遍自检）；没有再读缓存 / 跑一次
       let checks = hs && !hs.error && isObj(hs.selfCheck) ? selfCheckSummaryOf(hs.selfCheck) : null;
@@ -399,6 +408,8 @@ export function createViews(deps) {
         config: { warnings: cfg.warnings, loadError: cfg.loadError, pendingRisky: cfg.pendingRisky.length },
         embeddingOff: cfg.host?.embedding?.provider === 'none',
         selfCheck: checks,
+        // D168：后台模型的健康状态（不工作 / 不稳定 / 在用聊天模型顶着 / 正在补几段）
+        llm,
       };
       out.alerts = alertsOf(out);
       return out;
@@ -845,6 +856,8 @@ export function budgetSummary(b, { embedding = null } = {}) {
     recent: recentOf(history, today),
     prices: p && { hit: num(p.hit), miss: num(p.miss), out: num(p.out), peakFactor: num(p.peakFactor),
       peakHours: Array.isArray(p.peakHours) ? p.peakHours.slice(0, 6).filter((x) => Array.isArray(x) && x.length === 2 && num(x[0]) != null && num(x[1]) != null) : [] },
+    // D168：后台用的不是内置价目认识的那一对（或者在用聊天模型顶着）→ false：页面不显示元，只显示用量
+    priceKnown: typeof b.priceKnown === 'boolean' ? b.priceKnown : null,
     uses: Array.isArray(b.uses) ? b.uses.filter((u) => typeof u === 'string' && /^[\w-]{1,32}$/.test(u)).slice(0, 20) : [],
     // 向量（嵌入）：本机的 Ollama 不花钱；配成别的地址的（云端接口）这里如实说不是本机
     embedding: embeddingCost(embedding),
@@ -1024,6 +1037,34 @@ export function normalizeChecks(r) {
   return { items, at: typeof r?.at === 'number' ? r.at : null, level: typeof r?.level === 'string' ? r.level.slice(0, 10) : null };
 }
 
+const pairOf = (p) => (isObj(p) && typeof p.provider === 'string' && typeof p.model === 'string' ? { provider: p.provider.slice(0, 120), model: p.model.slice(0, 200) } : null);
+const LLM_STATES = ['ok', 'down', 'flaky', 'unknown', 'off'];
+/**
+ * 后台模型的健康状态（D168，ports/llm.js 的 health() 加上正在补的段数）→ 管理页要的样子：只有服务商 id、模型名、错误码、时间和数字；
+ * reason 是错误码的一句人话。
+ * @param {any} h
+ */
+export function llmHealthRow(h) {
+  if (!isObj(h)) return null;
+  const state = LLM_STATES.includes(h.state) ? h.state : 'unknown';
+  const pair = pairOf(h.pair);
+  const code = short(h.code, 64);
+  const lt = isObj(h.lastTest) ? h.lastTest : null;
+  return {
+    state, mode: short(h.mode, 16), code, since: num(h.since), pair,
+    reason: code ? verdictOf(code, pair) : null,
+    fallback: pairOf(h.fallback) ? { ...pairOf(h.fallback), since: num(h.fallback.since) } : null,
+    fallbackToChat: h.fallbackToChat !== false, waiting: h.waiting === true, catchUp: num(h.catchUp),
+    pinned: pairOf(h.pinned) ? { ...pairOf(h.pinned), at: num(h.pinned.at) } : null,
+    lastTest: lt && { at: num(lt.at), ok: lt.ok === true, level: short(lt.level, 8), code: short(lt.code, 64), glanceMs: num(lt.glanceMs), extractMs: num(lt.extractMs),
+      thinking: lt.thinking === true, pair: pairOf(lt) },
+    pairs: Array.isArray(h.pairs) ? h.pairs.filter(isObj).slice(0, 4).map((r) => ({ use: short(r.use, 16), pair: pairOf(r.pair), source: short(r.source, 16), error: short(r.error, 64),
+      state: LLM_STATES.includes(r.state) ? r.state : null, lastOkAt: num(r.lastOkAt), code: short(r.code, 64),
+      byCode: isObj(r.byCode) ? Object.fromEntries(Object.entries(r.byCode).filter(([k, v]) => /^[\w.-]{1,64}$/.test(k) && Number.isFinite(v)).slice(0, 40)) : {} })) : [],
+  };
+}
+const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
 /** 总览顶部的提醒（只有状态，不带内容）。level: bad 红 / warn 黄 / info 灰。 */
 function alertsOf(o) {
   const out = [];
@@ -1061,6 +1102,21 @@ function alertsOf(o) {
   if (o.selfCheck && !o.selfCheck.error && o.selfCheck.failed > 0) add('bad', `启动自检有 ${o.selfCheck.failed} 项没通过（对应的功能已关掉，聊天不受影响）`, 'diagnostics');
   const bud = o.budget;
   if (bud && !bud.error && bud.paused) add('warn', '余额保护已启动：后台提炼和整理暂停，聊天照常', 'diagnostics');
+  // 后台模型（D168）：不工作 / 不稳定 / 在用聊天的模型顶着，说清楚是什么、为什么、去哪儿处理
+  const lm = o.llm;
+  if (lm && !lm.error) {
+    const pt = (p) => `${p.provider} / ${p.model}`;
+    if (lm.state === 'down' && lm.fallback) {
+      add('warn', `后台模型不工作（${lm.reason ?? lm.code ?? '配置有问题'}），临时在用你聊天的模型（${pt(lm.fallback)}），可能更贵；修好以后自动换回。到「设置 → 后台模型」换一个或者点「试一下」`, 'config');
+    } else if (lm.state === 'down') {
+      add('bad', `后台模型${lm.since ? `从 ${hhmm(lm.since)} 起` : ''}不工作（${lm.reason ?? lm.code ?? '配置有问题'}）。这段时间她记不住新的事、回想变少，聊天照常。到「设置 → 后台模型」换一个或者点「试一下」`, 'config');
+    } else if (lm.state === 'flaky') {
+      add('warn', `后台模型最近不稳定（最近半小时一半的调用没成${lm.code ? `，${lm.code}` : ''}）：会自己重试；一直这样就到「设置 → 后台模型」换一个`, 'config');
+    } else if (lm.state === 'off') {
+      add('info', '选的是「不用后台模型」：她照常记原话，能按原话、人、时间找回来，但不会自己整理出事实和经历', 'config');
+    }
+    if (lm.state !== 'down' && lm.state !== 'off' && lm.catchUp > 0) add('info', `后台模型恢复了，正在补之前没整理的 ${lm.catchUp} 段（受花费上限管）`, 'config');
+  }
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.sort((x, y) => rank[x.level] - rank[y.level]);
 }

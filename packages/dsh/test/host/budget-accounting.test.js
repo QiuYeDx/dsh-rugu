@@ -60,7 +60,7 @@ test('写缓存的 token 按未命中算；高峰时段的花费单独记一份'
 test('LLMPort 把每次真正发出去的调用都报给预算：成功、失败带用量、失败没用量、宿主没报用量；没发出去的不报', async () => {
   const ctx = new FakeDshCtx();
   const { b } = env();
-  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: host, budget: b });
+  const llm = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: () => ctx.agentDefaultModel.currentSelection(), hostConfig: host, budget: b });
   await llm.complete({ use: 'extract', system: '', messages: [{ role: 'user', content: 'x' }] });
   // 宿主先报了用量、然后报错（结果丢了）
   ctx.llmScript = () => [{ type: 'usage', usage: { inputTokens: 300, outputTokens: 7, cacheReadTokens: 0 } }, { type: 'finish', reason: { kind: 'error', failure: { code: 'MALFORMED_RESPONSE' } } }];
@@ -73,7 +73,7 @@ test('LLMPort 把每次真正发出去的调用都报给预算：成功、失败
   const r = await llm.complete({ use: 'summary', system: '系统', messages: [{ role: 'user', content: '内容' }] });
   assert.equal('estimated' in r, false, '给核心的结果形状不变');
   // 没配模型：根本没发出去
-  const bad = createLlmPort({ getLlm: () => ctx.llm, hostConfig: () => ({ ...HOST_DEFAULTS, llm: { ...HOST_DEFAULTS.llm, models: {} } }), budget: b });
+  const bad = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: () => ctx.agentDefaultModel.currentSelection(), hostConfig: () => ({ ...HOST_DEFAULTS, llm: { ...HOST_DEFAULTS.llm, models: {} } }), budget: b });
   await assert.rejects(() => bad.complete({ use: 'rewrite', system: '', messages: [] }), (e) => e.code === 'NO_MODEL');
   const u = b.status().today.byUse;
   assert.deepEqual([u.extract.calls, u.extract.in, u.extract.cached, u.extract.out], [1, 10, 5, 2]);

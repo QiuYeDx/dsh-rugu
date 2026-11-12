@@ -652,7 +652,8 @@ export function makeFakeHost(o = {}) {
     { id: 'runtime.worker', group: 'runtime', level: 'ok', label: 'worker 和只读连接正常' },
     { id: 'store.open', group: 'store', level: 'ok', label: '记忆库已打开' },
     { id: 'store.disk', group: 'store', level: scenario === 'empty' ? 'warn' : 'ok', label: scenario === 'empty' ? '数据目录所在的盘剩余 3.6 GB（不到 5 GB）' : '数据目录所在的盘剩余 124.3 GB' },
-    { id: 'llm.allowlist', group: 'models', level: 'ok', label: '后台模型都在允许清单里（deepseek-flash）' },
+    { id: 'llm.target', group: 'models', level: 'ok', label: '后台模型 deepseek-account / deepseek-flash 在 DSH 里认得' },
+    { id: 'llm.health', group: 'models', level: 'ok', label: '后台模型上一次调用成功在 1 分钟前' },
     scenario === 'empty'
       ? { id: 'embed.service', group: 'models', level: 'fail', label: '嵌入服务不可达：检索降到 L3（ECONNREFUSED）', disables: ['dense'] }
       : { id: 'embed.service', group: 'models', level: 'ok', label: '嵌入服务可达（Ollama 0.12.5）' },
@@ -728,6 +729,20 @@ export function makeFakeHost(o = {}) {
       get: () => JSON.parse(JSON.stringify({ host: hostCfg, core, file: 'C:\\Users\\someone\\.dsh\\persona-memory.json', warnings: [], loadError: null })),
       set: (patch, opt) => setCfg(patch, opt),
     },
+  };
+  // 后台模型（D168）：normal 选定了 DeepSeek 账号通道的 flash、正常；empty 还没选；errors 不工作、在用聊天的模型顶着
+  const llmTarget = scenario === 'normal' ? { provider: 'deepseek-account', model: 'deepseek-flash' } : null;
+  host.llmSetup = {
+    list: async () => ({ available: true, providers: [{ id: 'deepseek-account', name: 'DeepSeek Account', models: [{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' }] }],
+      current: { target: llmTarget, perUse: { glance: null, extract: null }, effective: { provider: 'deepseek-account', model: 'deepseek-flash', allowed: true, source: llmTarget ? 'target' : 'legacy' }, fallbackToChat: true },
+      suggest: { provider: 'deepseek-account', model: 'deepseek-flash', why: 'deepseek' }, defaultSelection: { provider: 'deepseek-account', model: 'deepseek-v4-pro' } }),
+    test: async (p) => { calls.push({ name: 'llm.test', args: [p] }); return { at: now, ok: true, level: 'ok', verdict: '能用，第一眼 0.9 秒，提炼 7.0 秒', pair: p ?? llmTarget, steps: { glance: { ok: true, ms: 900, valid: 2, bad: 0, reported: true }, extract: { ok: true, ms: 7000, valid: 3, bad: 0, reported: true } } }; },
+    save: (p) => { calls.push({ name: 'llm.save', args: [p] }); return { ok: true, warnings: [] }; },
+    status: () => (scenario === 'errors'
+      ? { state: 'down', mode: 'chosen', code: 'UNKNOWN_MODEL', since: now - HOUR, pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, fallback: { provider: 'deepseek-account', model: 'deepseek-v4-pro', since: now - HOUR }, fallbackToChat: true, pairs: [], catchUp: null }
+      : { state: 'ok', mode: llmTarget ? 'chosen' : 'unchosen', code: null, pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, fallback: null, fallbackToChat: true,
+        pairs: [{ use: 'extract', pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, state: 'ok', lastOkAt: now - 60_000, byCode: {} }], catchUp: 0 }),
+    summary: () => ({ plugin: '0.0.0', state: 'ok', providerKind: 'deepseek-account', model: 'deepseek-flash', effort: 'off', errors24h: {}, compat: {} }),
   };
   if (scenario === 'empty') delete host.gpu.setPolicy;
   return host;

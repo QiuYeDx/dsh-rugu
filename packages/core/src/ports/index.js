@@ -32,9 +32,16 @@
  * 后台 LLM。集成层自己包 ctx.llm.stream：按 use 选模型（必须在允许清单里，不跟随宿主默认模型）、排队、计数，
  * 从 finish 块取用量（§10.6）。DSH 没有 JSON 模式，核心要的结构化输出一律是 JSONL（§7.3）。
  * 失败抛错（AbortError / 超时 / 额度），核心按 fail closed 处理。
+ * 【D168】错误可以带一个通用的类别 kind（核心不认识宿主的错误码，只看这个）：
+ *   'config'    后台模型配错了（不认识的模型、没凭据、参数不支持……）：不是这段内容的问题，提炼不计重试、不进搁置的慢档，推迟到恢复；
+ *   'off'       主人选了「不用后台模型」：同上；
+ *   'quota'     余额用完（宿主另有余额保护）；'transient' 一时的（超时、限流、连不上）；'output' 这次请求本身的问题。
+ *   不带 kind 的照以前处理。
+ * 可选的 ready(use)：返回 false = 现在调了也一定失败（配错了、关了），提炼直接推迟、不占预算；没有这个方法 = 一直能用。
  * @typedef {object} LLMPort
  * @property {(req: {use: LlmUse, system: string, messages: LlmMessage[], maxTokens?: number, signal?: AbortSignal})
  *            => Promise<{text: string, usage: LlmUsage, model?: string, stopReason?: LlmStopReason}>} complete
+ * @property {(use: LlmUse) => boolean} [ready]
  */
 
 /**

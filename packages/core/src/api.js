@@ -37,6 +37,15 @@ import * as admin from './admin/index.js';
  */
 export const MODULES = Object.freeze({ lang, admin, intake, entities, dynamics, discretion, encode, worker, retrieve, context, consolidate, backup });
 
+/**
+ * 【D168】「试一下」后台模型：第一眼、提炼两种形状的小请求（真实的提示词 + 编造的内容）和真实的解析器。纯函数，不需要打开库——
+ * 首次设置时库还没开，集成层也能拿它去试。发请求、计时、记账都是集成层的事。
+ */
+export const llmTrial = Object.freeze({
+  glance: Object.freeze({ request: () => discretion.glanceTrialRequest(), parse: (text) => discretion.parseGlanceTrial(text) }),
+  extract: Object.freeze({ request: () => encode.extractTrialRequest(), parse: (text) => encode.parseExtractTrial(text) }),
+});
+
 export const CAPABILITIES = Object.freeze([
   'observe', 'describe', 'sealBuffers', 'expectRelay', 'cursor', 'modeOf',
   'resident', 'recall', 'recallCached', 'coreBlock', 'look',
@@ -535,6 +544,13 @@ function buildApi(core, { startup, files }) {
       runJobs: (budget) => runJobs(core, budget),
       /** @returns {Promise<import('./contract/types.js').SleepReport>} */
       sleep: async () => { writable(core); return core.mods.consolidate.sleep(core, {}); },
+      /**
+       * 【D168】后台模型恢复了（集成层的 LLM 端口说的）：因为它推迟的提炼马上补，errorCodes 里的配置类错误搁置的段也提到现在。
+       * 补的时候照常受预算和后台队列的间隔管。返回提前了几个任务、几段搁置。
+       * @param {{errorCodes?: string[]}} [o]
+       * @returns {{jobs: number, stalled: number}}
+       */
+      resumeExtraction: (o) => (core.readOnly ? { jobs: 0, stalled: 0 } : core.mods.encode.resumeExtraction(core, { errorCodes: Array.isArray(o?.errorCodes) ? o.errorCodes : [] })),
       /** 【补】每分钟左右一次的轻量维护（见 maintenance.js）。 */
       tick: (o) => tick(core, o),
     },

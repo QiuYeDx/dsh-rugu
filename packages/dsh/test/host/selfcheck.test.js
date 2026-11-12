@@ -6,7 +6,8 @@ import path from 'node:path';
 import { runSelfCheck, whitelistState, normalizeAdapterCheck, failedAdapters, PATCH_MARK } from '../../src/host/selfcheck.js';
 import { HOST_DEFAULTS } from '../../src/host/config.js';
 import { resolvePaths } from '../../src/host/paths.js';
-import { createFakePm, fakeBinding, tmpDir, rmDir, FakeDshCtx } from '../fakes/index.js';
+import { createFakePm, fakeBinding, tmpDir, rmDir, FakeDshCtx, createFakeLlm } from '../fakes/index.js';
+import { createLlmPort } from '../../src/ports/llm.js';
 
 const allRegistered = { resident: true, preStep: true, preExecute: true, postExecute: true, guard: true, sessionEvent: true, agentCreated: true };
 const ports = (o = {}) => ({
@@ -20,9 +21,12 @@ function deps(o = {}) {
   const ctx = new FakeDshCtx();
   const cfg = JSON.parse(JSON.stringify(HOST_DEFAULTS));
   if (o.cfg) o.cfg(cfg);
+  // 后台模型（D168）：真的端口 + 假的 ctx.llm（默认 DSH 有 DeepSeek 账号通道，默认选择是 deepseek-account / deepseek-flash）
+  const fake = o.fakeLlm ?? createFakeLlm();
+  const llm = createLlmPort({ getLlm: fake.getLlm, getDefaultSelection: fake.getDefaultSelection, hostConfig: () => cfg });
   return {
     ctx, ctxGet: (n) => (o.services ? o.services[n] : ctx.get(n)), getPm: () => (o.pm === undefined ? createFakePm() : o.pm), hostConfig: () => cfg,
-    paths: resolvePaths({ dshHome: dir }), ports: ports(o), claims: null, tooltable: { status: () => ({ unclassified: o.unclassified ?? [] }) },
+    paths: resolvePaths({ dshHome: dir }), ports: { ...ports(o), llm }, claims: null, tooltable: { status: () => ({ unclassified: o.unclassified ?? [] }) },
     governor: { status: () => ({ policy: 'adaptive', device: 'cpu', reason: '还没采样', sampler: false }) },
     registered: { ...allRegistered, ...(o.registered ?? {}) }, defineToolAvailable: o.defineTool !== false, adapters: o.adapters ?? [],
     skipNetwork: o.skipNetwork ?? false, now: () => 1000,
@@ -34,7 +38,7 @@ test('一切正常：宿主、运行时（node:sqlite、模块级 backup、FTS5 
   const dir = tmpDir('sc-ok');
   const r = await runSelfCheck(deps({ dir }));
   const m = byId(r);
-  for (const id of ['host.systemPrompt', 'host.preStep', 'host.preExecute', 'host.postExecute', 'host.guard', 'host.sessionEvent', 'host.agents', 'host.llm', 'host.defineTool', 'runtime.sqlite', 'store.open', 'llm.allowlist', 'embed.service', 'embed.model', 'self.coreSelf', 'bridge.freeze']) {
+  for (const id of ['host.systemPrompt', 'host.preStep', 'host.preExecute', 'host.postExecute', 'host.guard', 'host.sessionEvent', 'host.agents', 'host.llm', 'host.defineTool', 'runtime.sqlite', 'store.open', 'llm.target', 'llm.health', 'embed.service', 'embed.model', 'self.coreSelf', 'bridge.freeze']) {
     assert.equal(m[id]?.status, 'ok', id);
   }
   assert.equal(m['host.preExecute'].area, '宿主');
@@ -61,8 +65,8 @@ test('失败的项写明关掉了什么：钩子没挂上、没有模型服务�
   assert.deepEqual(m['host.preExecute'].disables, ['egress', 'freeze']);
   assert.equal(m['host.llm'].status, 'fail');
   assert.equal(m['host.defineTool'].status, 'warn');
-  assert.equal(m['llm.allowlist'].status, 'fail');
-  assert.deepEqual(m['llm.allowlist'].disables, ['llm:sleep']);
+  assert.equal(m['llm.target'].status, 'fail', '手写的模型不在允许清单里（原来的 llm.allowlist 并进 llm.target，D168）');
+  assert.deepEqual(m['llm.target'].disables, ['llm:sleep']);
   assert.equal(m['embed.service'].status, 'fail');
   assert.match(m['embed.service'].label, /L3/);
   assert.equal(m['store.open'].status, 'fail');

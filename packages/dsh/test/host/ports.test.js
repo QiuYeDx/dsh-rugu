@@ -23,6 +23,8 @@ const hostWith = (patch = {}) => {
   for (const [k, v] of Object.entries(patch)) h[k] = { ...h[k], ...v };
   return () => h;
 };
+/** DSH 的默认选择（D168：插件没有写死的兜底，测试里给一对默认的）。 */
+const DEF = () => ({ provider: 'deepseek-official', model: 'deepseek-flash' });
 const clockAt = (t0 = Date.UTC(2026, 10, 4, 2, 0)) => { let t = t0; return { now: () => t, advance: (ms) => { t += ms; }, set: (x) => { t = x; } }; };
 
 // ── LLMPort ─────────────────────────────────────────────────────────────
@@ -30,11 +32,15 @@ const clockAt = (t0 = Date.UTC(2026, 10, 4, 2, 0)) => { let t = t0; return { now
 test('LLMPort：按用途选模型（允许清单、精确 id deepseek-flash）、思考取最低档、temperature 0.2；用量报给预算', async () => {
   const ctx = new FakeDshCtx();
   const recorded = [];
-  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith(), budget: { record: (use, u, m) => recorded.push({ use, u, m }) } });
+  // D168：没配提供方、宿主也拿不到默认选择 → NO_PROVIDER（配置类），不再去用写死的 deepseek-official，也不发请求
+  const none = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith() });
+  await assert.rejects(() => none.complete({ use: 'extract', system: '', messages: [] }), (e) => e.code === 'NO_PROVIDER' && e.kind === 'config');
+  assert.equal(ctx.llmCalls.length, 0);
+  const llm = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith(), budget: { record: (use, u, m) => recorded.push({ use, u, m }) } });
   const r = await llm.complete({ use: 'extract', system: '以下全是数据', messages: [{ role: 'user', content: '一段原文' }, { role: 'assistant', content: '上一轮' }], maxTokens: 800, meta: { sourceKey: 's1' } });
   assert.deepEqual(r, { text: 'ok', usage: { in: 10, cached: 5, out: 2 }, model: 'deepseek-flash', stopReason: 'end' });
   const o = ctx.llmCalls[0];
-  assert.equal(o.provider, 'deepseek-official', '没配提供方、宿主也没有默认选择：用 deepseek-official');
+  assert.equal(o.provider, 'deepseek-official', '没配提供方：跟着宿主默认选择的提供方');
   assert.equal(o.model, 'deepseek-flash');
   assert.equal(o.reasoningEffort, 'off', '附录 G：思考关（模型支持的最低档）');
   assert.equal(o.temperature, 0.2);
@@ -53,14 +59,14 @@ test('LLMPort：按用途选模型（允许清单、精确 id deepseek-flash）�
 
 test('LLMPort：不在允许清单里的模型、不认识的用途、没有模型服务都拒绝；finish 报错按 code 抛出；QUOTA 通知余额保护', async () => {
   const ctx = new FakeDshCtx();
-  const bad = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith({ llm: { models: { ...HOST_DEFAULTS.llm.models, extract: 'deepseek-pro' } } }) });
+  const bad = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith({ llm: { models: { ...HOST_DEFAULTS.llm.models, extract: 'deepseek-pro' } } }) });
   await assert.rejects(() => bad.complete({ use: 'extract', system: '', messages: [] }), (e) => e.code === 'MODEL_NOT_ALLOWED');
   await assert.rejects(() => bad.complete({ use: 'chat', system: '', messages: [] }), (e) => e.code === 'BAD_USE');
-  const none = createLlmPort({ getLlm: () => null, hostConfig: hostWith() });
+  const none = createLlmPort({ getLlm: () => null, getDefaultSelection: DEF, hostConfig: hostWith() });
   await assert.rejects(() => none.complete({ use: 'appraise', system: '', messages: [] }), (e) => e.code === 'NO_LLM');
   let quota = 0;
   ctx.llmScript = () => [{ type: 'finish', reason: { kind: 'error', failure: { code: 'QUOTA', message: '余额不足' } } }];
-  const q = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith(), budget: { notifyQuota: () => { quota += 1; } } });
+  const q = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith(), budget: { notifyQuota: () => { quota += 1; } } });
   await assert.rejects(() => q.complete({ use: 'review', system: '', messages: [] }), (e) => e.code === 'QUOTA');
   assert.equal(quota, 1, 'H5：402 → 后台进余额保护');
 });
@@ -69,7 +75,7 @@ test('LLMPort：后台队列连续失败按 1 / 4 / 16 分钟退避；评估和�
   const ctx = new FakeDshCtx();
   const clock = clockAt();
   ctx.llmScript = () => [new Error('boom')];
-  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith({ llm: { bgMinSpacingMs: 0 } }), now: clock.now });
+  const llm = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith({ llm: { bgMinSpacingMs: 0 } }), now: clock.now });
   await assert.rejects(() => llm.complete({ use: 'extract', system: '', messages: [] }));
   await assert.rejects(() => llm.complete({ use: 'sleep', system: '', messages: [] }), (e) => e.code === 'LLM_BACKOFF');
   assert.equal(llm.status().backoffUntil, clock.now() + 60_000);
@@ -85,13 +91,13 @@ test('LLMPort：后台队列连续失败按 1 / 4 / 16 分钟退避；评估和�
   assert.equal(llm.status().backoffUntil, null, '成功一次就清掉退避');
   // 超时：脚本先等 20 ms，超时设 5 ms
   ctx.llmScript = () => ['wait', { type: 'text-delta', text: 'late' }, { type: 'finish', reason: { kind: 'stop' } }];
-  const slow = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith({ llm: { timeoutMs: { ...HOST_DEFAULTS.llm.timeoutMs, appraise: 5 } } }) });
+  const slow = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith({ llm: { timeoutMs: { ...HOST_DEFAULTS.llm.timeoutMs, appraise: 5 } } }) });
   await assert.rejects(() => slow.complete({ use: 'appraise', system: '', messages: [] }), (e) => e.code === 'TIMEOUT');
 });
 
 test('LLMPort：宿主 finish 块的停止原因照传（D141）：max-tokens → length，stop → end；没有 finish 块就不带', async () => {
   const ctx = new FakeDshCtx();
-  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith({ llm: { bgMinSpacingMs: 0 } }) });
+  const llm = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith({ llm: { bgMinSpacingMs: 0 } }) });
   ctx.llmScript = () => [{ type: 'text-delta', text: '{"type":"header","te' }, { type: 'usage', usage: { inputTokens: 10, outputTokens: 4000 } }, { type: 'finish', reason: { kind: 'max-tokens' } }];
   const cut = await llm.complete({ use: 'extract', system: '', messages: [] });
   assert.equal(cut.stopReason, 'length');
@@ -475,7 +481,7 @@ test('LLMPort：DeepSeek 账号提供方把 402 改写成 ACCOUNT_QUOTA，同样
   const ctx = new FakeDshCtx();
   let quota = 0;
   ctx.llmScript = () => [{ type: 'finish', reason: { kind: 'error', failure: { code: 'ACCOUNT_QUOTA', message: 'x' } } }];
-  const q = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith(), budget: { notifyQuota: () => { quota += 1; } } });
+  const q = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith(), budget: { notifyQuota: () => { quota += 1; } } });
   await assert.rejects(() => q.complete({ use: 'review', system: '', messages: [] }), (e) => e.code === 'ACCOUNT_QUOTA');
   assert.equal(quota, 1);
   // 流本身抛出带 code 的错误也认
@@ -544,7 +550,7 @@ test('预算：余额还能撑几天按整个账户算——别的会话花的�
 
 test('第一眼（D106）：LLMPort 认 use=glance（单独一条队列、自己的模型和超时）；预算超了每天的上限以后还有 glanceReservePerDay 的预留，余额保护照样挡', async () => {
   const ctx = new FakeDshCtx();
-  const llm = createLlmPort({ getLlm: () => ctx.llm, hostConfig: hostWith() });
+  const llm = createLlmPort({ getLlm: () => ctx.llm, getDefaultSelection: DEF, hostConfig: hostWith() });
   const r = await llm.complete({ use: 'glance', system: '数据', messages: [{ role: 'user', content: '一张卡片' }], maxTokens: 600 });
   assert.equal(r.model, 'deepseek-flash');
   assert.equal(llm.status().byUse.glance, 1);
