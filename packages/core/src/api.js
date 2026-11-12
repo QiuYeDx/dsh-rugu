@@ -153,7 +153,7 @@ export async function createPersonaMemory(opt) {
     if (core.readOnly) { startup.mode = 'read-only'; return; }
     await step('jobs', () => ({ requeued: recoverJobs(core) }));
     await step('self', () => ({ self: core.mods.entities.ensureSelf(core), principal: core.mods.entities.ensurePrincipal(core) }));
-    await step('ghosts', () => core.mods.entities.repairMentionGhosts(core));   // D108：提及造出来的「假人」（幂等）
+    await step('ghosts', () => core.mods.entities.repairMentionGhosts(core));   // D108、D160：撤掉提及造出来的「假人」、重复档案挂到有账号的人身上（幂等）
     await step('tombstones', () => core.mods.admin.reapplyTombstones(core));
     if (opt.startWorker !== false) {
       await step('worker', () => core.mods.worker.start(core));   // 线程起来之前先清扫向量缓存（§12.8）

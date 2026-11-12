@@ -219,7 +219,7 @@ export function createQqBridgeAdapter(deps) {
     let platform = null;
     if (kind === 'group') { try { platform = platformNames.group(id); } catch { platform = null; } }
     // 平台上的群名和消息文字一样清洗账号（D111 评审）：认识的账号换成名字
-    const known = platform ? knownNames(c?.recent ?? [], { ownerId: ownerId(), selfId: selfId(), principalLabel: principalLabel(), kind, selfNames: selfNames() }) : undefined;
+    const known = platform ? knownOf(key, c?.recent ?? [], undefined, { peer: false }) : undefined;
     return describeConversation({
       key, settingId: settingOf(key), code: codeOf(key), bridgeCfg: bridgeCfg(), override, platform, known,
       initialPrompt: promptsC.get().value?.get(key), ownerRules: c?.ownerRules ?? [], ownerId: ownerId(), principalLabel: principalLabel(),
@@ -280,13 +280,34 @@ export function createQqBridgeAdapter(deps) {
   }
 
   // ── 映射 ──
-  function mapCtx(key, msgs) {
+  /**
+   * 【D160】一个群在平台上的成员名单（qq/names.js）和她在里面的名字。不是群、没有名单（没配置、表结构不认识、别的桥接）→ 没有，照旧。
+   * 名单里没有她（或没配置她的账号）时，她的名字退回她自己那几行的 sender（真的桥接写的是「我」，退回也是空的）。
+   */
+  function rosterFor(key, list) {
     const { kind, id } = splitKey(key);
+    if (kind !== 'group') return { roster: undefined, selfCard: '' };
+    let roster;
+    try { const r = platformNames.members?.(id); roster = r instanceof Map && r.size ? r : undefined; } catch { roster = undefined; }
+    const me = selfId();
+    return { roster, selfCard: (me && roster?.get(me)?.slice(0, 30)) || selfCardOf(list) };
+  }
+  /** 这个会话认得的账号 → 名字（mapCtx、场合描述、合并转发都用这一份，她的名字和名单一致）。 */
+  function knownOf(key, msgs, rs = rosterFor(key, msgs), { peer = true } = {}) {
+    const { kind, id } = splitKey(key);
+    return knownNames(msgs, {
+      ownerId: ownerId(), selfId: selfId(), principalLabel: principalLabel(), kind, peerId: peer && kind === 'private' ? id : undefined,
+      selfNames: selfNames(), selfCard: rs.selfCard, roster: rs.roster,
+    });
+  }
+  function mapCtx(key, msgs) {
+    const { kind } = splitKey(key);
     const list = [...msgs];
+    const rs = rosterFor(key, list);
     return {
       key, kind, settingId: settingOf(key), salt, selfNames: selfNames(), now: io.now(),
-      known: knownNames(list, { ownerId: ownerId(), selfId: selfId(), principalLabel: principalLabel(), kind, peerId: kind === 'private' ? id : undefined, selfNames: selfNames() }),
-      selfAccount: selfId(), ownerAccount: ownerId(), selfCard: kind === 'group' ? selfCardOf(list) : '',
+      known: knownOf(key, list, rs),
+      selfAccount: selfId(), ownerAccount: ownerId(), selfCard: rs.selfCard, roster: rs.roster, principalLabel: principalLabel(),
     };
   }
   /**
@@ -681,7 +702,8 @@ export function createQqBridgeAdapter(deps) {
       }
     } else stats.forwardRelayUnknown += 1;
     const relayedBy = carrier ? relayActorOf(carrier) : { claims: [] };
-    const known = knownNames(social?.conversations.get(key)?.recent ?? [], { ownerId: ownerId(), selfId: selfId(), principalLabel: principalLabel(), kind: splitKey(key).kind, selfNames: selfNames() });
+    const recent = social?.conversations.get(key)?.recent ?? [];
+    const known = knownOf(key, recent, rosterFor(key, recent), { peer: false });
     nodes.slice(0, 100).forEach((n, i) => {
       if (!isRecord(n)) return;
       const text = String(n.plain ?? n.text ?? '').slice(0, 2000);
@@ -817,7 +839,7 @@ export function createQqBridgeAdapter(deps) {
       // 平台上的群名（D111）：读不到不算失败——没起名字的群照样用「一个 QQ 群」，主人可以在管理页起名字
       const pn = platformNames.status();
       items.push({ id: 'platform-names', name: 'platform-names', ok: true, level: pn.ok ? 'ok' : 'info',
-        label: pn.ok ? `QQ：从 SnowLuma 的缓存里读到 ${pn.groups} 个群的名字（只读，不调 QQ）`
+        label: pn.ok ? `QQ：从 SnowLuma 的缓存里读到 ${pn.groups} 个群的名字${pn.members > 0 ? `和 ${pn.members} 条群成员的名字` : ''}（只读，不调 QQ）`
           : pn.reason === 'off' ? 'QQ：没有读平台上的群名（配置关掉了，或不知道 SnowLuma 在哪）：没起名字的群显示成「一个 QQ 群」，可以在管理页起名字'
             : 'QQ：读不到 SnowLuma 缓存里的群名：没起名字的群显示成「一个 QQ 群」，可以在管理页起名字' });
       add('principal', !!ownerId(), 'QQ：知道主人的账号', '不知道主人的账号：主人私聊认不出来', 'warn');

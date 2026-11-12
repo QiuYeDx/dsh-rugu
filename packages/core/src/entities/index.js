@@ -7,7 +7,8 @@
 // 用到的端口：clock、embedding（经 worker）。
 // 契约细节：docs/实现/模块与接口.md §4.3。
 // 内部文件：records.js（表的底层读写）、own.js（她自己、主人）、resolve.js（认人）、links.js（链接两层）、
-//   matcher.js（Aho-Corasick）、impressions.js（分层印象）、normalize.js（名字规范化）、params.js（参数）。
+//   matcher.js（Aho-Corasick）、impressions.js（分层印象）、normalize.js（名字规范化）、params.js（参数）、
+//   repair.js（把认人的规矩用到已经存下来的档案上：假人、重复档案）。
 import {
   state, getEntity, createEntity, addName, identityKeys, findEvidence, attachEvidence, moveEvidence,
   flushEmbeds, namesChanged, bump, warn, errName, RIGHTS_DECIDERS, markDirty,
@@ -15,8 +16,9 @@ import {
 import { ensureSelf as ensureSelfImpl, ensurePrincipal as ensurePrincipalImpl } from './own.js';
 import {
   resolveActor as resolveActorImpl, resolveExtracted as resolveExtractedImpl, candidates as candidatesImpl,
-  noteMentionInternal, corroboration, descriptorRowsFor, repairMentionGhosts as repairGhostsImpl,
+  noteMentionInternal, corroboration, descriptorRowsFor,
 } from './resolve.js';
+import { repairMentionGhosts as repairGhostsImpl } from './repair.js';
 import { link as linkImpl, belief as beliefImpl, rightsHolder as rightsHolderImpl, linksOf } from './links.js';
 import { compilePatterns, findAll, dropContained } from './matcher.js';
 import { writeImpression as writeImpressionImpl, impressionSources as impressionSourcesImpl } from './impressions.js';
@@ -606,11 +608,13 @@ export function descriptorSupport(core, entityId, anchorEntityId, relation) {
 }
 
 /**
- * 撤掉提及造出来的「假人」（D108；启动时跑，幂等）：从没说过话、除了名字没有任何身份证据（账号、权利层的同一个人、关系描述），
- * 而且每个名字都是她自己或有管理权限的人在同一场合（或不限场合）的名字，或者每个名字都不到 2 个字。不按 id 写死任何一个。
- * 撤掉的计 entities.ghost.retracted，名字匹配器随之重建。
+ * 把认人的规矩用到已经存下来的档案上（D108、D160；启动时和她有了新名字时跑，幂等、有上限）。只看从没说过话、没有身份证据和关系描述的档案：
+ * 每个名字都不到 2 个字的、每个名字都是她自己或有管理权限的人的名字的，撤掉；只有名字的提及造出来的，没有任何东西指着就撤掉，
+ * 有东西指着而名字正好是同一场合里一个有账号的人的平台名，就不撤、和他挂 same（信念层）；提炼造出来的重复档案（名字全是别人叫的，
+ * 正好是同一场合里一个有账号的人的平台名）也和他挂 same，不撤。不按 id 写死任何一个。撤掉的计 entities.ghost.retracted、
+ * 挂上的计 entities.ghost.linked；撤了的话名字匹配器随之重建。见 repair.js。
  * @param {import('../core-types.js').CoreContext} core
- * @returns {{retracted: number}}
+ * @returns {{retracted: number, linked: number}}
  */
 export function repairMentionGhosts(core) {
   const r = repairGhostsImpl(core);

@@ -61,6 +61,45 @@ const timed = (core, q, spec) => (q[SPEC_ONLY] ? spec : timeline(core, q, spec))
 /** 按时间的列表：days 的 of 只认这些。 */
 const TIMED_VIEWS = new Set(['lessons', 'assertions', 'episodes', 'percepts', 'windows', 'intentions', 'suppressed', 'checks']);
 
+/**
+ * 【D161】认成同一个人的档案分组：沿信念层 rel='same' 的链接（不论谁定的）做并查集；场合（kind='setting'）不并进人里。
+ * 管理页的人选择器和「按人筛」都用它，两边一致：选一个人，看到的是他名下每个档案存的东西。
+ */
+function sameSets(core) {
+  const parent = new Map();
+  const find = (x) => {
+    let r = x;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r);
+    for (let c = x; c !== r;) { const n = parent.get(c); parent.set(c, r); c = n; }
+    return r;
+  };
+  for (const l of core.store.all(`SELECT l.a, l.b FROM entity_links l JOIN entities ea ON ea.id = l.a JOIN entities eb ON eb.id = l.b
+                                   WHERE l.rel = 'same' AND ea.kind <> 'setting' AND eb.kind <> 'setting' LIMIT 20000`)) {
+    const ra = find(l.a);
+    const rb = find(l.b);
+    if (ra !== rb) parent.set(Math.max(ra, rb), Math.min(ra, rb));
+  }
+  const groups = new Map();
+  for (const id of parent.keys()) {
+    const r = find(id);
+    if (!groups.has(r)) groups.set(r, new Set([r]));
+    groups.get(r).add(id);
+  }
+  return { find, groups };
+}
+/** 和 id 认成同一个人的全部档案（含它自己；最多 64 个）。 */
+function sameIds(core, id) {
+  const { find, groups } = sameSets(core);
+  return [id, ...[...(groups.get(find(id)) ?? [])].filter((x) => x !== id).sort((a, b) => a - b)].slice(0, 64);
+}
+/** 按人筛：把 entityId 展开成同一个人的全部档案，拼成 `col IN (?, …)`。 */
+function entityFilter(core, where, params, q, col) {
+  if (!Number.isSafeInteger(q.entityId)) return;
+  const ids = sameIds(core, q.entityId);
+  where.push(col(ids.map(() => '?').join(', ')));
+  params.push(...ids);
+}
+
 function stateFilter(where, params, kind, q) {
   if (q.state === 'active') { where.push(`NOT EXISTS (SELECT 1 FROM suppressions s WHERE s.owner_kind = '${kind}' AND s.owner_id = t.id)`); }
   else if (q.state === 'hidden' || q.state === 'forgotten') { where.push(`EXISTS (SELECT 1 FROM suppressions s WHERE s.owner_kind = '${kind}' AND s.owner_id = t.id AND s.state = ?)`); params.push(q.state); }
@@ -106,7 +145,7 @@ const VIEWS = {
   assertions(core, q) {
     const where = [];
     const params = [];
-    if (Number.isSafeInteger(q.entityId)) { where.push('t.id IN (SELECT assertion_id FROM assertion_entities WHERE entity_id = ?)'); params.push(q.entityId); }
+    entityFilter(core, where, params, q, (ph) => `t.id IN (SELECT assertion_id FROM assertion_entities WHERE entity_id IN (${ph}))`);
     if (typeof q.settingKey === 'string') { where.push("t.id IN (SELECT owner_id FROM sources WHERE owner_kind = 'assertion' AND perceived_in = ?)"); params.push(q.settingKey); }
     if (typeof q.certainty === 'string') { where.push('t.certainty = ?'); params.push(q.certainty); }
     if (typeof q.planStatus === 'string') { where.push('t.plan_status = ?'); params.push(q.planStatus); }
@@ -126,7 +165,7 @@ const VIEWS = {
     const where = [];
     const params = [];
     if (typeof q.settingKey === 'string') { where.push('t.setting_key = ?'); params.push(q.settingKey); }
-    if (Number.isSafeInteger(q.entityId)) { where.push('EXISTS (SELECT 1 FROM json_each(t.participants_json) x WHERE x.value = ?)'); params.push(q.entityId); }
+    entityFilter(core, where, params, q, (ph) => `EXISTS (SELECT 1 FROM json_each(t.participants_json) x WHERE x.value IN (${ph}))`);
     if (typeof q.epKind === 'string') { where.push('t.ep_kind = ?'); params.push(q.epKind); }
     // 时间筛选：和 [t_start, t_end] 相交（timeline 按 span 做）
     stateFilter(where, params, 'episode', q);
@@ -154,6 +193,48 @@ const VIEWS = {
       map: (e) => ({ ref: refOf('entity', e.id), kind: e.kind, id: e.id, status: e.status, name: e.display_name, isSelf: !!e.is_self, closeness: e.closeness,
         authority: e.authority, lastMentionAt: e.last_mention_at, mentionDays: e.mention_days, b: e.b ?? null, tier: e.tier ?? null, state: supOf(core, 'entity', e.id) }),
     });
+  },
+  /**
+   * 【D161】管理页上能选的人（「全部的人」、规则里的「一个人」、部分恢复）：一个人一项。
+   *   - 不列收回的（retracted）、不列场合（kind='setting'）；
+   *   - 认成同一个人的几个档案（信念层 rel='same'）并成一项：代表档案按 有身份证据 > established > 被提到的天数多 > id 小 挑，
+   *     members 是这一组全部档案（含收回的：按人筛时它们名下的东西照样看得到），aliases 是组里别的不同的名字；
+   *   - 一组都没有名字的不列；place 是代表的名字作为群名片用在了哪个场合（同名的两项靠它分开，没有就是 null）。
+   * 顺序和 entities 一样（激活高的、最近提到的在前；一组按它排得最前的那个档案算）；最多 q.limit（默认 500，上限 1000）项。
+   */
+  pickable(core, q) {
+    const cap = Math.max(1, Math.min(1000, Number.isInteger(q.limit) ? q.limit : 500));
+    const rows = core.store.all(`SELECT t.id, t.kind, t.status, t.display_name, t.is_self, t.mention_days,
+        EXISTS (SELECT 1 FROM identity_evidence x WHERE x.entity_id = t.id) AS ident
+      FROM entities t LEFT JOIN activation act ON act.owner_kind = 'entity' AND act.owner_id = t.id
+      WHERE t.kind <> 'setting'
+      ORDER BY act.b_cache IS NULL, act.b_cache DESC, t.last_mention_at DESC, t.id DESC LIMIT 20000`);
+    const { find } = sameSets(core);
+    /** @type {Map<number, any[]>} 组根 → 组里的档案（按上面的顺序） */
+    const groups = new Map();
+    for (const r of rows) {
+      const g = find(r.id);
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(r);
+    }
+    const nm = (r) => (typeof r.display_name === 'string' ? r.display_name.trim() : '');
+    const rank = (r) => [r.ident ? 0 : 1, r.status === 'established' ? 0 : 1, -(r.mention_days ?? 0), r.id];
+    const before = (a, b) => { const x = rank(a); const y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+    const placeOf = core.store.prepare(`SELECT scope_setting_key AS k FROM entity_names WHERE entity_id = ? AND text_raw = ? AND scope_setting_key <> ''
+                                        ORDER BY count DESC, last DESC LIMIT 1`);
+    const items = [];
+    for (const list of groups.values()) {
+      const alive = list.filter((r) => r.status !== 'retracted');
+      if (!alive.length) continue;
+      const rep = [...alive].sort(before)[0];
+      const named = [rep, ...alive.filter((r) => r !== rep)].find((r) => nm(r));
+      if (!named) continue;
+      const name = nm(named);
+      const aliases = [...new Set(alive.map(nm).filter((n) => n && n !== name))].slice(0, 8);
+      items.push({ id: rep.id, name, kind: rep.kind, isSelf: alive.some((r) => !!r.is_self), status: rep.status,
+        members: list.map((r) => r.id).sort((a, b) => a - b), aliases, place: placeOf.get(named.id, name)?.k ?? null });
+    }
+    return { items: items.slice(0, cap), total: items.length, next: undefined };
   },
   settings(core, q) {
     return paged(core, q, {
@@ -185,7 +266,7 @@ const VIEWS = {
     const where = [];
     const params = [];
     if (typeof q.settingKey === 'string') { where.push('t.setting_key = ?'); params.push(q.settingKey); }
-    if (Number.isSafeInteger(q.entityId)) { where.push('t.actor_entity_id = ?'); params.push(q.entityId); }
+    entityFilter(core, where, params, q, (ph) => `t.actor_entity_id IN (${ph})`);
     if (typeof q.kind === 'string') { where.push('t.kind = ?'); params.push(q.kind); }
     // 按说话的时间排（at, id）：回填的历史消息 id 大、at 早，按 id 排会乱（D159）；搜原文用原话的全文分表
     return timed(core, q, {
@@ -212,7 +293,7 @@ const VIEWS = {
     const where = [];
     const params = [];
     if (typeof q.state === 'string' && !['active', 'hidden', 'forgotten'].includes(q.state)) { where.push('t.state = ?'); params.push(q.state); }
-    if (Number.isSafeInteger(q.entityId)) { where.push('t.target_entity_id = ?'); params.push(q.entityId); }
+    entityFilter(core, where, params, q, (ph) => `t.target_entity_id IN (${ph})`);
     return timed(core, q, {
       from: 'intentions t', where, params, time: 't.formed_at', kind: 'intention',
       map: (t) => ({ ref: refOf('intention', t.id), id: t.id, act: t.act, text: t.text, origin: t.origin, state: t.state, targetEntityId: t.target_entity_id,

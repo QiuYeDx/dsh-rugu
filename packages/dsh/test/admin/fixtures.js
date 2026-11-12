@@ -186,6 +186,11 @@ export function makeFakePm(o = {}) {
     { id: 40, kind: 'person', name: null, status: 'provisional', closeness: 0.1, authority: 'none' },
     { id: 41, kind: 'place', name: '楼下的驿站', status: 'established', closeness: null, authority: 'none' },
     { id: 42, kind: 'pet', name: '团团（阿明家的猫）', status: 'established', closeness: null, authority: 'none' },
+    // D161：选人的列表里不该出现的（收回的、场合）、和别人同名的、认成同一个人的另一个档案
+    { id: 43, kind: 'person', name: '小满', status: 'provisional', closeness: 0.1, authority: 'none' },
+    { id: 44, kind: 'person', name: '明哥', status: 'provisional', closeness: 0.1, authority: 'none' },
+    { id: 45, kind: 'person', name: '[', status: 'retracted', closeness: 0, authority: 'none' },
+    { id: 46, kind: 'setting', name: '一个编的群', status: 'established', closeness: 0, authority: 'none' },
   ].map((e, i) => ({ ref: `n${e.id}`, isSelf: false, lastMentionAt: now - i * 5 * HOUR, mentionDays: 30 - i, b: 2 - i * 0.05, tier: i < 10 ? 'hot' : 'warm', state: null, ...e })) : [];
   const certs = ['stated', 'stated', 'hearsay', 'confirmed', 'inferred', 'self_said'];
   const assertions = full ? Array.from({ length: 128 }, (_, i) => {
@@ -306,6 +311,10 @@ export function makeFakePm(o = {}) {
     episodes: (q) => episodes.filter((e) => (!q.q || (e.narrative + e.title).includes(q.q)) && stateOk(e, q.state) && (!q.settingKey || e.settingKey === q.settingKey)
       && (!q.entityId || e.participants.includes(q.entityId))),
     entities: (q) => entities.filter((e) => (!q.q || String(e.name ?? '').includes(q.q)) && stateOk(e, q.state)),
+    // D161：能选的人（照核心 pickable 的形状）：不列收回的、场合；44 和 10 认成同一个人；25 和 43 同名，靠 place 分开
+    pickable: () => entities.filter((e) => e.status !== 'retracted' && e.kind !== 'setting' && e.name && e.id !== 44).map((e) => ({
+      id: e.id, name: e.name, kind: e.kind, isSelf: !!e.isSelf, status: e.status, members: e.id === 10 ? [10, 44] : [e.id],
+      aliases: e.id === 10 ? ['明哥'] : [], place: e.id === 25 ? 'sk-group-small' : e.id === 43 ? 'sk-group-big' : null })),
     intentions: () => intentions,
     percepts: (q) => percepts.filter((p) => (!q.q || String(p.text ?? '').includes(q.q)) && (!q.settingKey || p.settingKey === q.settingKey) && (!q.entityId || p.actorEntityId === q.entityId)),
     windows: (q) => windows.filter((w) => (!q.q || String(w.text ?? '').includes(q.q)) && (!q.settingKey || w.settingKey === q.settingKey)),

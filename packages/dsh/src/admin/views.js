@@ -241,19 +241,46 @@ export function createViews(deps) {
     } catch { /* 读不出来就显示「某个场合」 */ }
     return out;
   }
-  /** 最常提到的一批人 → 名字（规则、需要你知道里的实体 id 翻成名字）。 */
-  function entityNames() {
+  /**
+   * 最常提到的一批人 → 名字：只用来把记忆里出现的实体 id 翻成名字（什么状态的都翻，收回的也翻）。选人用 pickable()。
+   * 同一个人的几个档案（D161）各自的 id 也翻成那个人的名字（档案自己没名字时）。
+   */
+  function entityNames(pick = null) {
     const out = {};
     try {
       for (const e of pm.admin.list({ view: 'entities', limit: 200 }).items ?? []) out[e.id] = e.name || null;
     } catch { /* 读不出来就只显示编号 */ }
+    for (const p of pick ?? []) {
+      out[p.id] = p.name;
+      for (const m of p.members) if (!out[m]) out[m] = p.name;
+    }
     return out;
   }
-  /** 有名字的人（不含她自己）：披露规则「特别别告诉谁」只列这些，不列地方、宠物。 */
-  function peopleIds() {
+  /**
+   * 【D161】能选的人（core 的 pickable 列表）：不含收回的、不含场合，认成同一个人的几个档案并成一项。
+   * 只往页面交它要的字段；读不出来返回 null（页面退回旧的做法）。
+   */
+  function pickable() {
     try {
-      return (pm.admin.list({ view: 'entities', kind: 'person', limit: 200 }).items ?? []).filter((e) => e.kind === 'person' && !e.isSelf && e.name).map((e) => e.id);
-    } catch { return []; }
+      const items = pm.admin.list({ view: 'pickable', limit: 500 }).items;
+      if (!Array.isArray(items)) return null;
+      return items.filter((e) => isObj(e) && Number.isSafeInteger(e.id) && typeof e.name === 'string' && e.name).map((e) => ({
+        id: e.id, name: clip(e.name, 60), kind: typeof e.kind === 'string' ? e.kind.slice(0, 32) : 'person', isSelf: !!e.isSelf,
+        status: typeof e.status === 'string' ? e.status : null,
+        members: Array.isArray(e.members) ? e.members.filter(Number.isSafeInteger).slice(0, 64) : [e.id],
+        aliases: Array.isArray(e.aliases) ? e.aliases.filter((x) => typeof x === 'string' && x).slice(0, 8).map((x) => clip(x, 60)) : [],
+        place: typeof e.place === 'string' && e.place ? e.place : null,
+      }));
+    } catch { return null; }
+  }
+  /** 有名字的人（不含她自己）：披露规则「特别别告诉谁」只列这些，不列地方、宠物。和选择器是同一份列表（D161）。 */
+  function peopleIds(pick = pickable()) {
+    return (pick ?? []).filter((e) => e.kind === 'person' && !e.isSelf).map((e) => e.id);
+  }
+  /** 喂选择器的那几样：id → 名字、能选的人。 */
+  function pickerParts() {
+    const pick = pickable();
+    return { names: entityNames(pick), pickable: pick };
   }
   const config = () => configParts(host);
   /** 宿主状态：只留管理页要的数字和短状态（§13.3）。 */
@@ -401,7 +428,8 @@ export function createViews(deps) {
     rules(q) {
       const kind = q.kind == null || q.kind === '' ? null : oneOf(q.kind, RULE_KINDS, 'kind');
       const p = pm.admin.list({ view: 'rules', ...(kind ? { kind } : {}), ...pageOf(q) });
-      return { ...p, settings: settingLabels(), names: entityNames(), people: peopleIds() };
+      const pk = pickerParts();
+      return { ...p, settings: settingLabels(), ...pk, people: peopleIds(pk.pickable) };
     },
 
     // ── 分寸（D113）：被拦下的话（只写依据、不显示原文）、她在守的叮嘱（可以解除）────────────────
@@ -436,7 +464,7 @@ export function createViews(deps) {
           } catch { return x; }
         });
       }
-      return { ...p, view, settings: settingLabels(), names: entityNames() };
+      return { ...p, view, settings: settingLabels(), ...pickerParts() };
     },
     /**
      * 【D159】「跳到」的月历：某个月每天有几条（和列表相同的条件：列表种类、场合、人、状态、搜索、时间筛选），
@@ -483,6 +511,8 @@ export function createViews(deps) {
         offsiteDir: typeof core?.backup?.offsiteDir === 'string' ? core.backup.offsiteDir : '',
         keep: isObj(core?.backup?.retention) ? numbersOnly(core.backup.retention) : null,
         exportReady: !!deps.exportDir?.(),
+        // 部分恢复选人用（D161）
+        ...pickerParts(),
       };
     },
 

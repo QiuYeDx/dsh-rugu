@@ -459,3 +459,19 @@ test('预算摘要：不设上限的项写 none（页面写「不设上限」，
   assert.deepEqual([b.limits.dailyCalls, b.limits.dailyUncachedTokens, b.limits.dailyOutputTokens, b.limits.perSourceShare, b.limits.mainChatRatioCap], ['none', 'none', 2_000_000, 1, null]);
   assert.equal(budgetSummary({ limits: { dailyCalls: NaN } }).limits.dailyCalls, null, '读不出来的还是 null');
 });
+
+test('选人（D161）：记忆、规则、备份的数据里带能选的人（一个人一项）；id → 名字照样翻得出被并进去和收回的档案；「特别别告诉谁」只列人、不含她', async () => {
+  const s = setup();
+  const m = (await s.view('memories', { list: 'assertions' })).body.data;
+  const ids = m.pickable.map((x) => x.id);
+  assert.ok(!ids.includes(44) && !ids.includes(45) && !ids.includes(46), '并进去的、收回的、场合都不单列');
+  assert.deepEqual(m.pickable.find((x) => x.id === 10).members, [10, 44]);
+  assert.equal(m.names[44], '明哥', '被并进去的档案照样翻得出名字');
+  assert.deepEqual(m.pickable.filter((x) => x.name === '小满').map((x) => x.place), ['sk-group-small', 'sk-group-big']);
+  const r = (await s.view('rules')).body.data;
+  assert.ok(Array.isArray(r.pickable));
+  assert.ok(!r.people.includes(1) && !r.people.includes(41) && !r.people.includes(42), '不含她、地方、宠物');
+  assert.ok(r.people.includes(10) && r.people.includes(43));
+  const b = (await s.view('backups')).body.data;
+  assert.equal(b.pickable.length, m.pickable.length);
+});

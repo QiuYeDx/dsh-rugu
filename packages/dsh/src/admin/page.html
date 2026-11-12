@@ -926,10 +926,49 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
   }
 
   // ── 共享状态：场合名字、实体名字 ────────────────────────────────────────
-  const names = { settings: {}, entities: {} };
-  const remember = (d) => { if (d?.settings) Object.assign(names.settings, d.settings); if (d?.names) Object.assign(names.entities, d.names); };
+  // pickable（D161）：能选的人，一个人一项（不含收回的档案和场合，认成同一个人的几个档案并成一项）；null = 服务端没给，退回旧的做法
+  const names = { settings: {}, entities: {}, pickable: null };
+  const remember = (d) => {
+    if (d?.settings) Object.assign(names.settings, d.settings);
+    if (d?.names) Object.assign(names.entities, d.names);
+    if (Array.isArray(d?.pickable)) names.pickable = d.pickable;
+  };
   const settingName = (key) => (key ? names.settings[key] ?? '某个场合' : null);
   const entityName = (id) => (id == null ? null : names.entities[id] || `#${id}`);
+  const KIND_HINT = { self: '她自己', pet: '宠物', place: '地方', object: '东西', org: '组织', group: '一群人', work: '作品', game: '游戏' };
+  const clipName = (t, n) => ([...String(t)].length > n ? `${[...String(t)].slice(0, n).join('')}…` : String(t));
+  /**
+   * 【D161】选人的选项 [id, 显示的字]。不是人的带上种类；同名的带上名字是在哪个场合用的（还分不开就带编号）；
+   * 几个档案并成一个人的带上另一个名字。persons = 只要人（不含她自己）。
+   */
+  function personOpts({ persons = false } = {}) {
+    const list = names.pickable;
+    if (!list) return Object.entries(names.entities).filter(([, n]) => n);
+    const items = list.filter((p) => !persons || (p.kind === 'person' && !p.isSelf));
+    const dup = (key) => { const m = new Map(); for (const p of items) m.set(key(p), (m.get(key(p)) ?? 0) + 1); return m; };
+    const byName = dup((p) => p.name);
+    const byPlace = dup((p) => `${p.name}\u0000${p.place ?? ''}`);
+    return items.map((p) => {
+      const hints = [];
+      if (p.isSelf) hints.push('她自己');
+      else if (p.kind !== 'person') hints.push(KIND_HINT[p.kind] ?? p.kind);
+      if (byName.get(p.name) > 1) {
+        if (p.place) hints.push(`在「${clipName(settingName(p.place), 10)}」`);
+        if (!p.place || byPlace.get(`${p.name}\u0000${p.place}`) > 1) hints.push(`#${p.id}`);
+      }
+      if (p.aliases?.length) hints.push(`也叫${clipName(p.aliases[0], 8)}${p.aliases.length > 1 ? ' 等' : ''}`);
+      return [String(p.id), hints.length ? `${p.name}（${hints.join('，')}）` : p.name];
+    });
+  }
+  /** 选过的人在不在现在的列表里：是哪一项的代表 → 它；是被并进去的档案 → 那一项；都不是 → ''（全部的人）。 */
+  function pickedPerson(id) {
+    if (!id || !names.pickable) return id ? String(id) : '';
+    const v = String(id);
+    const p = names.pickable.find((x) => String(x.id) === v) ?? names.pickable.find((x) => (x.members ?? []).some((m) => String(m) === v));
+    return p ? String(p.id) : '';
+  }
+  /** 一项代表的全部档案 id（部分恢复按人取回时用）。 */
+  const membersOf = (id) => names.pickable?.find((x) => String(x.id) === String(id))?.members ?? [Number(id)];
 
   // ── 页签 ────────────────────────────────────────────────────────────────
   const app = document.getElementById('app');
@@ -1915,7 +1954,12 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     /** 第二行：按场合、按人、按状态筛（名字表跟着列表一起来，第一次加载完才有）。 */
     function renderFilters() {
       const settingOpts = Object.entries(names.settings);
-      const people = Object.entries(names.entities).filter(([, n]) => n);
+      const people = personOpts();
+      // 选过的人不在列表里了（档案被收回、并进了别人）：并进去的换成那一项；不在了就回到「全部的人」，重新加载
+      if (s.entityId && names.pickable) {
+        const v = pickedPerson(s.entityId);
+        if (v !== String(s.entityId)) { s.entityId = v; if (!v) setTimeout(() => load(), 0); }
+      }
       // 「前后」带过来的场合可能不在名字表里（名字表只列有名字的）：补一项，下拉框不至于显示成「全部场合」
       if (s.settingKey && !settingOpts.some(([k]) => k === s.settingKey)) settingOpts.push([s.settingKey, settingName(s.settingKey)]);
       const parts = [
@@ -2384,7 +2428,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       const msg = h('div', { class: 'pm-err', hidden: true });
       const draw = () => {
         const settingOpts = settings.map((x) => [x.key, x.adapterName ? `${x.adapterName} · ${x.title || x.label}` : (x.title || x.label || '（没有名字的场合）')]);
-        const entityOpts = Object.entries(names.entities).filter(([, n]) => n).map(([id, n]) => [id, n]);
+        const entityOpts = personOpts();
+        if (f.entityId && names.pickable) f.entityId = pickedPerson(f.entityId);
         const targetTypes = f.kind === 'do_not_remember' ? [['setting', '一个场合'], ['entity', '一个人']] : [['entity', '一个人'], ['attribute', '一类信息'], ['setting', '一个场合']];
         if (!targetTypes.some(([v]) => v === f.targetType)) f.targetType = targetTypes[0][0];
         const note = h('input', { class: 'pm-input', value: f.note, placeholder: '写给自己看的备注（可不填）', maxlength: 200 });
@@ -2571,6 +2616,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       clear(el, card({ title: '备份' }, loading()));
       let d;
       try { d = await api.get('backups'); } catch (e) { clear(el, card({ title: '备份' }, errorBox(e, load))); return; }
+      remember(d);
       const o = d.overview ?? {};
       const packs = d.packs?.items ?? [];
       const offsite = h('input', { class: 'pm-input mono', value: d.offsiteDir ?? '', placeholder: '例如 D:\\备份\\记忆，或 OneDrive 里的一个文件夹', spellcheck: 'false', 'aria-label': '异地目录' });
@@ -2716,7 +2762,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     });
   }
   async function partialRestore(b, after) {
-    const people = Object.entries(names.entities).filter(([, n]) => n);
+    const people = personOpts();
     const settingOpts = Object.entries(names.settings);
     const sel = { entityIds: new Set(), settingKeys: new Set(), before: '' };
     const dlg = dialog({ title: '部分恢复', wide: true });
@@ -2734,7 +2780,9 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       h('div', { class: 'pm-field' }, h('label', null, '只取这一天以前的版本（可不填）'), before));
     add(dlg.foot, btn('取消', () => dlg.close()), btn('下一步', async () => {
       const selector = {};
-      if (sel.entityIds.size) selector.entityIds = [...sel.entityIds];
+      // 选的是一个人：他名下的每个档案都取回（D161）
+      if (sel.entityIds.size) selector.entityIds = [...new Set([...sel.entityIds].flatMap(membersOf))];
+      const picked = [...sel.entityIds];
       if (sel.settingKeys.size) selector.settingKeys = [...sel.settingKeys];
       if (sel.before) selector.before = new Date(`${sel.before}T00:00:00`).getTime();
       if (!Object.keys(selector).length) { toast('至少选一个人、一个场合或一个日期', true); return; }
@@ -2743,7 +2791,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       if (b.encrypted && code === null) return;
       const r = await confirmed('backup.restorePartial', { id: b.id, selector, ...(code ? { recoveryCode: code } : {}) }, {
         title: '确认部分恢复', okText: '开始恢复', danger: false,
-        render: () => h('p', { class: 'pm-desc' }, `从这份包里取回：${[selector.entityIds?.map(entityName).join('、'), selector.settingKeys?.map(settingName).join('、'), selector.before ? `${dateOf(selector.before)} 以前的版本` : null].filter(Boolean).join('；')}。`),
+        render: () => h('p', { class: 'pm-desc' }, `从这份包里取回：${[picked.length ? picked.map(entityName).join('、') : null, selector.settingKeys?.map(settingName).join('、'), selector.before ? `${dateOf(selector.before)} 以前的版本` : null].filter(Boolean).join('；')}。`),
       });
       if (r) { const rep = r.report ?? {}; toast(`已合并：新增 ${rep.created ?? rep.added ?? 0}，合并 ${rep.merged ?? 0}`); after?.(); }
     }, { kind: 'primary' }));

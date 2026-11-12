@@ -56,8 +56,9 @@ test('「@名字」按账号反查：她 → self；主人 → 账号 + 主人�
   const kinds = o.mentions.map((x) => (x.self ? 'self' : x.actor?.claims?.[0]?.kind ?? x.claims?.[0]?.kind));
   assert.ok(kinds.includes('self'));
   const claims = o.mentions.filter((x) => !x.self).map((x) => (x.claims ?? []).map((c) => c.kind).join('+'));
-  assert.ok(claims.includes('account+principal'), JSON.stringify(o.mentions));
-  assert.ok(claims.includes('account'), '阿明：账号');
+  // D160：认出账号的同时带上这个名字（核心把它记成这个账号在这个场合的名字）
+  assert.ok(claims.includes('account+display-name+principal'), JSON.stringify(o.mentions));
+  assert.ok(claims.includes('account+display-name'), '阿明：账号 + 名字');
   assert.ok(claims.includes('display-name'), '路人甲：只有名字');
   assert.ok(!JSON.stringify(o.mentions).includes('"我"'));
   const mine = ok(toObservation(projectMessage(msgs[2]), ctx, { attention: 'attended' }));

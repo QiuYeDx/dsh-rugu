@@ -19,6 +19,7 @@ import {
 } from './records.js';
 import { ensureSelf, ensurePrincipal, isReservedOwner } from './own.js';
 import { link, sameGroup } from './links.js';
+import { repairMentionGhosts } from './repair.js';
 
 /** 提炼提示词里她自己那一行的说话人标记（encode 的 §7.3 输入格式：`[我]`）。ent 行的 descriptor.anchor 也可以是它。 */
 export const SELF_ANCHOR = '我';
@@ -122,7 +123,7 @@ export function resolveActor(core, actor, ctx) {
     if (!names.length) return result(core, null, 'none');
     // 她自己的名字（任何场合记下的）：只靠名字永远不新建一个叫她名字的「人」（D108：她的群名片被认成了两个别的人）。
     // 提及（role = 'mention'，话里点到了谁）只认人、不给权利：对上她自己的名字就是她，对上这里有管理权限的人（主人的群名片）就是他，
-    // 都不记名字；名字太短（< 2 字，「@我」）的提及不认、不新建
+    // 都不记名字；名字太短（< 2 字，「@我」）的提及不认；只有名字的提及永远不新建（D160，见下面）
     const norms = names.map((c) => ({ c, norm: normalizeName(cleanRaw(c.name)), scope: c.scope ? core.keys.settingKey(ctx.adapterId, c.scope) : ctx.settingKey }));
     const selfHit = norms.some((x) => x.norm && core.store.get(`SELECT 1 AS x FROM entity_names n JOIN entities e ON e.id = n.entity_id
         WHERE e.is_self = 1 AND n.text_norm = ? LIMIT 1`, x.norm));
@@ -147,8 +148,17 @@ export function resolveActor(core, actor, ctx) {
     }
     // 保留名不能被名片冒用：只靠显示名永远认不到她自己或有管理权限的人身上
     const cands = [...found.values()].filter((r) => !r.is_self && r.authority === 'none');
+    // 提及（D160）：「@名字」只是一个名字，不是这个人存在的证据。这个场合里正好一个人的平台名（群名片 / 账号昵称）是它 → 就是他；
+    // 几个人都叫这个 → 拿不准；谁都不叫这个 → 不认、也不新建（名字留在原文里，提炼看上下文再定）。
+    // 认出来了也不记名字、不记「又出现了一天」：提及不是起名的证据，intake 对认出的提及调 noteMention（记日子和痕迹）
+    if (ctx.role === 'mention') {
+      if (cands.length === 1) { bump(core, 'entities.mention.byName'); return result(core, cands[0].id, 'mention-name'); }
+      if (cands.length > 1) { bump(core, 'entities.mention.ambiguous'); return result(core, null, 'none'); }
+      bump(core, 'entities.mention.unresolved');
+      return result(core, null, 'none');
+    }
     // 这个适配器给过账号的人，适配器本该带账号来；只有名字的说话人对上他 → 拿不准，留给提炼
-    // （命名空间通常就是适配器 id；也认证据上记的来源适配器）
+    // （命名空间通常就是适配器 id；也认证据上记的来源适配器）。只管说话人：提及本来就不带账号
     const withAccount = cands.filter((r) => core.store.get(`SELECT 1 AS x FROM identity_evidence WHERE entity_id = ?
         AND (namespace = ? OR json_extract(source_json, '$.adapter') = ?) LIMIT 1`, r.id, ctx.adapterId, ctx.adapterId));
     let id = null;
@@ -158,7 +168,7 @@ export function resolveActor(core, actor, ctx) {
     else {
       if (selfHit) { bump(core, 'entities.actor.selfNameRefused'); return result(core, null, 'none'); }
       id = createEntity(core, { kind: 'person', status: 'provisional', individual: true, at });
-      bump(core, ctx.role === 'mention' ? 'entities.mention.newByName' : 'entities.actor.newByName');
+      bump(core, 'entities.actor.newByName');
     }
     recordActorNames(core, id, { claims: names }, c2, { nameOnly: true });
     markSeen(core, id, at);
@@ -183,64 +193,6 @@ function attachOwnAccounts(core, id, accounts, adapterId, strengthOverride) {
     const r = attachEvidence(core, id, k, strengthOverride ?? strengthOf(c), { adapter: adapterId, via: 'actor' });
     if (r === 'conflict') { bump(core, 'entities.identity.conflict'); warn(core, 'entities.identity.conflict', { entity: id }); }
   }
-}
-
-// ── 提及造出来的「假人」（D108）────────────────────────────────────────────
-
-/**
- * 撤掉提及造出来的「假人」（启动时跑，幂等）：从没说过话（不是任何感知的说话人）、除了名字没有任何身份证据（账号、链接、关系描述）、
- * 而且每个名字都是她自己或有管理权限的人在同一场合（或不限场合）的名字，或者每个名字都不到 2 个字（「我」）。不按 id 写死任何一个。
- * @returns {{retracted: number}}
- */
-export function repairMentionGhosts(core) {
-  if (core.readOnly) return { retracted: 0 };
-  let n = 0;
-  core.store.tx(() => {
-    const cands = core.store.all(`SELECT e.id FROM entities e WHERE e.status <> 'retracted' AND e.is_self = 0 AND e.authority = 'none' AND e.kind = 'person'
-        AND NOT EXISTS (SELECT 1 FROM percepts p WHERE p.actor_entity_id = e.id)
-        AND NOT EXISTS (SELECT 1 FROM identity_evidence v WHERE v.entity_id = e.id)
-        AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE (l.a = e.id OR l.b = e.id) AND l.rel = 'same')
-        AND NOT EXISTS (SELECT 1 FROM entity_descriptors d WHERE d.entity_id = e.id)
-        AND EXISTS (SELECT 1 FROM entity_names n WHERE n.entity_id = e.id)`);
-    for (const { id } of cands) {
-      const names = core.store.all('SELECT text_raw, text_norm, scope_setting_key AS scope FROM entity_names WHERE entity_id = ?', id);
-      const short = names.every((x) => [...String(x.text_raw ?? '').trim()].length < 2);
-      const reserved = names.every((x) => !!core.store.get(`SELECT 1 AS x FROM entity_names n JOIN entities e ON e.id = n.entity_id
-          WHERE n.text_norm = ? AND e.id <> ? AND (e.is_self = 1 OR e.authority <> 'none') AND e.status <> 'retracted'
-            AND (e.is_self = 1 OR n.scope_setting_key = ? OR n.scope_setting_key = '' OR ? = '') LIMIT 1`, x.text_norm, id, x.scope, x.scope));
-      // 第三种（评审：实测库里留下的两个就是这种）：她的群名片——每个名字出现过的感知全是在叫她的（@ 到她、提及里认出了她），
-      // 而且至少有一条是「@这个名字」认成了她。这时她自己的档案里可能还没有这个名片（她还没在那个群说过话）
-      const atSelf = !short && !reserved && names.every((x) => herCardOnly(core, x.text_raw));
-      if (!short && !reserved && !atSelf) continue;
-      core.store.run("UPDATE entities SET status = 'retracted', updated_at = ? WHERE id = ?", core.now(), id);
-      n += 1;
-    }
-  });
-  if (n) bump(core, 'entities.ghost.retracted', n);
-  return { retracted: n };
-}
-
-/** 这个名字出现过的感知是不是全是在叫她的，并且至少一条是「@名字」、提及里认成了她（mentions_json 里 self: true）。最多看 200 条。 */
-function herCardOnly(core, raw) {
-  const name = String(raw ?? '').trim();
-  if ([...name].length < 2) return false;
-  const esc = name.replace(/[\\%_]/g, (c) => `\\${c}`);
-  const rows = core.store.all(`SELECT addressed, text, mentions_json FROM percepts WHERE text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 200`, `%${esc}%`);
-  if (!rows.length) return false;
-  let at = 0;
-  for (const r of rows) {
-    if (r.addressed !== 'to-her' && r.addressed !== 'mentions-her') return false;
-    const t = String(r.text ?? '');
-    if (!(t.includes(`@${name}`) || t.includes(`＠${name}`))) continue;
-    let ms = [];
-    try { ms = JSON.parse(r.mentions_json ?? '[]'); } catch { ms = []; }
-    const selfMs = (Array.isArray(ms) ? ms : []).filter((m) => m?.self === true);
-    if (!selfMs.length) continue;
-    // 认成她的那一处提及带着这个名字；或者整句只有这一处 @（那一处就是认成她的那个）
-    const named = selfMs.some((m) => (Array.isArray(m?.actor?.claims) ? m.actor.claims : []).some((c) => String(c?.name ?? '').trim() === name));
-    if (named || (t.match(/[@＠]/gu) ?? []).length === 1) at += 1;
-  }
-  return at > 0;
 }
 
 // ── resolveExtracted ─────────────────────────────────────────────────────
@@ -439,6 +391,11 @@ function scoreCandidates(core, e, x, P) {
       let s = here || globalish ? P.scores.name : P.scores.nameOtherScope;
       if (x.speaker && rs.some((r) => r.used_by === x.speaker)) s += P.scores.nameSameSpeaker;   // 同一个人这样叫过他
       if (rs.some((r) => r.scope === x.settingKey)) s += P.scores.nameSameScope;
+      // 平台在这个场合里就是用这个名字显示他的账号（D160）：这里的人说这个名字就是指他，除非上下文另有所指
+      if (x.settingKey && rs.some((r) => r.scope === x.settingKey && (r.name_kind === 'card' || r.name_kind === 'account'))
+        && core.store.get('SELECT 1 AS x FROM identity_evidence WHERE entity_id = ? LIMIT 1', id)) {
+        s = Math.max(s, P.scores.platformNameHere);
+      }
       const reservedOwner = isReservedOwner(ent);
       if (reservedOwner) s = Math.min(s, P.scores.reservedOwnerName);   // 只靠保留名到不了主人 / 她自己
       let hard = null;
@@ -478,7 +435,9 @@ function scoreCandidates(core, e, x, P) {
     for (const [id, cand] of cands) {
       if (cand.hard === 'exclude') continue;
       if (picked && id === m) cand.s = 1 - (1 - cand.s) * (1 - P.scores.verdictWeight * c);
-      else if (picked || v.match === null) cand.s = cand.s * (1 - P.scores.verdictNewPenalty * c);   // 模型挑了别的，或者说「新建」
+      // 模型挑了别的；或者说「新建」——那是对给它看过的候选档案的判断（D160）：只凭名字表找到、没给它看过的，谈不上被它否了。
+      // 关系路径找到的照旧打折：「我另一个表哥」说「新建」是在说这条关系下又多了一个人，不管那个档案有没有排进候选栏
+      else if (picked || (v.match === null && (x.shown.has(id) || cand.why.includes('relation')))) cand.s = cand.s * (1 - P.scores.verdictNewPenalty * c);
       if (cand.hard === 'cap') cand.s = Math.min(cand.s, P.thetaLo);
       cand.s = round(cand.s);
       if (picked && id === m && !cand.why.includes('verdict')) cand.why.push('verdict');
@@ -565,8 +524,10 @@ function resolveOne(core, e, ctx, out, selfId, batchSpeakers) {
   const anchors = anchor ? sameGroup(core, anchor) : new Set();
   // 锚点本人说的（「我表哥」），或者（不知道是谁说的时）锚点本人就在这段对话里
   const firstPerson = !!anchor && (ev.speaker ? anchors.has(ev.speaker) : batchSpeakers.has(anchor));
+  // 给模型看过的候选档案（提示词「候选档案」一栏）；没有这一栏的调用方（导入）没给模型看过任何档案
+  const shown = new Set(ctx.candidateCodes instanceof Map ? [...ctx.candidateCodes.values()].filter((v) => Number.isInteger(v)) : []);
   const x = { anchor, anchors, related: anchor ? relatedTo(core, anchor) : new Set(), rel, name, speaker: ev.speaker, at: ev.at, firstPerson, settingKey,
-    kind: normalizeKind(e.kind) };
+    kind: normalizeKind(e.kind), shown };
   const cands = scoreCandidates(core, e, x, P);
   const list = [...cands.entries()].map(([id, c]) => ({ id, ...c })).sort((p, q) => q.s - p.s || p.id - q.id);
   const top = list[0];

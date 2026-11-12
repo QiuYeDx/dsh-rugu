@@ -271,6 +271,7 @@ export const DEFAULTS = deepFreeze({
       nameOtherScope: 0.55,              // 同名，但名字证据来自别的场合 / 群名片只在别处有效
       nameSameSpeaker: 0.25,             // 同一个说话人用同一个名字叫过他（加分）
       nameSameScope: 0.05,               // 名字证据来自同一个场合（加分）
+      platformNameHere: 0.9,             // 平台在这个场合里就用这个名字显示他的账号（群名片 / 昵称，有账号证据）：这里的人说这个名字就是指他（D160）
       reservedOwnerName: 0.5,            // 只靠保留名对上：不建 maybe_same（保留名不把同名的人认成主人）
       descriptorMismatch: 0.1,           // 提及带关系描述，而同名的档案没有这层关系
       verdictWeight: 0.75,               // 第 5 步 LLM 同意时：1 − (1 − s)(1 − w·c)

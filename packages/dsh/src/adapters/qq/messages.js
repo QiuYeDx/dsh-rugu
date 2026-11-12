@@ -1,6 +1,6 @@
 // 桥接的一条消息 → 一条 Observation（§4.3、§11.1 的字段映射）。只给事实，不做判断。
 // 平台知识都在这里：她自己的行 isOwner 也是 true（先判 isSelf，C2）；拍一拍、入群退群这类系统行 evidential:false；
-// text / plain / tail 各截 200 字（头尾拼接，标 textTruncated）；@ 只剩名字（按名字证据进 mentions）；
+// text / plain / tail 各截 200 字（头尾拼接，标 textTruncated）；@ 只剩名字（按名字反查账号，D108；群里加上平台的成员名单，D160）；
 // 桥接渲染的系统行里带着账号原值（「QQ 123…」「拍了拍 123…」「@123…」），进 text 之前换成名字或「某人」（§4.7：不许把账号写进 text）。
 import { opaqueFrom, textHash } from 'rugu-core/contract';
 
@@ -92,14 +92,44 @@ export function placeholderMedia(text) {
 /** 文字里的「[转发消息 id=…]」只留占位：id 是平台句柄，对记忆没用。 */
 const stripForwardIds = (s) => s.replace(/\[转发消息 id=[^\]]{0,200}\]/g, '[转发消息]');
 
-/** 文字里提到的「@名字」（结构化的 @ 桥接没存，只剩名字，感知:210）。不到 2 个字的不算（和 mentionsHer 一样，「@我」不是在点谁的名，D108）。 */
-export function atNames(text) {
+const AT_TOKEN = /^[^\s@，。！？,.!?:：\]\[]{1,30}/;
+/** 认得的名字按首字分组、长的在前（「@」后面先找最长的认得的名字）。不到 2 个字的不收。 */
+function atIndex(names) {
+  const idx = new Map();
+  const seen = new Set();
+  for (const raw of names) {
+    const n = typeof raw === 'string' ? raw.trim() : '';
+    const low = n.toLowerCase();
+    if ([...n].length < 2 || n.length > 60 || seen.has(low) || low.length !== n.length) continue;
+    seen.add(low);
+    const k = low[0];
+    if (!idx.has(k)) idx.set(k, []);
+    idx.get(k).push(low);
+  }
+  for (const list of idx.values()) list.sort((a, b) => b.length - a.length);
+  return idx;
+}
+
+/**
+ * 文字里提到的「@名字」（结构化的 @ 桥接没存，只剩渲染出来的「@<群名片或昵称>」，感知:210）。
+ * 【D160】每个「@」后面先找认得的名字里最长的那个（成员名单、这个会话里认得的、她的名字）——「@阿明你好」是「阿明」，不是「阿明你好」；
+ * 一个都对不上才照旧取到空白或标点为止。不到 2 个字的不算（和 mentionsHer 一样，「@我」不是在点谁的名，D108）。
+ * @param {string} text
+ * @param {Iterable<string>|Map<string, string[]>} [known]   认得的名字（或 atIndex 的结果）
+ */
+export function atNames(text, known = []) {
+  const idx = known instanceof Map ? known : atIndex(known);
   const out = [];
-  for (const m of text.matchAll(/@([^\s@，。！？,.!?:：\]\[]{1,30})/g)) {
-    const name = m[1];
+  for (let i = text.indexOf('@'); i >= 0 && out.length < 16; i = text.indexOf('@', i + 1)) {
+    const rest = text.slice(i + 1, i + 61);
+    let name = '';
+    const low = rest.toLowerCase();
+    if (low.length === rest.length) {
+      for (const n of idx.get(low[0]) ?? []) if (low.startsWith(n)) { name = rest.slice(0, n.length); break; }
+    }
+    if (!name) name = AT_TOKEN.exec(rest)?.[0] ?? '';
     if ([...name].length < 2 || name === '全体成员' || name === '某人' || out.includes(name)) continue;
     out.push(name);
-    if (out.length >= 16) break;
   }
   return out;
 }
@@ -138,7 +168,9 @@ export const PRINCIPAL_CLAIM = Object.freeze({ kind: 'principal', strength: 'con
  * @property {number} now
  * @property {string} [selfAccount]      她的账号（配置给的；只在内存里）
  * @property {string} [ownerAccount]     主人的账号
- * @property {string} [selfCard]         她在这个会话里现在的群名片（她自己那几行的 sender）
+ * @property {string} [selfCard]         她在这个群里平台上显示的名字（D160：成员名单里她那一行；没有名单时退回她自己那几行的 sender）
+ * @property {Map<string, string>} [roster]   【D160】这个群的成员名单：账号 → 平台上显示的名字（只在内存里）；没有名单就不给
+ * @property {string} [principalLabel]   她对主人的称呼（knownNames 拿它顶替主人的名字；这种名字不当成主人在群里的名字记）
  */
 /**
  * @typedef {object} MapOptions
@@ -185,8 +217,9 @@ export function toObservation(m, ctx, opt) {
 
   // 先判 isSelf：她自己的行 isOwner 也是 true（C2）
   if (m.isSelf) {
-    // 她自己的群名片也记成她的名字（只在这个场合算数，D108）：别人 @ 这个名片时认得出是她，不另造一个「人」
-    const card = group ? cardOf(m.sender) : '';
+    // 她自己的群名片也记成她的名字（只在这个场合算数，D108）：别人 @ 这个名片时认得出是她，不另造一个「人」。
+    // 【D160】真的桥接把她的行一律写成「我」，名片只能从成员名单来（ctx.selfCard）
+    const card = group ? cardOf(m.sender) || ctx.selfCard || '' : '';
     return clean({
       ...base,
       actor: { self: true, claims: card ? [{ kind: 'display-name', name: card, scope: settingId, observedAt: m.time }] : [] },
@@ -226,27 +259,27 @@ export function toObservation(m, ctx, opt) {
       : quote.name ? { claims: [{ kind: 'display-name', name: quote.name, scope: settingId, observedAt: m.time }] } : undefined;
     quoteOut = clean({ excerpt: quote.excerpt ? scrubAccounts(quote.excerpt, ctx.known) : undefined, author });
   }
-  const selfNames = [...ctx.selfNames, ...(ctx.selfCard ? [ctx.selfCard] : [])];
+  const { selfNames, selfLower, byName, index } = lookupOf(ctx);
   const herNamed = mentionsHer(text, selfNames);
-  const selfLower = new Set(selfNames.map((n) => n.toLowerCase()));
-  // 「@名字」先按这个会话里认得的账号 → 名字反查（D108）：正好一个账号、是她 → 她；是别人 → 那个账号（主人另带主人的声明）；
-  // 对不上或不止一个 → 只有名字（照旧）
-  const byName = new Map();
-  for (const [acct, n] of ctx.known ?? []) {
-    if (!n || n === '某人' || n === '对方') continue;
-    const k = n.toLowerCase();
-    if (!byName.has(k)) byName.set(k, new Set());
-    byName.get(k).add(acct);
-  }
-  const mentions = atNames(text).map((n) => {
-    if (selfLower.has(n.toLowerCase())) return { self: true, claims: [] };
-    const accts = [...(byName.get(n.toLowerCase()) ?? [])];
+  const selfCardLow = ctx.selfCard ? ctx.selfCard.toLowerCase() : '';
+  const nameClaim = (name) => ({ kind: 'display-name', name: name.slice(0, 60), scope: settingId, observedAt: m.time });
+  // 「@名字」按账号 → 名字反查（D108；D160 加上群成员名单）：正好一个账号、是她 → 她；是别人 → 那个账号 + 这个名字
+  // （从没在这里说过话的人也有了名字；主人另带主人的声明）；对不上或不止一个 → 只有名字（照旧）。
+  // 点的是她在平台上的名字时带上这个名字（核心把它记成她在这个场合的名字）；点她配置里的名字不带（selfClaims 里已经有了）
+  const herMention = (n) => ({ self: true, claims: selfCardLow && n.toLowerCase() === selfCardLow ? [nameClaim(ctx.selfCard)] : [] });
+  const mentions = atNames(text, index).map((n) => {
+    const low = n.toLowerCase();
+    if (selfLower.has(low)) return herMention(n);
+    const accts = [...(byName.get(low)?.keys() ?? [])];
     if (accts.length === 1) {
       const a = accts[0];
-      if (ctx.selfAccount && a === ctx.selfAccount) return { self: true, claims: [] };
-      return { claims: [accountClaim(a), ...(ctx.ownerAccount && a === ctx.ownerAccount ? [{ ...PRINCIPAL_CLAIM }] : [])] };
+      if (ctx.selfAccount && a === ctx.selfAccount) return herMention(n);
+      const owner = !!ctx.ownerAccount && a === ctx.ownerAccount;
+      // 顶替用的称呼（「主人」）不是他在群里的名字，不记
+      const real = byName.get(low).get(a);
+      return { claims: [accountClaim(a), ...(real ? [nameClaim(n)] : []), ...(owner ? [{ ...PRINCIPAL_CLAIM }] : [])] };
     }
-    return { claims: [{ kind: 'display-name', name: n, scope: settingId, observedAt: m.time }] };
+    return { claims: [nameClaim(n)] };
   });
   if (herNamed && !mentions.some((x) => x.self)) mentions.push({ self: true, claims: [] });
   const addressed = !group || m.quoteTargetIsSelf ? 'to-her' : herNamed ? 'mentions-her' : 'ambient';
@@ -254,6 +287,31 @@ export function toObservation(m, ctx, opt) {
     ...base, actor, kind: 'utterance', quote: quoteOut, mentions: mentions.length ? mentions.slice(0, 64) : undefined,
     addressed, evidential: true, standing: 'first-hand',
   });
+}
+
+/** 一个 MapContext 的名字表（一批消息共用一个 ctx，只算一次）。 */
+const lookups = new WeakMap();
+function lookupOf(ctx) {
+  let l = lookups.get(ctx);
+  if (l) return l;
+  const selfNames = [...(ctx.selfNames ?? []), ...(ctx.selfCard ? [ctx.selfCard] : [])];
+  /** 名字（小写）→ (账号 → 这是不是他在平台上真的名字) @type {Map<string, Map<string, boolean>>} */
+  const byName = new Map();
+  const add = (acct, n, real) => {
+    if (!acct || typeof n !== 'string' || !n || n === '某人' || n === '对方') return;
+    const k = n.toLowerCase();
+    if (!byName.has(k)) byName.set(k, new Map());
+    const m = byName.get(k);
+    m.set(acct, m.get(acct) === true || real);
+  };
+  for (const [acct, n] of ctx.roster ?? []) add(acct, n, true);
+  for (const [acct, n] of ctx.known ?? []) {
+    add(acct, n, !(ctx.principalLabel && acct === ctx.ownerAccount && n === ctx.principalLabel));
+  }
+  const index = atIndex([...byName.keys(), ...selfNames]);
+  l = { selfNames, selfLower: new Set(selfNames.map((n) => n.toLowerCase())), byName, index };
+  lookups.set(ctx, l);
+  return l;
 }
 
 function clean(o) {
@@ -278,13 +336,16 @@ export function selfCardOf(msgs) {
  * 这个会话里认识的账号 → 名字（群里取最近一次的群名片），外加配置里的主人和她自己。
  * 她的账号换成她现在的群名片（没有就第一个名字），主人的换成他现在的群名片（没有就主人的称呼）——原来她的账号换成「我」，
  * 「@<她的账号>」就成了「@我」，被认成了一个叫「我」的人（D108）。
+ * 【D160】群里有成员名单时：名单里的人先全部认得（从没说过话的人的账号也换成名字），她的账号换成名单里她的名字（o.selfCard）。
  * @param {Iterable<import('./files.js').BridgeMessage>} msgs
- * @param {{ownerId?: string, selfId?: string, principalLabel: string, kind: 'group'|'private', peerId?: string, selfNames?: string[]}} o
+ * @param {{ownerId?: string, selfId?: string, principalLabel: string, kind: 'group'|'private', peerId?: string, selfNames?: string[],
+ *   selfCard?: string, roster?: Map<string, string>}} o
  */
 export function knownNames(msgs, o) {
   const known = new Map();
   const list = [...msgs];
   if (o.kind === 'private' && o.peerId) known.set(o.peerId, '对方');
+  if (o.kind === 'group' && o.roster) for (const [acct, n] of o.roster) if (acct && n) known.set(acct, n.slice(0, 30));
   for (const m of list) {
     // 被拍的人可能从没说过话：账号也要认得（换成「某人」），不然原值留在拍一拍的文字里
     const target = m.poke?.targetId;
@@ -297,6 +358,6 @@ export function knownNames(msgs, o) {
     const cur = o.kind === 'group' ? known.get(o.ownerId) : null;
     known.set(o.ownerId, cur && cur !== '某人' ? cur : o.principalLabel);
   }
-  if (o.selfId) known.set(o.selfId, selfCardOf(list) || (o.selfNames ?? []).find((x) => typeof x === 'string' && x.trim()) || '她');
+  if (o.selfId) known.set(o.selfId, (o.kind === 'group' && o.selfCard) || selfCardOf(list) || (o.selfNames ?? []).find((x) => typeof x === 'string' && x.trim()) || '她');
   return known;
 }
