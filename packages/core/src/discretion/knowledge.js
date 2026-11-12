@@ -335,6 +335,18 @@ export function managerOnly(core, a, memo) {
   return people.every((p) => mgr.has(p));
 }
 
+/**
+ * 这个目标走不走原来的整套（D113）：公开的、受众读不到的（批量目标里有一个这样的也算），以及说出去就收不回的渠道（preSendGate:false）
+ * 而听的不只是管理者——那里没有关口②，外发守护也就无从兜底。其余只跑第一段。
+ * D169：第二段评估不了时的「照给」（discretion.stage2.onFailure）对这种目标不生效，照旧不给。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {import('../core-types.js').DisclosureTarget} target
+ */
+export function strictTarget(core, target, memo = new Map()) {
+  const list = [target?.audience, ...(target?.batchTargets ?? [])];
+  return list.some((a) => !a || !a.known || a.publicLike || (a.preSendGate === false && !managerOnly(core, a, memo)));
+}
+
 /** 某个人第一次出现在这个场合的时间（出现集合或亲自发言）；没有记录返回 null。 */
 export function firstSeen(core, entityId, settingKey, memo) {
   const k = `first:${entityId}:${settingKey}`;

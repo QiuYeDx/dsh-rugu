@@ -234,6 +234,8 @@ export {};
  *                                       暗示才可以点出主体或「是私下说的」；默认只给不点名的提示（§9.3.4）
  * @property {{at: number, level: 'full'|'vague'}} [told]   【阶段 B】她已经跟这个受众讲过（told_log，S14）：别当新鲜事讲
  * @property {boolean} [cached]          【阶段 B】结论来自第二段的缓存
+ * @property {boolean} [failGive]        第二段没有结论（出错、超时、预算、坏输出、这一轮等不到），按 discretion.stage2.onFailure = 'give'
+ *                                       照给的（D169）：verdict 是 share（主人定的上限、污点上限照旧收紧），带 label；判定行 reason 以 ':give' 结尾
  * @property {'free'|'careful'|'not-here'} [speak]   已弃用（D113）：以前是工作记忆的说出口档位，admitWorking 不再给出
  * @property {object} [label]            工作记忆（discretion.admitWorking，D113）：来源标签的事实（origin / place / at / tellerId / limit / ownerVague /
  *                                       mentions / selfOnly / hearsay / open），context 据此拼段头和行尾的标签；

@@ -1,14 +1,15 @@
 // 关口①第二段（§9.3.3）：她自己的独立判断。和说话的模型分开（use='appraise'），一次调用放这一轮所有待定的条目（≤ 8 条），
 // 每条一张信息流卡片（情境完整性的五个参数 + 本系统特有的几项），输出四选一 + 一句理由。
 // 说话的模型永远看不到被拦下的内容：这里的结论决定 retrieve.render 拿到什么（§9.3.4）。
-// 失败（预算、LLM、超时、坏输出）一律不给内容（第一段放行的照常给）。
+// 失败（预算、LLM、超时、坏输出）：D169 起按 discretion.stage2.onFailure 办——默认照给（公开目标、第一段和代码的底线照旧不给），
+// 设成 omit 是原来的做法，一律不给内容（第一段放行的照常给）。「没有结论」不进缓存，下一轮照常评估。
 import { registerPromptVersion, getMeta, setMeta } from '../store/index.js';
 import {
   dcfg, VERDICTS, stricterVerdict, clip, hkey, metric, warn, errCode, promptText, placeText, fence, parseJsonlObjects, timeoutSignal, semaphore,
   HOUR, DAY,
 } from './util.js';
 import { selfId, managerIds, bond, displayName, relatedEntities, rightsEquivalents, settingInfo, descriptorTraits } from './facts.js';
-import { audiencePeople } from './knowledge.js';
+import { audiencePeople, strictTarget } from './knowledge.js';
 import { evaluateWithNorm } from './stage1.js';
 import { glancesOf } from './glance.js';
 
@@ -544,14 +545,54 @@ function rateOk(core, settingKey, at) {
   return true;
 }
 
-function failAll(core, items, target, code) {
+/**
+ * 第二段这一步对这一条没有结论（连不上、超时、预算或限速不允许、清洗不了、输出解析不了，以及关口①等不到它、名额排不上）时，这一轮给不给（D169）。
+ * 设置 discretion.stage2.onFailure：'give'（默认）照给 / 'omit' 原来的做法，一律不给。主人的决定（用户反馈第 40 轮）：回忆的效果优先，
+ * 不能因为后台模型出了问题她就想不起来；给了以后说不说由她自己看着来源标签掂量。照给的范围：
+ *   - 公开的、受众读不到的、说出去就收不回（preSendGate:false）而听的不只是管理者的目标（strictTarget，和 D113 走整套的是同一批）不照给，
+ *     照旧不给——那里有整套的第二段和审视，没有外发守护兜底；
+ *   - 第一段直接挡掉的（block：隐藏、忘掉、B1 strict、B3、B4 block、B5……）根本到不了这里；非公开目标那两条上下文底线
+ *     （给第三方的敏感私事 sensitiveOther、叮嘱里点名的人的关系人在这里 namedDeny）照旧不给；
+ *   - 主人定的上限（B4 封顶，ownerCap）和带污点的轮的上限（§9.6）由代码执行，照给时也不放开：当作模型说「能说」，再过一遍代码的底线
+ *     （finalizeVerdict，含糊版本写不出就降级），底线收成 omit 的不给；
+ *   - 其余给成「能说」（和 D113 非公开目标的原文放进来一样，B1 soft 这类封顶不再压，叮嘱在来源标签里）。
+ * 不调模型、不写库。
+ * @returns {{verdict: string, vagueText?: string, hintOk: boolean, give: boolean, floors: object[], why?: string}}
+ */
+export function failureVerdict(core, item, target, memo = new Map()) {
+  const no = (why, floors = []) => ({ verdict: 'omit', hintOk: false, give: false, floors, why });
+  if ((dcfg(core).stage2?.onFailure ?? 'give') !== 'give') return no('setting');
+  if (strictTarget(core, target, memo)) return no('strict-target');
+  const ev = item.ev ?? {};
+  if (ev.sensitiveOther) return no('sensitive-other');
+  if (ev.namedDeny) return no('named-deny');
+  if (ev.ownerCap || (ev.notes ?? []).includes('taint')) {
+    let res = null;
+    try { res = finalizeVerdict(core, item, { verdict: 'share' }, target, memo); } catch { res = null; }
+    if (!res || res.verdict === 'omit') return no('floor', res?.floors ?? []);
+    return { verdict: res.verdict, ...(res.vagueText ? { vagueText: res.vagueText } : {}), hintOk: !!res.hintOk, give: true, floors: res.floors ?? [] };
+  }
+  return { verdict: 'share', hintOk: false, give: true, floors: [] };
+}
+
+/**
+ * 一条没有结论的：按 failureVerdict 写判定记录（不带缓存键：「没有结论」不是一个评估结果，下一轮有机会照常评估），计数 stage2.failGive / failOmit。
+ * reason：whole（整次调用没成）写 `unavailable:<code>`，单条的坏输出写 `<code>`；照给的后面加 `:give`。
+ * 返回项带 failed（原因）；照给的带 give: true（关口①据此给内容、带来源标签）。
+ */
+export function failItem(core, it, target, code, { memo = new Map(), whole = true, model = null, f = null } = {}) {
+  const fv = f ?? failureVerdict(core, it, target, memo);
+  metric(core, fv.give ? 'stage2.failGive' : 'stage2.failOmit');
+  const reason = `${whole ? 'unavailable:' : ''}${code}${fv.give ? ':give' : ''}`;
+  const id = persist(core, it, { verdict: fv.verdict, vagueText: fv.vagueText, hintOk: fv.hintOk, reason, failed: true, floors: fv.floors }, target, model);
+  return { verdict: fv.verdict, ...(fv.vagueText ? { vagueText: fv.vagueText } : {}), hintOk: fv.hintOk, appraisalId: id, failed: code, ...(fv.give ? { give: true } : {}) };
+}
+
+function failAll(core, items, target, code, memo = new Map()) {
   metric(core, `stage2.unavailable.${code}`);
   const out = new Map();
   core.store.tx(() => {
-    for (const it of items) {
-      const id = persist(core, it, { verdict: 'omit', hintOk: false, reason: `unavailable:${code}`, failed: true }, target, null);
-      out.set(it.ref, { verdict: 'omit', hintOk: false, appraisalId: id, failed: code });
-    }
+    for (const it of items) out.set(it.ref, failItem(core, it, target, code, { memo }));
   });
   return out;
 }
@@ -560,16 +601,16 @@ function failAll(core, items, target, code) {
 async function callOnce(core, items, target, opt, memo) {
   const cfg = dcfg(core);
   const llm = core.ports.llm;
-  if (!llm) return failAll(core, items, target, 'no-llm');
-  if (!rateOk(core, target.audience.settingKey, core.now())) return failAll(core, items, target, 'rate');
+  if (!llm) return failAll(core, items, target, 'no-llm', memo);
+  if (!rateOk(core, target.audience.settingKey, core.now())) return failAll(core, items, target, 'rate', memo);
   const prompt = buildPrompt(core, items, target, memo);
-  if (!prompt) return failAll(core, items, target, 'sanitize');
+  if (!prompt) return failAll(core, items, target, 'sanitize', memo);
   const est = Math.ceil((prompt.system.length + prompt.messages[0].content.length) / 2);
   let allowed = false;
   // meta.direct：这一轮是不是对她说的（节省档 stage2Scope='direct' 时 BudgetPort 只放行对她说的，§10.6）
   const meta = { sourceKey: hkey(core, 'source', target.audience.settingKey), ...(typeof target.direct === 'boolean' ? { direct: target.direct } : {}) };
   try { allowed = core.ports.budget.allow('appraise', est, meta); } catch { allowed = false; }
-  if (!allowed) return failAll(core, items, target, 'budget');
+  if (!allowed) return failAll(core, items, target, 'budget', memo);
   const ms = Math.min(opt.deadlineMs ?? cfg.stage2.timeoutMs, cfg.stage2.timeoutMs);
   const ts = timeoutSignal(ms, opt.signal);
   let resp;
@@ -577,7 +618,7 @@ async function callOnce(core, items, target, opt, memo) {
     resp = await llm.complete({ use: 'appraise', system: prompt.system, messages: prompt.messages, maxTokens: 160 * items.length + 120, signal: ts.signal });
   } catch (e) {
     warn(core, 'stage2.llm', { error: errCode(e), items: items.length });
-    return failAll(core, items, target, ts.signal.aborted ? 'timeout' : 'llm');
+    return failAll(core, items, target, ts.signal.aborted ? 'timeout' : 'llm', memo);
   } finally { ts.done(); }
   noteModel(core, resp?.model);
   if (core.store.closed) return new Map();
@@ -588,11 +629,16 @@ async function callOnce(core, items, target, opt, memo) {
   core.store.tx(() => {
     items.forEach((it, i) => {
       const o = byId.get(`c${i + 1}`);
-      const res = o ? finalizeVerdict(core, it, o, target, memo) : { verdict: 'omit', hintOk: false, reason: 'missing-output', failed: true };
-      if (!o || res.reason === 'bad-output') { bad += 1; res.failed = res.failed ?? true; }
-      else noteFloors(core, res);
+      const res = o ? finalizeVerdict(core, it, o, target, memo) : null;
+      if (!res || res.reason === 'bad-output') {
+        // 这一条没有可用的结论（漏了、结论不在四个里）：和整次调用没成一样按 onFailure 办（D169）
+        bad += 1;
+        out.set(it.ref, { ...failItem(core, it, target, res ? 'bad-output' : 'missing-output', { memo, whole: false, model: resp?.model ?? null }), failed: 'bad-output' });
+        return;
+      }
+      noteFloors(core, res);
       const id = persist(core, it, res, target, resp?.model ?? null, o);
-      out.set(it.ref, { verdict: res.verdict, vagueText: res.vagueText, hintOk: res.hintOk, appraisalId: id, ...(res.failed ? { failed: 'bad-output' } : {}) });
+      out.set(it.ref, { verdict: res.verdict, vagueText: res.vagueText, hintOk: res.hintOk, appraisalId: id });
     });
   });
   if (bad) metric(core, 'stage2.badOutput', bad);
@@ -620,7 +666,7 @@ export async function runStage2(core, items, target, opt = {}, memo = new Map())
     const chunk = fresh.slice(i, i + per);
     const p = st.sem.run(() => callOnce(core, chunk, target, opt, memo)).catch((e) => {
       warn(core, 'stage2.error', { error: errCode(e) });
-      return core.store.closed ? new Map() : failAll(core, chunk, target, 'error');
+      return core.store.closed ? new Map() : failAll(core, chunk, target, 'error', memo);
     });
     for (const it of chunk) st.inflight.set(it.keyFull, p);
     p.finally(() => { for (const it of chunk) if (st.inflight.get(it.keyFull) === p) st.inflight.delete(it.keyFull); }).catch(() => {});

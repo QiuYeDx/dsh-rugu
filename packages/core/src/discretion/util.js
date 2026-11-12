@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import { bumpMetric } from '../store/index.js';
 import { DEFAULTS } from '../config/defaults.js';
+import { readJsonObjects } from '../ports/llm-text.js';
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -188,15 +189,13 @@ export function semaphore(n) {
   };
 }
 
-/** JSONL 宽进严出：逐行解析，坏行跳过。 */
+/**
+ * 模型输出里的 JSON 对象，宽进严出（第一眼、第二段评估、外发审视共用）。D169 起读法和提炼一样宽（ports/llm-text.js）：去掉思考段和围栏，
+ * 前言、数组、多行排版的对象、行尾逗号、中文冒号都认；按行写好的排在前面。原来每行一个对象的输出，结果逐项不变。
+ * 只管取出对象，字段由调用方照旧校验。
+ */
 export function parseJsonlObjects(text) {
-  const out = [];
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    const s = line.trim().replace(/^```(?:json|jsonl)?/i, '').replace(/```$/, '').trim();
-    if (!s || s[0] !== '{') continue;
-    try { const o = JSON.parse(s); if (isPlain(o)) out.push(o); } catch { /* 坏行跳过 */ }
-  }
-  return out;
+  return readJsonObjects(text).objects.filter(isPlain);
 }
 
 export const setOf = (xs) => new Set((xs ?? []).filter((x) => x != null));

@@ -1,5 +1,6 @@
 // consolidate 内部的小工具：本地时间、JSONL、LLM 调用（上限 + 预算 + 超时 + 失败降级）、提示词清洗、词元相似度、嵌入切块。
 import { bumpMetric, registerPromptVersion, normalizeToken } from '../store/index.js';
+import { stripThinking, jsonValueInLine } from '../ports/llm-text.js';
 
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
@@ -46,24 +47,21 @@ export function dateText(core, at) {
 
 // ── JSONL：宽进严出 ───────────────────────────────────────────────────────
 /**
- * 逐行解析；坏行跳过并计数；只要带 type 字段的对象。
+ * 逐行解析；坏行跳过并计数；只要带 type 字段的对象。没有「{」的行（前言、空话）不算坏行。
+ * D169：先去掉思考段（<think>…</think>）；一行里取第一个带对象的 JSON 值（前面的「好的：」、后面多的一句、行尾逗号、中文冒号、
+ * 一行数组都认），和提炼、第一眼共用 ports/llm-text.js。
  * @param {string} text
  * @returns {{lines: Record<string, any>[], errors: number}}
  */
 export function parseJsonLines(text) {
   const lines = [];
   let errors = 0;
-  for (const raw of String(text ?? '').split(/\r?\n/)) {
-    let s = raw.trim();
-    if (!s || s.startsWith('```')) continue;
-    const i = s.indexOf('{');
-    if (i < 0) continue;
-    s = s.slice(i);
-    try {
-      const o = JSON.parse(s);
-      if (o && typeof o === 'object' && !Array.isArray(o) && typeof o.type === 'string') lines.push(o);
-      else errors += 1;
-    } catch { errors += 1; }
+  for (const raw of stripThinking(String(text ?? '')).split(/\r?\n/)) {
+    const s = raw.trim();
+    if (!s || s.startsWith('```') || !s.includes('{')) continue;
+    const v = jsonValueInLine(s);
+    const objs = (Array.isArray(v) ? v : [v]).filter((o) => o && typeof o === 'object' && !Array.isArray(o) && typeof o.type === 'string');
+    if (objs.length) lines.push(...objs); else errors += 1;
   }
   return { lines, errors };
 }
