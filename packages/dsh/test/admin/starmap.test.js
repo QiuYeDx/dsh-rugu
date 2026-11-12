@@ -288,7 +288,7 @@ test('按时间摆：河道铺满 0..1、按星数排、道高有下限；x 是�
 
 test('演示模式的名字：她、主人、甲乙丙…；场合：私聊 / 群 A…', () => {
   const L = loadLib();
-  const d = L.demoNames([{ self: true, name: 'x' }, { principal: true, name: 'y' }, { name: 'z' }, { name: 'w' }], [{ oneOnOne: true }, { oneOnOne: false }, { oneOnOne: null }, { oneOnOne: true }]);
+  const d = L.demoNames([{ self: true, name: 'x' }, { principal: true, name: 'y' }, { name: 'z' }, { name: 'w' }], [{ oneOnOne: true }, { oneOnOne: false }, { oneOnOne: null }, { oneOnOne: true }, { oneOnOne: true, adapter: 'dsh-web' }]);
   assert.deepEqual(d.people, ['她', '主人', '甲', '乙']);
-  assert.deepEqual(d.places, ['私聊', '群 A', '群 B', '私聊 2']);
+  assert.deepEqual(d.places, ['私聊', '群 A', '群 B', '私聊 2', '桌面会话']);
 });

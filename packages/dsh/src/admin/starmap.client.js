@@ -299,13 +299,13 @@
     return out;
   }
 
-  /** 演示模式的名字：她、主人、别人按顺序甲乙丙丁…；场合：私聊 / 群 A / 群 B…。 */
+  /** 演示模式的名字：她、主人、别人按顺序甲乙丙丁…；场合：私聊 / 群 A / 群 B…，DSH 桌面会话叫「桌面会话」。 */
   function demoNames(people, places) {
     const GAN = '甲乙丙丁戊己庚辛壬癸';
     let o = 0;
     const ppl = people.map((p) => (p.self ? '她' : p.principal ? '主人' : (o++ < GAN.length ? GAN[o - 1] : `路人 ${o}`)));
-    let g = 0; let d = 0;
-    const plc = places.map((s) => (s.oneOnOne ? `私聊${d++ ? ` ${d}` : ''}` : `群 ${String.fromCharCode(65 + (g++ % 26))}`));
+    let g = 0; let d = 0; let w = 0;
+    const plc = places.map((s) => (s.adapter === 'dsh-web' ? `桌面会话${w++ ? ` ${w}` : ''}` : s.oneOnOne ? `私聊${d++ ? ` ${d}` : ''}` : `群 ${String.fromCharCode(65 + (g++ % 26))}`));
     return { people: ppl, places: plc };
   }
 
