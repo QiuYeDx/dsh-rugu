@@ -1,8 +1,8 @@
 // 管理页的数据面（§13.1）：各类列表和一条记忆的详情。只给主人（鉴权在集成层）：主人看得到全部，包括隐藏的（§9.3.7 第 3 条），
 // 每条都带它的隐藏状态。这里只读；读别的模块的表直接写 SQL（schema 就是契约），过滤条件一律参数化。
 import { ContractError } from '../contract/errors.js';
-import { parseRef, refOf, OWNER_TABLES } from '../store/refs.js';
-import { matchQuery, matchQueryAll } from '../store/fts.js';
+import { parseRef, refOf, OWNER_TABLES, OWNER_KINDS } from '../store/refs.js';
+import { timeline, dayCounts } from './timeline.js';
 import { activeRules, modeFor, doNotRemember } from './rules.js';
 import { listReview, listNeedToKnow } from './review.js';
 import { param } from './params.js';
@@ -42,73 +42,24 @@ function raisedBy(core, id) {
   try { return core.store.get('SELECT raised FROM glances WHERE percept_id = ?', id)?.raised != null ? 'glance' : null; } catch { return null; }
 }
 
-/** 每一档最多取多少条（搜索结果再多主人也翻不完；分页照常）。 */
-const SEARCH_MAX = 1000;
-const likeOf = (text) => `%${String(text).replace(/[%_\\]/g, '\\$&')}%`;
-/** 规范化后比（全角半角、大小写、标点、空白不算差别）：「收不到群里的消息」和「收不到群里的消息。」是同一句。 */
-const flat = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
-
-/**
- * 主人在管理页搜（D114）：按相关程度排好的 id，最相关的在前。不再把查询拆成单字、单词 OR 起来（那样几乎每条都命中，
- * 再按时间新的在前分页，原话一模一样的旧记忆反而沉到后面几页）。分三档，前一档有的不再出现在后一档：
- *   1. 原文里有这句话（子串；规范化后也算：标点、空白、全角半角不同照样认）——新的在前；
- *   2. 查询的词全都在（FTS 的 AND；多字词够用时只用多字词）——按 bm25；
- *   3. 前两档一条都没有时才退回任意一个多字词（OR，全部多字词）——按 bm25；还没有才退回单字也算的 OR。
- * 语言分析器不可用时只有第 1 档。
- * @param {object} core
- * @param {{table: string, from: string, textSql: string, timeCol: string}} t   FTS 表、主表、原文的 SQL 表达式、时间列
- * @param {string} text
- * @returns {number[]}
- */
-function searchIds(core, { table, from, textSql, timeCol }, text) {
-  const q = String(text ?? '').trim();
-  const out = [];
-  const seen = new Set();
-  const push = (ids) => { for (const id of ids) if (!seen.has(id) && out.length < SEARCH_MAX) { seen.add(id); out.push(id); } };
-  push(core.store.all(`SELECT id FROM ${from} WHERE ${textSql} LIKE ? ESCAPE '\\' ORDER BY ${timeCol} DESC, id DESC LIMIT ${SEARCH_MAX}`, likeOf(q)).map((r) => r.id));
-  let terms = null;
-  try { terms = [...new Set(core.mods.lang.queryTerms(core, q))]; } catch { terms = null; }
-  if (!terms?.length) return out;
-  const multi = terms.filter((x) => [...x].length >= 2);
-  const key = multi.length ? multi : terms;
-  const all = matchQueryAll(key);
-  const both = all ? core.store.all(`SELECT rowid FROM ${table} WHERE ${table} MATCH ? ORDER BY bm25(${table}) LIMIT ${SEARCH_MAX}`, all).map((r) => r.rowid) : [];
-  // 第 2 档里规范化以后其实含着整句的（只是标点、空白不同），提到第 1 档的末尾
-  const fq = flat(q);
-  if (fq && both.length) {
-    const textOf = core.store.prepare(`SELECT ${textSql} AS t FROM ${from} WHERE id = ?`);
-    push(both.filter((id) => flat(textOf.get(id)?.t).includes(fq)));
-  }
-  push(both);
-  if (out.length) return out;
-  // 第 3 档：任意一个多字词（全部多字词，不只是前 12 个：查询词是单字、二元组交错排的，前 12 个多半是开头的单字和虚的二元组，
-  // 后面那几个真正要找的词根本没进查询——集成复核）；连多字词都一条不中才退回单字也算的 OR
-  const run = (m) => (m ? core.store.all(`SELECT rowid FROM ${table} WHERE ${table} MATCH ? ORDER BY bm25(${table}) LIMIT ${SEARCH_MAX}`, m).map((r) => r.rowid) : []);
-  if (multi.length) push(run(matchQuery(multi, 32)));
-  if (!out.length) push(run(matchQuery(terms)));
-  return out;
-}
-
-/**
- * 一页。rank 给了（搜索的结果，最相关的在前）就按它排、只要它里面的；没给按 order。
- */
-function paged(core, q, { from, where, params, order, select = '*', map, rank = null }) {
+/** 一页（不按时间的列表：offset 游标）。按时间的列表走 timeline.js（D159）。 */
+function paged(core, q, { from, where, params, order, select = '*', map }) {
   const { limit, offset } = pageArgs(core, q);
-  const conds = [...where];
-  const args = [...params];
-  let orderSql = order;
-  const orderArgs = [];
-  if (rank) {
-    conds.push('t.id IN (SELECT value FROM json_each(?))');
-    args.push(JSON.stringify(rank));
-    orderSql = `(SELECT r.key FROM json_each(?) r WHERE r.value = t.id), ${order}`;
-    orderArgs.push(JSON.stringify(rank));
-  }
-  const w = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const total = Number(core.store.get(`SELECT count(*) AS n FROM ${from} ${w}`, ...args).n);
-  const rows = core.store.all(`SELECT ${select} FROM ${from} ${w} ORDER BY ${orderSql} LIMIT ? OFFSET ?`, ...args, ...orderArgs, limit, offset);
+  const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const total = Number(core.store.get(`SELECT count(*) AS n FROM ${from} ${w}`, ...params).n);
+  const rows = core.store.all(`SELECT ${select} FROM ${from} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit, offset);
   return { items: rows.map(map), total, next: nextOf(offset, limit, total) };
 }
+
+/** suppressions 没有 id（主键是种类 + id）：同一时刻的次序用「id × 16 + 种类序号」，唯一且是数。 */
+const SUP_KEY = `(t.owner_id * 16 + CASE t.owner_kind ${Object.keys(OWNER_KINDS).map((k, i) => `WHEN '${k}' THEN ${i}`).join(' ')} ELSE 15 END)`;
+
+/** 按天计数要的是视图的条件（spec），不是一页：days 带着这个标记调视图，视图把 spec 原样交回来。 */
+const SPEC_ONLY = Symbol('spec-only');
+/** 按时间的列表（D159）：时间筛选、顺序、跳转、往两头翻都在 timeline.js。 */
+const timed = (core, q, spec) => (q[SPEC_ONLY] ? spec : timeline(core, q, spec));
+/** 按时间的列表：days 的 of 只认这些。 */
+const TIMED_VIEWS = new Set(['lessons', 'assertions', 'episodes', 'percepts', 'windows', 'intentions', 'suppressed', 'checks']);
 
 function stateFilter(where, params, kind, q) {
   if (q.state === 'active') { where.push(`NOT EXISTS (SELECT 1 FROM suppressions s WHERE s.owner_kind = '${kind}' AND s.owner_id = t.id)`); }
@@ -135,8 +86,8 @@ const VIEWS = {
     const src = core.store.prepare(`SELECT s.percept_id, s.mode, s.quote, s.at, s.speaker, p.text AS ptext, p.setting_key, p.actor_self, p.actor_entity_id
         FROM sources s LEFT JOIN percepts p ON p.id = s.percept_id WHERE s.owner_kind = 'assertion' AND s.owner_id = ? ORDER BY s.at DESC LIMIT 3`);
     const ments = core.store.prepare("SELECT entity_id FROM assertion_entities WHERE assertion_id = ? AND role = 'mention'");
-    return paged(core, q, {
-      from: 'assertions t', where, params, order: 't.updated_at DESC, t.id DESC',
+    return timed(core, q, {
+      from: 'assertions t', where, params, time: 't.updated_at', kind: 'assertion',
       map: (a) => {
         const info = core.mods.encode.lessonInfo(a);
         return {
@@ -162,11 +113,9 @@ const VIEWS = {
     if (q.current === true) where.push('t.superseded_by IS NULL');
     if (q.needsReview === true) where.push('(t.needs_review = 1 OR t.needs_reconcile = 1)');
     stateFilter(where, params, 'assertion', q);
-    const rank = typeof q.q === 'string' && q.q.trim()
-      ? searchIds(core, { table: 'assertions_fts', from: 'assertions', textSql: 'text', timeCol: 'recorded_at' }, q.q) : null;
     const ents = core.store.prepare('SELECT entity_id AS id, role FROM assertion_entities WHERE assertion_id = ?');
-    return paged(core, q, {
-      from: 'assertions t', where, params, order: 't.recorded_at DESC, t.id DESC', rank,
+    return timed(core, q, {
+      from: 'assertions t', where, params, time: 't.recorded_at', kind: 'assertion', search: { textSql: 't.text', fts: 'assertions_fts' },
       map: (a) => ({ ref: refOf('assertion', a.id), kind: 'assertion', id: a.id, text: a.text, predicate: a.predicate, kindHint: a.kind_hint,
         certainty: a.certainty, confidence: a.confidence, imp: a.imp, recordedAt: a.recorded_at, validFrom: a.valid_from, validToKnown: a.valid_to_known,
         expiredAt: a.expired_at, supersededBy: a.superseded_by, planStatus: a.plan_status, pinned: !!a.pinned, needsReview: !!(a.needs_review || a.needs_reconcile),
@@ -179,13 +128,11 @@ const VIEWS = {
     if (typeof q.settingKey === 'string') { where.push('t.setting_key = ?'); params.push(q.settingKey); }
     if (Number.isSafeInteger(q.entityId)) { where.push('EXISTS (SELECT 1 FROM json_each(t.participants_json) x WHERE x.value = ?)'); params.push(q.entityId); }
     if (typeof q.epKind === 'string') { where.push('t.ep_kind = ?'); params.push(q.epKind); }
-    if (Number.isFinite(q.from)) { where.push('t.t_end >= ?'); params.push(q.from); }
-    if (Number.isFinite(q.to)) { where.push('t.t_start <= ?'); params.push(q.to); }
+    // 时间筛选：和 [t_start, t_end] 相交（timeline 按 span 做）
     stateFilter(where, params, 'episode', q);
-    const rank = typeof q.q === 'string' && q.q.trim()
-      ? searchIds(core, { table: 'episodes_fts', from: 'episodes', textSql: "coalesce(title, '') || ' ' || coalesce(narrative, '')", timeCol: 't_end' }, q.q) : null;
-    return paged(core, q, {
-      from: 'episodes t', where, params, order: 't.t_end DESC, t.id DESC', rank,
+    return timed(core, q, {
+      from: 'episodes t', where, params, time: 't.t_end', span: 't.t_start', kind: 'episode',
+      search: { textSql: "coalesce(t.title, '') || ' ' || coalesce(t.narrative, '')", fts: 'episodes_fts' },
       map: (e) => ({ ref: refOf('episode', e.id), kind: 'episode', id: e.id, settingKey: e.setting_key, epKind: e.ep_kind, title: e.title, narrative: e.narrative,
         header: e.header, tStart: e.t_start, tEnd: e.t_end, participants: j(e.participants_json, []), emotion: j(e.emotion_json), state: supOf(core, 'episode', e.id) }),
     });
@@ -240,10 +187,9 @@ const VIEWS = {
     if (typeof q.settingKey === 'string') { where.push('t.setting_key = ?'); params.push(q.settingKey); }
     if (Number.isSafeInteger(q.entityId)) { where.push('t.actor_entity_id = ?'); params.push(q.entityId); }
     if (typeof q.kind === 'string') { where.push('t.kind = ?'); params.push(q.kind); }
-    if (Number.isFinite(q.from)) { where.push('t.at >= ?'); params.push(q.from); }
-    if (Number.isFinite(q.to)) { where.push('t.at <= ?'); params.push(q.to); }
-    return paged(core, q, {
-      from: 'percepts t', where, params, order: 't.id DESC',
+    // 按说话的时间排（at, id）：回填的历史消息 id 大、at 早，按 id 排会乱（D159）；搜原文用原话的全文分表
+    return timed(core, q, {
+      from: 'percepts t', where, params, time: 't.at', kind: 'percept', search: { textSql: 't.text', fts: 'percepts' },
       map: (p) => ({ ref: refOf('percept', p.id), id: p.id, settingKey: p.setting_key, perceivedIn: p.perceived_in, at: p.at, kind: p.kind,
         actorEntityId: p.actor_entity_id, self: !!p.actor_self, text: p.media_json ? core.mods.intake.mediaText(core, p.text, p.media_json, { who: '她' }) || null : p.text, textState: p.text_state, attentionClass: p.attention_class, visibleTo: p.visible_to,
         // addressedBy（D158）：'glance' = 结构上是旁听，第一眼按意思判断出是对她说的 / 对大家说的，抬上来的
@@ -255,8 +201,9 @@ const VIEWS = {
     const where = [];
     const params = [];
     if (typeof q.settingKey === 'string') { where.push('t.setting_key = ?'); params.push(q.settingKey); }
-    return paged(core, q, {
-      from: 'raw_windows t', where, params, order: 't.id DESC',
+    // 原文片段没有全文索引：搜索只有子串一档（D159）
+    return timed(core, q, {
+      from: 'raw_windows t', where, params, time: 't.t_end', span: 't.t_start', kind: 'window', search: { textSql: 't.text', fts: null },
       map: (w) => ({ ref: refOf('window', w.id), id: w.id, settingKey: w.setting_key, firstPercept: w.first_percept, lastPercept: w.last_percept,
         tStart: w.t_start, tEnd: w.t_end, text: w.text, state: supOf(core, 'window', w.id) }),
     });
@@ -266,8 +213,8 @@ const VIEWS = {
     const params = [];
     if (typeof q.state === 'string' && !['active', 'hidden', 'forgotten'].includes(q.state)) { where.push('t.state = ?'); params.push(q.state); }
     if (Number.isSafeInteger(q.entityId)) { where.push('t.target_entity_id = ?'); params.push(q.entityId); }
-    return paged(core, q, {
-      from: 'intentions t', where, params, order: 't.formed_at DESC, t.id DESC',
+    return timed(core, q, {
+      from: 'intentions t', where, params, time: 't.formed_at', kind: 'intention',
       map: (t) => ({ ref: refOf('intention', t.id), id: t.id, act: t.act, text: t.text, origin: t.origin, state: t.state, targetEntityId: t.target_entity_id,
         about: t.about_kind ? refOf(t.about_kind, t.about_id) : null, formedAt: t.formed_at, armedAt: t.armed_at, windowStart: t.window_start, windowEnd: t.window_end,
         executions: j(t.executions_json, []), trigger: j(t.trigger_json, {}), suppression: supOf(core, 'intention', t.id) }),
@@ -431,8 +378,8 @@ const VIEWS = {
     const params = [];
     if (q.state === 'hidden' || q.state === 'forgotten') { where.push('t.state = ?'); params.push(q.state); }
     const now = core.now();
-    return paged(core, q, {
-      from: 'suppressions t', where, params, order: 't.at DESC',
+    return timed(core, q, {
+      from: 'suppressions t', where, params, time: 't.at', key: SUP_KEY,
       map: (s) => ({ ref: refOf(s.owner_kind, s.owner_id), state: s.state, by: s.by, reason: s.reason, at: s.at, restoreUntil: s.restore_until,
         restorable: s.state === 'hidden' || s.restore_until == null || now <= s.restore_until }),
     });
@@ -452,8 +399,8 @@ const VIEWS = {
       const a = id == null ? null : fact.get(id);
       return a ? { ref: refOf('assertion', a.id), text: a.text, certainty: a.certainty, confidence: a.confidence, current: a.superseded_by == null } : null;
     };
-    return paged(core, q, {
-      from: 'memory_checks t', where, params, order: 't.at DESC, t.id DESC',
+    return timed(core, q, {
+      from: 'memory_checks t', where, params, time: 't.at',
       map: (c) => ({
         id: c.id, at: c.at, verdict: c.verdict, why: c.why, streak: c.streak, nextAt: c.next_at, beforeConf: c.before_conf, afterConf: c.after_conf,
         // D157：清查收回的（她凭记忆答的话被记成别人的事实）：记成降低把握、把握 0、没有新版本
@@ -493,15 +440,29 @@ const ALIASES = { memories: null, people: 'entities', experiences: 'percepts', f
  * @returns {import('../contract/types.js').Page}
  */
 export function list(core, q) {
-  if (!q || typeof q.view !== 'string') throw bad('admin.list', 'view', `应为 ${[...Object.keys(VIEWS), ...Object.keys(ALIASES)].join(' / ')}`);
-  let view = q.view;
+  if (!q || typeof q.view !== 'string') throw bad('admin.list', 'view', `应为 ${[...Object.keys(VIEWS), ...Object.keys(ALIASES), 'days'].join(' / ')}`);
+  // 【D159】按天计数：{view: 'days', of: <按时间的列表>, month: 'YYYY-MM', tzOffsetMin?, ...和那个列表相同的筛选条件}
+  if (q.view === 'days') {
+    if (typeof q.of !== 'string') throw bad('admin.list', 'of', '应为一个按时间的列表名');
+    const { view, opts } = resolve(q.of, q, 'of');
+    if (!TIMED_VIEWS.has(view)) throw bad('admin.list', 'of', `这个列表不按时间：${q.of}`);
+    const { around, aroundRef, next, prev, ...rest } = opts;
+    return dayCounts(core, rest, VIEWS[view](core, { ...rest, [SPEC_ONLY]: true }));
+  }
+  const { view, opts } = resolve(q.view, q, 'view');
+  return VIEWS[view](core, opts);
+}
+
+/** 列表名（含别名）→ 视图和补上默认值的查询。 */
+function resolve(name, q, path) {
+  let view = name;
   if (view === 'memories') view = q.kind === 'episode' ? 'episodes' : 'assertions';
   else if (Object.hasOwn(ALIASES, view)) view = ALIASES[view];
-  if (!Object.hasOwn(VIEWS, view)) throw bad('admin.list', 'view', `不认识的列表：${q.view}`);
+  if (!Object.hasOwn(VIEWS, view)) throw bad('admin.list', path, `不认识的列表：${name}`);
   const opts = { ...q };
-  if (q.view === 'forgotten' && !opts.state) opts.state = 'forgotten';
-  if (q.view === 'holds' && !opts.holdStatus) opts.holdStatus = 'pending';
-  return VIEWS[view](core, opts);
+  if (name === 'forgotten' && !opts.state) opts.state = 'forgotten';
+  if (name === 'holds' && !opts.holdStatus) opts.holdStatus = 'pending';
+  return { view, opts };
 }
 
 // ── 一条的详情 ────────────────────────────────────────────────────────────

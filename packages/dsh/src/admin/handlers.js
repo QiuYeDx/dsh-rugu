@@ -1,7 +1,7 @@
 // 管理接口的 HTTP 层（§13.1）：四条精确的 Fetch 路由，全部经 ctx.connection.fetch.register 注册——
 // DSH 先过自己的 /api 围栏（Host/Origin、Cookie），再要求 principal.kind === 'owner'，否则 403。
 //   GET  /api/persona-memory/admin          管理页（一个自带样式和脚本的 HTML，CSP 带 nonce）
-//   GET  /api/persona-memory/admin.data     只读视图：?view=overview|needToKnow|review|settings|rules|memories|memory|growth|backups|config|diagnostics
+//   GET  /api/persona-memory/admin.data     只读视图：?view=overview|needToKnow|review|settings|rules|memories|memoryDays|memory|growth|backups|config|diagnostics
 //   POST /api/persona-memory/admin.do       写操作：{action, ...参数, confirm?: {token, typed?}}
 //   GET  /api/persona-memory/admin.export   下载导出的 JSONL：?name=pm-export-….jsonl
 // 在 DSH 的鉴权之外再加两道（纵深防御）：

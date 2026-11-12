@@ -58,6 +58,73 @@ function page(all, q) {
   const offset = typeof q.next === 'string' ? dec(q.next) : 0;
   return { items: all.slice(offset, offset + limit), total: all.length, next: offset + limit < all.length ? enc(offset + limit) : undefined };
 }
+// ── 按时间的列表（D159）：照核心 admin/timeline.js 的契约写的替身（同一套参数和返回形状，算法从简：整个数组排好再切） ──
+/** 各列表的时间字段（span = 有起止时开头那个字段）、aroundRef 的种类前缀。 */
+const TIMED = { assertions: { time: 'recordedAt', kind: 'a' }, episodes: { time: 'tEnd', span: 'tStart', kind: 'e' }, intentions: { time: 'formedAt', kind: 't' },
+  lessons: { time: 'updatedAt', kind: 'a' }, percepts: { time: 'at', kind: 'p' }, windows: { time: 'tEnd', span: 'tStart', kind: 'w' }, checks: { time: 'at', kind: null },
+  suppressed: { time: 'at', kind: null }, forgotten: { time: 'at', kind: null } };
+const kenc = (t, i, d) => Buffer.from(JSON.stringify({ v: 1, t, i, d })).toString('base64url');
+const kdec = (s, d) => { try { const c = JSON.parse(Buffer.from(String(s), 'base64url').toString('utf8')); return c?.v === 1 && c.d === d ? c : null; } catch { return null; } };
+function inRange(all, q, { time, span }) {
+  return all.filter((x) => (!Number.isFinite(q.from) || x[time] >= q.from) && (!Number.isFinite(q.to) || x[span ?? time] <= q.to));
+}
+function timeline(all0, q, spec) {
+  const { time, kind } = spec;
+  const limit = Math.max(1, Math.min(200, Number.isInteger(q.limit) ? q.limit : 50));
+  const ranked = !!q.q && q.order !== 'asc' && q.order !== 'desc';
+  const order = ranked ? 'rank' : q.order === 'asc' ? 'asc' : 'desc';
+  const all = inRange(all0, q, spec);
+  if (ranked) return { ...page(all, q), order };
+  const key = (x, i) => x.id ?? i;
+  const rows = all.map((x, i) => ({ x, t: x[time], k: key(x, i) })).sort((a, b) => (a.t - b.t) || (a.k - b.k));
+  if (order === 'desc') rows.reverse();
+  const after = (r, c) => (order === 'asc' ? (r.t > c.t || (r.t === c.t && r.k > c.i)) : (r.t < c.t || (r.t === c.t && r.k < c.i)));
+  const total = rows.length;
+  const cur = (r) => kenc(r.t, r.k, order);
+  const out = (a, b, extra = {}) => ({ items: rows.slice(a, b).map((r) => r.x), total, ...(b < total ? { next: cur(rows[b - 1]) } : {}), ...(a > 0 ? { prev: cur(rows[a]) } : {}), ...extra, order });
+  if (Number.isFinite(q.around) || q.aroundRef) {
+    let idx = -1; let exact = false; let clamped = null;
+    if (q.aroundRef) {
+      if (!kind || q.aroundRef[0] !== kind) throw err('CONTRACT', 'admin.list 不合契约：aroundRef 应为这个列表那一类的记忆引用');
+      idx = rows.findIndex((r) => r.x.ref === q.aroundRef);
+      exact = idx >= 0;
+    }
+    if (idx < 0) {
+      let T = q.around ?? all0.find((x) => x.ref === q.aroundRef)?.[time];
+      if (T == null) throw err('CONTRACT', 'admin.list 不合契约：aroundRef 没有这条记忆');
+      if (Number.isFinite(q.from) && T < q.from) { T = q.from; clamped = 'from'; } else if (Number.isFinite(q.to) && T > q.to) { T = q.to; clamped = 'to'; }
+      let best = Infinity;
+      const side = q.aroundRef ? null : q.near;
+      const ok = (r) => (side === 'before' ? r.t <= T : side === 'after' ? r.t >= T : true);
+      rows.forEach((r, i) => { const dd = Math.abs(r.t - T); if (ok(r) && dd < best) { best = dd; idx = i; } });
+      if (idx < 0) rows.forEach((r, i) => { const dd = Math.abs(r.t - T); if (dd < best) { best = dd; idx = i; } });
+      if (idx >= 0 && !q.aroundRef) exact = rows[idx].t === T;
+    }
+    if (idx < 0) return { items: [], total, order };
+    const a = Math.max(0, idx - Math.floor(limit / 2));
+    const b = Math.min(total, a + limit);
+    return out(a, b, { anchor: { ref: rows[idx].x.ref ?? null, index: idx - a, exact, ...(clamped ? { clamped } : {}) } });
+  }
+  const pc = q.prev ? kdec(q.prev, order) : null;
+  if (pc) {
+    // 游标那一条（或它后面的第一条）之前的一页
+    const b = rows.findIndex((r) => after(r, pc) || (r.t === pc.t && r.k === pc.i));
+    const end = b < 0 ? total : b;
+    return out(Math.max(0, end - limit), end);
+  }
+  const nc = q.next ? kdec(q.next, order) : null;
+  const a = nc ? rows.findIndex((r) => after(r, nc)) : 0;
+  if (a < 0) return { items: [], total, order };
+  return out(a, Math.min(total, a + limit));
+}
+function dayCounts(all0, q, spec) {
+  const off = (Number.isInteger(q.tzOffsetMin) ? q.tzOffsetMin : 480) * 60_000;
+  const all = inRange(all0, q, spec);
+  const by = new Map();
+  for (const x of all) { const day = new Date(x[spec.time] + off).toISOString().slice(0, 10); if (day.startsWith(q.month)) by.set(day, (by.get(day) ?? 0) + 1); }
+  const ts = all.map((x) => x[spec.time]);
+  return { items: [...by].sort().map(([day, n]) => ({ day, n })), first: ts.length ? Math.min(...ts) : null, last: ts.length ? Math.max(...ts) : null };
+}
 const err = (code, message) => Object.assign(new Error(message ?? code), { code, name: code === 'CONTRACT' ? 'ContractError' : code === 'READ_ONLY' ? 'ReadOnlyError' : 'Error' });
 
 const NAMES = ['阿明', '小刚', '阿杰', '小雨', '老周', '可乐', '阿青', '小鹿', '团子', '大宇', '小北', '阿洛', '星星', '木木', '十一', '小满', '阿远', '豆豆', '七七', '阿哲'];
@@ -136,10 +203,27 @@ export function makeFakePm(o = {}) {
   const intentions = full ? Array.from({ length: 9 }, (_, i) => ({ ref: `t${i + 1}`, id: i + 1, act: 'ask', text: `问问${NAMES[i]}${['周末那场比赛怎么样了', '快递拿到没有', '科目二考过了吗'][i % 3]}`, origin: 'self',
     state: ['formed', 'armed', 'executed', 'lapsed', 'cancelled'][i % 5], targetEntityId: 10 + i, about: null, formedAt: now - i * DAY, armedAt: null, windowStart: now, windowEnd: now + (i + 1) * DAY,
     executions: i % 5 === 2 ? [{ at: now - HOUR }] : [], trigger: {}, suppression: i === 4 ? 'hidden' : null })) : [];
-  const percepts = full ? Array.from({ length: 214 }, (_, i) => ({ ref: `p${i + 1}`, id: i + 1, settingKey: SETTINGS[i % 5].key, perceivedIn: SETTINGS[i % 5].key, at: now - i * 25 * 60_000, kind: i % 9 === 0 ? 'self-utterance' : 'utterance',
-    actorEntityId: i % 9 === 0 ? 1 : 10 + (i % 20), self: i % 9 === 0, text: i % 11 === 3 ? LONG : ['哈哈哈哈', '周五去不去？', '我先下了，明天见', '你还记得我表哥吗', '[图片]', '今天好热'][i % 6],
+  // 原话（D159）：320 条跨九天、五个场合，白天密、夜里（北京时间 1–8 点）没有，往前第 4 天整天没有（看「那天没有」）；
+  // 最后 12 条是回填的历史消息：id 大、at 早（按说话的时间排要排到最后面）
+  const PT = ['哈哈哈哈', '周五去不去？', '我先下了，明天见', '你还记得我表哥吗', '[图片]', '今天好热', '晚上一起打两把？', '那家火锅店排队排了一个小时', '快递到驿站了', '明天降温，记得加衣服'];
+  const pAt = [];
+  {
+    const PR = rng(5);
+    let t = now;
+    const bj = (x) => new Date(x + 8 * HOUR);
+    for (let i = 0; i < 308; i++) {
+      t -= Math.round((8 + PR() * 46) * 60_000);
+      if (bj(t).getUTCHours() < 8 && bj(t).getUTCHours() >= 1) { const d = bj(t); t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 50) - 8 * HOUR; }
+      const dayBack = Math.floor((Date.UTC(bj(now).getUTCFullYear(), bj(now).getUTCMonth(), bj(now).getUTCDate()) - Date.UTC(bj(t).getUTCFullYear(), bj(t).getUTCMonth(), bj(t).getUTCDate())) / DAY);
+      if (dayBack === 4) { const d = bj(t); t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - 8 * HOUR - 70 * 60_000; }
+      pAt.push(t);
+    }
+    for (let k = 0; k < 12; k++) pAt.push(pAt[300] - (k + 1) * 3 * HOUR);
+  }
+  const percepts = full ? pAt.map((at, i) => ({ ref: `p${i + 1}`, id: i + 1, settingKey: SETTINGS[i % 5].key, perceivedIn: SETTINGS[i % 5].key, at, kind: i % 9 === 0 ? 'self-utterance' : 'utterance',
+    actorEntityId: i % 9 === 0 ? 1 : 10 + (i % 20), self: i % 9 === 0, text: i % 11 === 3 ? LONG : PT[i % PT.length],
     textState: i % 40 === 7 ? 'expired' : i % 33 === 4 ? 'retracted' : 'normal', attentionClass: null, visibleTo: i % 15 === 2 ? 'her-only' : 'setting-audience',
-    addressed: ['to-her', 'ambient', 'mentions-her', 'ambient'][i % 4], attention: i % 4 === 1 ? 'peripheral' : 'attended', standing: 'first-hand', episodeId: null, windowId: null, historical: i > 200, normState: 'assessed', state: null })) : [];
+    addressed: ['to-her', 'ambient', 'mentions-her', 'ambient'][i % 4], attention: i % 4 === 1 ? 'peripheral' : 'attended', standing: 'first-hand', episodeId: null, windowId: null, historical: i >= 308, normState: 'assessed', state: null })) : [];
   // 她看过的媒体（D116）：一条还在的、一条原话过了保留期但她看到的留着的
   if (full) {
     percepts[4].text = '［视频，她看到的：一只很小的黑色小狗在车旁晃悠，最后钻到了车底下］';
@@ -218,12 +302,13 @@ export function makeFakePm(o = {}) {
     utterances: () => holds,
     settings: () => settings,
     rules: (q) => rules.filter((r) => !r.revokedAt && (!q.kind || r.kind === q.kind)),
-    assertions: (q) => assertions.filter((a) => (!q.q || a.text.includes(q.q)) && stateOk(a, q.state)),
-    episodes: (q) => episodes.filter((e) => (!q.q || (e.narrative + e.title).includes(q.q)) && stateOk(e, q.state)),
+    assertions: (q) => assertions.filter((a) => (!q.q || a.text.includes(q.q)) && stateOk(a, q.state) && (!q.entityId || a.entities.some((r) => r.entityId === q.entityId))),
+    episodes: (q) => episodes.filter((e) => (!q.q || (e.narrative + e.title).includes(q.q)) && stateOk(e, q.state) && (!q.settingKey || e.settingKey === q.settingKey)
+      && (!q.entityId || e.participants.includes(q.entityId))),
     entities: (q) => entities.filter((e) => (!q.q || String(e.name ?? '').includes(q.q)) && stateOk(e, q.state)),
     intentions: () => intentions,
-    percepts: () => percepts,
-    windows: () => windows,
+    percepts: (q) => percepts.filter((p) => (!q.q || String(p.text ?? '').includes(q.q)) && (!q.settingKey || p.settingKey === q.settingKey) && (!q.entityId || p.actorEntityId === q.entityId)),
+    windows: (q) => windows.filter((w) => (!q.q || String(w.text ?? '').includes(q.q)) && (!q.settingKey || w.settingKey === q.settingKey)),
     suppressed: (q) => suppressions.filter((s) => !q.state || s.state === q.state),
     forgotten: () => suppressions.filter((s) => s.state === 'forgotten'),
     tombstones: () => [],
@@ -288,8 +373,12 @@ export function makeFakePm(o = {}) {
     admin: {
       list(q) {
         rec('admin.list', q);
+        if (q?.view === 'days') {
+          if (!Object.hasOwn(TIMED, q.of)) throw err('CONTRACT', 'admin.list 不合契约：of 这个列表不按时间');
+          return dayCounts(VIEWS[q.of](q), q, TIMED[q.of]);
+        }
         if (!q || typeof q.view !== 'string' || !Object.hasOwn(VIEWS, q.view)) throw err('CONTRACT', `admin.list 不合契约：view 不认识的列表：${q?.view}`);
-        return page(VIEWS[q.view](q), q);
+        return Object.hasOwn(TIMED, q.view) ? timeline(VIEWS[q.view](q), q, TIMED[q.view]) : page(VIEWS[q.view](q), q);
       },
       get(ref) {
         rec('admin.get', ref);

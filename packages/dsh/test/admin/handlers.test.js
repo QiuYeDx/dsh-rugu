@@ -163,3 +163,14 @@ test('日志只记路由、状态码、耗时、操作名和错误类型：没�
   assert.ok(s.logs.every(([, ev]) => ev === 'admin.request'));
   assert.ok(s.logs.some(([, , f]) => f.action === 'memory.purge' && f.status === 428 && f.error === 'CONFIRM_REQUIRED'));
 });
+
+test('按天计数（D159）走同一条只读路由，鉴权照旧：没有令牌、跨站的 403', async () => {
+  const s = setup();
+  const url = `${ORIGIN}${ROUTES.data}?view=memoryDays&list=percepts&month=2026-11&tz=480`;
+  assert.equal((await s.h.data(new Request(url, { headers: { 'sec-fetch-site': 'same-origin' } }))).status, 403);
+  assert.equal((await s.h.data(new Request(url, { headers: { [TOKEN_HEADER]: TOKEN, 'sec-fetch-site': 'cross-site' } }))).status, 403);
+  const ok = await s.h.data(new Request(url, { headers: { [TOKEN_HEADER]: TOKEN, 'sec-fetch-site': 'same-origin' } }));
+  assert.equal(ok.status, 200);
+  assert.ok(Array.isArray((await ok.json()).data.items));
+  assert.ok(s.h.views.names.includes('memoryDays'));
+});

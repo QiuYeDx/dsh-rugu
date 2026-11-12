@@ -2,7 +2,7 @@
 // 主人看得到全部记忆（§9.3.7 第 3 条），所以记忆列表照原样给；宿主的状态、预算、显卡只给数字和短状态（§13.3）。
 // 每个视图各自兜错：某一块出错只让那一块显示「读不出来」，别的照常（总览不能因为备份目录读不了就整页空白）。
 import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride } from 'rugu-core';
-import { InputError, numbersOnly, oneOf, opaque, posInt, text } from './check.js';
+import { InputError, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
 
 const DAY = 86_400_000;
 /** 今天 0 点（北京时间，UTC+8；管理页的「今天」只用来数次数）。 */
@@ -24,6 +24,56 @@ const RULE_KINDS = ['do_not_remember', 'disclosure', 'mode'];
 /** 哪些列表能按场合 / 按人筛（核心 views.js 认的筛选条件）。 */
 const BY_SETTING = new Set(['assertions', 'episodes', 'percepts', 'windows']);
 const BY_ENTITY = new Set(['assertions', 'episodes', 'percepts', 'intentions']);
+/** 哪些列表能搜（D159 起原话、原文片段也能搜）。 */
+const SEARCHABLE = new Set(['assertions', 'episodes', 'entities', 'percepts', 'windows']);
+/** 按时间的列表（D159）：能按时间筛、换顺序、跳到某个时间、往两头翻、按天计数。人与物不按时间。 */
+const TIME_VIEWS = new Set(['assertions', 'episodes', 'intentions', 'lessons', 'percepts', 'windows', 'checks', 'suppressed', 'forgotten']);
+/** 顺序：新的在前 / 旧的在前 / 最相关（只在搜索时有意义）。aroundRef 只查字符集，种类不对的核心会拒（CONTRACT → 400）。 */
+const ORDERS = ['desc', 'asc', 'rank'];
+
+/** 浏览器的时区偏移（分钟，东正）：-840 … 840。 */
+function tzMin(v, path) {
+  const n = typeof v === 'string' && /^-?\d{1,3}$/.test(v) ? Number(v) : v;
+  if (!Number.isSafeInteger(n) || Math.abs(n) > 840) throw new InputError(path, '应为 -840 到 840 之间的整数（分钟）');
+  return n;
+}
+
+/**
+ * 记忆列表的查询（页面传来的都是字符串）→ 核心 admin.list 的查询。memories 和 memoryDays 共用；paging=false 时不收分页和定位。
+ * @param {Record<string, string>} q
+ * @param {{paging: boolean}} o
+ */
+function memoryQuery(q, { paging }) {
+  const view = q.list == null || q.list === '' ? 'assertions' : oneOf(q.list, MEMORY_VIEWS, 'list');
+  const state = q.state == null || q.state === '' ? 'all' : oneOf(q.state, STATES, 'state');
+  const query = { view, ...(paging ? pageOf(q) : {}) };
+  if (q.q != null && q.q !== '' && SEARCHABLE.has(view)) query.q = text(q.q, 'q', { max: 100 });
+  if (state !== 'all' && ['assertions', 'episodes', 'entities'].includes(view)) query.state = state;
+  if (q.settingKey && BY_SETTING.has(view)) query.settingKey = opaque(q.settingKey, 'settingKey');
+  if (q.entityId && BY_ENTITY.has(view)) query.entityId = posInt(q.entityId, 'entityId');
+  // 夜里核对过的（D122）：默认只列改了的，all=1 连没问题的也列
+  if (view === 'checks') query.changed = !(q.all === '1' || q.all === 1 || q.all === true);
+  // 她的经验（D124）：默认只列现在这一版；按验证过没有筛
+  if (view === 'lessons') {
+    if (q.all === '1' || q.all === 1 || q.all === true) query.all = true;
+    if (q.status === 'verified' || q.status === 'unverified') query.status = q.status;
+  }
+  // 【D159】按时间：时间筛选（毫秒，闭区间）、顺序、跳到某个时间 / 某一条、往前翻、时区
+  if (TIME_VIEWS.has(view)) {
+    if (q.from != null && q.from !== '') query.from = timeMs(q.from, 'from');
+    if (q.to != null && q.to !== '') query.to = timeMs(q.to, 'to');
+    if (query.from != null && query.to != null && query.from > query.to) throw new InputError('to', '结束不能早于开始');
+    if (q.order != null && q.order !== '') query.order = oneOf(q.order, ORDERS, 'order');
+    if (q.tz != null && q.tz !== '') query.tzOffsetMin = tzMin(q.tz, 'tz');
+    if (paging) {
+      if (q.around != null && q.around !== '') query.around = timeMs(q.around, 'around');
+      if (q.near != null && q.near !== '') query.near = oneOf(q.near, ['before', 'after'], 'near');
+      if (q.aroundRef != null && q.aroundRef !== '') query.aroundRef = opaque(q.aroundRef, 'aroundRef');
+      if (q.prev) query.prev = text(q.prev, 'prev', { max: 200 });
+    }
+  }
+  return query;
+}
 /** 自检结果缓存多久（宿主的自检会探一次嵌入服务，不在每次打开页面时重跑）。 */
 const SELFCHECK_TTL_MS = 60_000;
 
@@ -373,20 +423,8 @@ export function createViews(deps) {
 
     // ── 记忆浏览 ────────────────────────────────────────────────────────
     memories(q) {
-      const view = q.list == null || q.list === '' ? 'assertions' : oneOf(q.list, MEMORY_VIEWS, 'list');
-      const state = q.state == null || q.state === '' ? 'all' : oneOf(q.state, STATES, 'state');
-      const query = { view, ...pageOf(q) };
-      if (q.q != null && q.q !== '') query.q = text(q.q, 'q', { max: 100 });
-      if (state !== 'all' && ['assertions', 'episodes', 'entities'].includes(view)) query.state = state;
-      if (q.settingKey && BY_SETTING.has(view)) query.settingKey = opaque(q.settingKey, 'settingKey');
-      if (q.entityId && BY_ENTITY.has(view)) query.entityId = posInt(q.entityId, 'entityId');
-      // 夜里核对过的（D122）：默认只列改了的，all=1 连没问题的也列
-      if (view === 'checks') query.changed = !(q.all === '1' || q.all === 1 || q.all === true);
-      // 她的经验（D124）：默认只列现在这一版；按验证过没有筛
-      if (view === 'lessons') {
-        if (q.all === '1' || q.all === 1 || q.all === true) query.all = true;
-        if (q.status === 'verified' || q.status === 'unverified') query.status = q.status;
-      }
+      const query = memoryQuery(q, { paging: true });
+      const view = query.view;
       const p = pm.admin.list(query);
       // 隐藏 / 忘掉的列表只有引用：给每条补上种类和开头一段文字，主人才认得出是哪条
       if (view === 'suppressed' || view === 'forgotten') {
@@ -399,6 +437,18 @@ export function createViews(deps) {
         });
       }
       return { ...p, view, settings: settingLabels(), names: entityNames() };
+    },
+    /**
+     * 【D159】「跳到」的月历：某个月每天有几条（和列表相同的条件：列表种类、场合、人、状态、搜索、时间筛选），
+     * 以及这个条件下最早、最晚一条的时间。month = YYYY-MM，tz = 浏览器的时区偏移（分钟，东正，±840 内）。
+     */
+    memoryDays(q) {
+      const query = memoryQuery(q, { paging: false });
+      if (!TIME_VIEWS.has(query.view)) throw new InputError('list', '这个列表不按时间');
+      if (typeof q.month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(q.month)) throw new InputError('month', '应为 YYYY-MM');
+      const { view, ...rest } = query;
+      const d = pm.admin.list({ ...rest, view: 'days', of: view, month: q.month });
+      return { items: Array.isArray(d?.items) ? d.items.map((x) => ({ day: String(x.day), n: Number(x.n) || 0 })) : [], first: num(d?.first), last: num(d?.last), view };
     },
     memory(q) {
       const ref = opaque(q.ref, 'ref');

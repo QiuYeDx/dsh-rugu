@@ -217,6 +217,52 @@ textarea.pm-input{height:auto;padding:8px 10px;resize:vertical;line-height:1.5}
 .pm-selects{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;min-width:0}
 .pm-selects .pm-select{max-width:none;width:100%}
 @container (min-width:620px){.pm-filters{grid-template-columns:minmax(200px,1fr) auto}.pm-selects{grid-auto-columns:minmax(120px,168px)}}
+/* 【D159】记忆列表的时间条：时间筛选、跳到、顺序、清除标记、这个列表的「时间」指什么；窄了折行 */
+.pm-timewrap{position:relative;min-width:0}
+.pm-timebar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.pm-timebar .pm-select{height:28px;font-size:12.5px;max-width:150px}
+.pm-timebar .pm-btn.sm{height:28px}
+.pm-timebar .pm-seg.sm button{height:24px}
+.pm-thint{color:var(--t3);font-size:12px;margin-left:auto;white-space:nowrap}
+.pm-tchip{display:inline-flex;align-items:stretch;height:28px;border-radius:999px;background:color-mix(in srgb,var(--info) 10%,transparent);color:var(--info);font-size:12.5px;max-width:100%;min-width:0}
+.pm-tchip button{appearance:none;border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0 4px 0 11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;border-radius:999px 0 0 999px}
+.pm-tchip button.x{padding:0 10px 0 5px;font-size:15px;line-height:1;border-radius:0 999px 999px 0;flex:none}
+.pm-tchip button:hover{background:color-mix(in srgb,var(--info) 12%,transparent)}
+.pm-tchip button:focus-visible{outline:2px solid color-mix(in srgb,var(--link) 55%,transparent);outline-offset:-2px}
+.pm-note{font-size:12.5px;line-height:1.55;color:var(--t2);background:var(--b2);border-radius:var(--rs);padding:6px 10px}
+.pm-pop{position:absolute;z-index:8;top:0;left:0;background:var(--b1);color:var(--t1);border:1px solid var(--bd);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.18);padding:12px;display:flex;flex-direction:column;gap:10px;width:min(300px,100%);font-size:13px}
+.pm-pop .pm-input{height:30px}
+.pm-cal-h{display:flex;align-items:center;gap:4px}
+.pm-cal-h b{flex:1 1 0;text-align:center;font-size:13.5px;font-weight:600}
+.pm-cal-nav{appearance:none;border:0;background:none;width:28px;height:28px;border-radius:7px;color:var(--t2);cursor:pointer;font-size:17px;line-height:1}
+.pm-cal-nav:hover:not(:disabled){background:var(--hover);color:var(--t1)}
+.pm-cal-nav:disabled{opacity:.3;cursor:default}
+.pm-cal-nav:focus-visible{outline:2px solid color-mix(in srgb,var(--link) 55%,transparent);outline-offset:0}
+.pm-cal-w,.pm-cal-g{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
+.pm-cal-w span{text-align:center;font-size:11px;color:var(--t3)}
+.pm-cal-d{appearance:none;border:0;background:none;border-radius:8px;height:38px;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--t1);font-size:13px;cursor:pointer;font-variant-numeric:tabular-nums;min-width:0}
+.pm-cal-d small{font-size:10px;line-height:11px;height:11px;color:var(--t2)}
+.pm-cal-d.none{color:var(--t3)}
+.pm-cal-d.l1{background:color-mix(in srgb,var(--info) 8%,transparent)}
+.pm-cal-d.l2{background:color-mix(in srgb,var(--info) 15%,transparent)}
+.pm-cal-d.l3{background:color-mix(in srgb,var(--info) 24%,transparent)}
+.pm-cal-d.l4{background:color-mix(in srgb,var(--info) 34%,transparent)}
+.pm-cal-d:hover{box-shadow:inset 0 0 0 1px var(--bd)}
+.pm-cal-d.today>span{font-weight:700;text-decoration:underline;text-underline-offset:3px}
+.pm-cal-d:focus-visible{outline:2px solid color-mix(in srgb,var(--link) 65%,transparent);outline-offset:0}
+.pm-cal-f{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--t2)}
+.pm-cal-f .pm-input{width:auto}
+/* 按天分组：日期头吸在页签栏下面（底色不透明，滚过去的条目从它下面过） */
+.pm-day{position:sticky;top:var(--nav-h);z-index:3;display:flex;align-items:baseline;gap:8px;padding:5px var(--pad-r,16px) 5px var(--pad-l,16px);background:var(--b1);border-bottom:1px solid var(--bd1);font-size:12.5px;color:var(--t2)}
+.pm-day b{font-weight:600;color:var(--t1)}
+.pm-day span{color:var(--t3);font-size:12px}
+.pm-dgroup{display:flex;flex-direction:column;min-width:0}
+.pm-dgroup>.pm-entry:last-child{border-bottom:1px solid var(--bd1)}
+.pm-dgroup:last-child>.pm-entry:last-child{border-bottom:0}
+.pm-more{display:flex;justify-content:center;align-items:center;min-height:44px;padding:8px 16px;border-bottom:1px solid var(--bd1);font-size:12px;color:var(--t3)}
+/* 跳过去的那一条：强调色淡出一次（不闪） */
+.pm-entry.pm-hl{animation:pm-hl 2.4s ease-out}
+@keyframes pm-hl{from{background:color-mix(in srgb,var(--link) 16%,transparent)}to{background:transparent}}
 .pm-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .pm-field>label,.pm-field>.lbl{font-size:12.5px;color:var(--t2)}
 .pm-field small{color:var(--t3);font-size:12px}
@@ -416,6 +462,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
 @media (prefers-reduced-motion:reduce){
   .pm-spin{animation-duration:2.4s}
   .pm-tab,.pm-seg button,.pm-btn,.pm-switch input,.pm-switch input::after,.pm-fx,.pm-fy,.pm-navbar::after,.pm-nav-arrow,.pm-edge-b,.pm-n,details.pm-more>summary::before{transition:none}
+  /* 减少动态效果：跳过去的那一条不做淡出，只留一会儿浅底（JS 到时拿掉） */
+  .pm-entry.pm-hl{animation:none;background:color-mix(in srgb,var(--link) 12%,transparent)}
 }
 </style>
 </head>
@@ -772,7 +820,8 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     s.addEventListener('change', () => onChange(s.value));
     return s;
   }
-  function entry({ pick, kind, ctx, at, status, title, extra, body, quote, foot, actions, cls = '', clamp }) {
+  /** 一条。clock：只显示时刻（按天分组的列表里，日期在组头上；完整时间照样在 title 里）。 */
+  function entry({ pick, kind, ctx, at, status, title, extra, body, quote, foot, actions, cls = '', clamp, clock = false }) {
     const el = h('div', { class: `pm-entry ${pick ? '' : 'nosel'} ${cls}` });
     if (pick) el.append(h('div', { class: 'pick' }, pick));
     const head = h('div', { class: 'pm-eh' },
@@ -781,7 +830,7 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       extra,
       ctx && h('span', { class: 'ctx', title: ctx }, ctx),
       status && st(status[0], status[1]),
-      at && h('span', { title: fullTime(at) }, when(at)));
+      at && h('span', { title: fullTime(at) }, clock ? `${pad(new Date(at).getHours())}:${pad(new Date(at).getMinutes())}` : when(at)));
     // 没有标题行的条目（只有正文）：正文直接放第一行，和操作并排
     const lead = !head.childNodes.length;
     if (!lead) el.append(head);
@@ -1507,50 +1556,372 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
   const LESSON_ORIGIN = { owner: '你教的', tool: '她试出来的', confirmed: '你确认过', correction: '你纠正过', self: '她自己琢磨的', told: '别人说的', nightly: '夜里回顾时总结的' };
   const LESSON_EV = { tool: '工具结果', nightly: '夜里回顾', self: '她自己记的' };
   const CHECK = { corrected: ['改正了', 'warn'], changed: ['后来变了', 'info'], doubted: ['把握降低了', 'warn'], confirmed: ['核对过，没问题', 'ok'], unclear: ['看不出来', ''] };
-  const SEARCHABLE = new Set(['assertions', 'episodes', 'entities']);
+  const SEARCHABLE = new Set(['assertions', 'episodes', 'entities', 'percepts', 'windows']);
+  /** 能按隐藏状态筛的列表。 */
+  const STATEFUL = new Set(['assertions', 'episodes', 'entities']);
   const BY_SETTING = new Set(['assertions', 'episodes', 'percepts', 'windows']);
   const BY_ENTITY = new Set(['assertions', 'episodes', 'percepts', 'intentions']);
+  /**
+   * 【D159】按时间的列表：排序、分组、跳转用哪个字段，时间条上那句提示（这个列表的「时间」指什么）。人与物不按时间，没有时间条。
+   */
+  const TIMED = {
+    assertions: ['recordedAt', '按记下的时间'], episodes: ['tEnd', '按经历结束的时间'], intentions: ['formedAt', '按想起来的时间'], lessons: ['updatedAt', '按最近改过的时间'],
+    percepts: ['at', '按说话的时间'], windows: ['tEnd', '按片段结束的时间'], checks: ['at', '按核对的时间'], suppressed: ['at', '按隐藏的时间'], forgotten: ['at', '按忘掉的时间'],
+  };
+  /** 能以某一条为锚点重新定位（aroundRef）的列表 → 那一类引用的前缀。 */
+  const REF_PREFIX = { assertions: 'a', lessons: 'a', episodes: 'e', intentions: 't', percepts: 'p', windows: 'w' };
+  const LIST_NAME = Object.fromEntries(LISTS);
+  const RANGES = [['all', '全部时间'], ['today', '今天'], ['yesterday', '昨天'], ['7d', '最近 7 天'], ['30d', '最近 30 天'], ['custom', '自定…']];
+  const SEARCH_HINT = { assertions: '换个说法试试；这里搜的是她记下的事实，原话在「原话」里搜。', episodes: '换个说法试试；这里搜的是经历的标题和叙述，原话在「原话」里搜。',
+    entities: '换个名字试试。', percepts: '换个说法试试；按原话的字面搜。', windows: '换个说法试试；按原文的字面搜（只认整段里连着有这几个字的）。' };
+  const WEEK = '日一二三四五六';
+  // 页面里的时间一律是浏览器本地时间；和服务端交换的一律是毫秒
+  const hm = (at) => { const d = new Date(at); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const md = (at) => { const d = new Date(at); return `${d.getFullYear() === new Date().getFullYear() ? '' : `${d.getFullYear()}/`}${d.getMonth() + 1}/${d.getDate()}`; };
+  const dayStart = (at) => { const d = new Date(at); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const addDays = (at, n) => { const d = new Date(at); d.setDate(d.getDate() + n); return d.getTime(); };
+  const dayEnd = (at) => addDays(dayStart(at), 1) - 1;
+  const msOfDay = (key, hh = 0, mm = 0) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, hh, mm).getTime(); };
+  const monthOf = (at) => dateOf(at).slice(0, 7);
+  /** 'YYYY-MM-DD' → 日期头：今天 / 昨天 / 11月11日 周三（不是今年的带上年份）。 */
+  function dayName(key) {
+    const t = msOfDay(key); const d = new Date(t);
+    const base = `${new Date().getFullYear() === d.getFullYear() ? '' : `${d.getFullYear()}年`}${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
+    if (key === dateOf(Date.now())) return { main: '今天', sub: base };
+    if (key === dateOf(addDays(Date.now(), -1))) return { main: '昨天', sub: base };
+    return { main: base, sub: null };
+  }
+  const dayShort = (key) => { const d = new Date(msOfDay(key)); return `${d.getMonth() + 1}月${d.getDate()}日`; };
+  /** 时间筛选 → [from, to]（毫秒，闭区间；null = 那一头不限）。今天、最近几天每次加载时按现在重算。 */
+  function rangeOf(r) {
+    const now = Date.now(); const t0 = dayStart(now);
+    switch (r.preset) {
+      case 'today': return [t0, dayEnd(now)];
+      case 'yesterday': return [addDays(t0, -1), t0 - 1];
+      case '7d': return [addDays(t0, -6), dayEnd(now)];
+      case '30d': return [addDays(t0, -29), dayEnd(now)];
+      case 'custom': return [r.from ?? null, r.to ?? null];
+      default: return [null, null];
+    }
+  }
+  /** 时间筛选的标记文字：11/11 全天、11/6 – 11/12、11/11 14:00 – 11/11 18:30、11/11 14:00 以后。 */
+  function rangeText(r) {
+    const [a, b] = rangeOf(r);
+    if (a == null && b == null) return null;
+    if (a != null && b != null && a === dayStart(a) && b === dayEnd(b)) return dayStart(a) === dayStart(b) ? `${md(a)} 全天` : `${md(a)} – ${md(b)}`;
+    const f = (x) => `${md(x)} ${hm(x)}`;
+    if (a != null && b != null) return `${f(a)} – ${f(b)}`;
+    return a != null ? `${f(a)} 以后` : `${f(b)} 以前`;
+  }
+  /** 【D159】从别的地方（详情框、别的页签）带着条件打开原话列表：切到「记忆」页签，定位好。 */
+  const showContext = (o) => go('memory', { focus: o });
+
   function Memories(el) {
-    const s = { list: 'assertions', q: '', state: 'all', settingKey: '', entityId: '', all: '', items: [], next: null, total: 0, picked: new Set() };
+    const s = { list: 'assertions', q: '', state: 'all', settingKey: '', entityId: '', all: '', items: [], next: null, prev: null, total: 0, picked: new Set(),
+      // 时间筛选和顺序跟着人走（「我在看哪段时间」），换列表种类不清；rank = 搜索时按最相关（默认），选了按时间就记住
+      range: { preset: 'all', from: null, to: null }, order: 'desc', rank: true, anchored: false, note: null };
+    const timed = () => Object.hasOwn(TIMED, s.list);
+    const searching = () => SEARCHABLE.has(s.list) && !!s.q;
+    const order = () => (searching() && s.rank ? 'rank' : s.order);
+    const grouped = () => timed() && order() !== 'rank';
+    const timeOf = (x) => (x ? x[TIMED[s.list]?.[0]] ?? null : null);
+    const keyOf = (x) => x.ref ?? (x.id != null ? `#${x.id}` : null);
     const tools = h('div', { class: 'pm-tools' });
     // 第二行：搜索框 + 筛选。搜索框只在换列表时重建（输入时不丢焦点），筛选框每次加载完重画。
     // 排法按卡片宽度（CSS 的容器查询）：窄了搜索框一行、下拉框下一行平分
     const searchSlot = h('div', { style: { display: 'contents' } });
     const selectSlot = h('div', { class: 'pm-selects' });
     const filters = h('div', { class: 'pm-filters' }, searchSlot, selectSlot);
+    // 第三行（D159）：时间筛选、跳到、顺序、清除标记；「跳到」和时间下拉框一直是同一个节点（弹层的焦点要回到它）
+    const timeBar = h('div', { class: 'pm-timebar' });
+    const timeWrap = h('div', { class: 'pm-timewrap' }, timeBar);
+    const rangeSel = select(RANGES, 'all', (v) => { if (v === 'custom') openCustom(rangeSel); else setRange({ preset: v }); }, { label: '只看哪段时间' });
+    const jumpBtn = h('button', { type: 'button', class: 'pm-btn sm', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', title: '定位到某一天、某个时刻（前后的照样能接着翻）' }, '跳到…');
+    jumpBtn.addEventListener('click', () => openCal());
+    const noteBox = h('div', { class: 'pm-slot' });
     const listBox = h('div', { class: 'pm-list' });
     const foot = h('div', { class: 'pm-slot' });
     const bulk = h('div', { class: 'pm-bulk', hidden: true });
     let searchTimer = 0;
     let seq = 0;
-    async function load(more = false) {
+
+    function params() {
+      const [from, to] = timed() ? rangeOf(s.range) : [null, null];
+      return { list: s.list, q: SEARCHABLE.has(s.list) ? s.q : '', state: STATEFUL.has(s.list) ? s.state : '',
+        settingKey: BY_SETTING.has(s.list) ? s.settingKey : '', entityId: BY_ENTITY.has(s.list) ? s.entityId : '',
+        ...((s.list === 'checks' || s.list === 'lessons') && s.all ? { all: s.all } : {}), ...(s.list === 'lessons' && s.lstatus ? { status: s.lstatus } : {}),
+        ...(timed() ? { from, to, order: order(), tz: -new Date().getTimezoneOffset() } : {}) };
+    }
+    /**
+     * 加载。mode：fresh（从头）/ anchor（定位到 o.anchor：{ref} 或 {at, near?}，高亮那一条）/ next、prev（往列表后面 / 前面接着翻）/
+     * keep（操作之后原地刷新：以 o.anchor 重新定位，不高亮，把 o.keep 那一条放回原来的屏幕位置）。
+     */
+    async function load(o = {}) {
+      const mode = o.mode ?? (o.anchor ? 'anchor' : 'fresh');
       const my = ++seq;
-      if (!more) { clear(listBox, h('div', { class: 'pm-entry nosel' }, loading())); s.picked.clear(); renderBulk(); }
+      const reset = mode !== 'next' && mode !== 'prev';
+      if (reset && !o.quiet) { clear(listBox, h('div', { class: 'pm-entry nosel' }, loading())); clear(foot); clear(noteBox); }
+      if (reset) { s.picked.clear(); renderBulk(); }
+      const p = params();
+      if (mode === 'next') p.next = s.next;
+      if (mode === 'prev') p.prev = s.prev;
+      if (o.anchor?.ref) p.aroundRef = o.anchor.ref;
+      else if (o.anchor) { p.around = Math.round(o.anchor.at); p.near = o.anchor.near ?? ''; }
+      if (o.limit) p.limit = o.limit;
       try {
-        const d = await api.get('memories', { list: s.list, q: SEARCHABLE.has(s.list) ? s.q : '', state: SEARCHABLE.has(s.list) ? s.state : '',
-          settingKey: BY_SETTING.has(s.list) ? s.settingKey : '', entityId: BY_ENTITY.has(s.list) ? s.entityId : '', ...((s.list === 'checks' || s.list === 'lessons') && s.all ? { all: s.all } : {}), ...(s.list === 'lessons' && s.lstatus ? { status: s.lstatus } : {}),
-          ...(more && s.next ? { next: s.next } : {}) });
+        const d = await api.get('memories', p);
         if (my !== seq) return;   // 筛选又变了，这次的结果作废
         remember(d);
-        s.items = more ? s.items.concat(d.items) : d.items; s.next = d.next ?? null; s.total = d.total ?? s.items.length;
+        const items = d.items ?? [];
+        // 往上接着翻：加载前记下屏幕上第一条的位置，加载后补回去，视口不跳
+        const pivot = mode === 'prev' ? pivotOf() : o.keep ?? null;
+        if (mode === 'next') { s.items = s.items.concat(items); s.next = d.next ?? null; }
+        else if (mode === 'prev') { s.items = items.concat(s.items); s.prev = d.prev ?? null; }
+        else { s.items = items; s.next = d.next ?? null; s.prev = d.prev ?? null; }
+        s.total = d.total ?? s.items.length;
+        if (mode === 'anchor') { s.anchored = true; s.note = noteOf(o.anchor, d); } else if (mode === 'fresh' && !o.keep) { s.anchored = false; s.note = null; }
         render();
         renderFilters();
-      } catch (e) { if (my === seq) clear(listBox, h('div', { class: 'pm-entry nosel' }, errorBox(e, () => load()))); }
+        renderTimeBar();
+        if (pivot) restore(pivot);
+        else if (mode === 'anchor' && d.anchor && items[d.anchor.index]) spotlight(keyOf(items[d.anchor.index]));
+        // 定位以后列表滚走了，时间条下面那句说明看不见：同一句再用提示条说一遍
+        if (mode === 'anchor' && s.note) toast(s.note);
+      } catch (e) {
+        if (my !== seq) return;
+        if (reset) { clear(listBox, h('div', { class: 'pm-entry nosel' }, errorBox(e, () => load()))); clear(foot); } else throw e;
+      }
     }
+    /** 定位之后的那句说明：跳的那天没有、被时间筛选夹住了、那一条不在现在的条件里。 */
+    function noteOf(a, d) {
+      const x = d.items?.[d.anchor?.index ?? -1];
+      if (!x) return null;
+      if (d.anchor.clamped) return `要跳的时间不在现在的时间筛选里，停在了范围的${d.anchor.clamped === 'from' ? '开头' : '结尾'}。`;
+      if (a.ref && !d.anchor.exact) return '那一条不在现在的筛选条件里，停在了离它最近的一条。';
+      const t = timeOf(x);
+      if (a.day && t != null && dateOf(t) !== a.day) return `${dayShort(a.day)}没有${LIST_NAME[s.list] ?? '记忆'}，停在离它最近的${dayShort(dateOf(t))}。`;
+      return null;
+    }
+    const navBottom = () => document.querySelector('.pm-navbar')?.getBoundingClientRect().bottom ?? 0;
+    const entryEl = (k) => [...listBox.querySelectorAll('.pm-entry[data-k]')].find((e) => e.dataset.k === k) ?? null;
+    /** 屏幕上（页签栏下面）看得到的第一条（跳过 skip 里的：被删掉的那条不拿来当参照）。 */
+    function pivotOf(skip = new Set()) {
+      const top = navBottom() + (grouped() ? 30 : 0);
+      for (const e of listBox.querySelectorAll('.pm-entry[data-k]')) {
+        if (skip.has(e.dataset.k)) continue;
+        const r = e.getBoundingClientRect();
+        if (r.bottom > top + 4) return { key: e.dataset.k, top: r.top };
+      }
+      return null;
+    }
+    function restore(p) {
+      const e = entryEl(p.key);
+      if (e) document.scrollingElement.scrollTop += e.getBoundingClientRect().top - p.top;
+    }
+    /** 把锚点那一条放到视口上部（页签栏和日期头下面），用强调色淡出一次。 */
+    function spotlight(k) {
+      const e = entryEl(k);
+      if (!e) return;
+      const bar = document.querySelector('.pm-navbar');
+      const room = (bar?.offsetHeight ?? 40) + (grouped() ? 30 : 0) + 12;
+      document.scrollingElement.scrollTop += e.getBoundingClientRect().top - room;
+      e.classList.remove('pm-hl');
+      void e.offsetWidth;
+      e.classList.add('pm-hl');
+      setTimeout(() => e.classList.remove('pm-hl'), 2600);
+    }
+    /** 操作（隐藏、忘掉、恢复、确认、撤销改正、彻底删除）之后原地刷新：筛选、顺序、位置都不动；gone 是没了的那几条。 */
+    function refresh(gone = new Set()) {
+      const pv = pivotOf(gone);
+      const x = pv ? s.items.find((y) => keyOf(y) === pv.key) : null;
+      if (!timed() || order() === 'rank' || !x) return load({ mode: 'fresh', quiet: true, keep: pv, limit: Math.min(200, Math.max(50, s.items.length)) });
+      const pre = REF_PREFIX[s.list];
+      return load({ mode: 'keep', quiet: true, keep: pv, anchor: x.ref && pre && x.ref[0] === pre ? { ref: x.ref } : { at: timeOf(x) } });
+    }
+    function setRange(r) {
+      s.range = r;
+      rangeSel.value = r.preset;
+      closePop(false);
+      return load();
+    }
+    /** 从「前后」「这段时间的原话」带着条件过来：场合换成那一条的、人和搜索清掉，按时间顺序。 */
+    function focus(o) {
+      closePop(false);
+      s.list = o.list; s.q = ''; s.state = 'all'; s.entityId = ''; s.settingKey = o.settingKey ?? ''; s.rank = true;
+      if (o.order) s.order = o.order;
+      if (o.range) s.range = o.range;
+      else if (o.at != null) { const [a, b] = rangeOf(s.range); if ((a != null && o.at < a) || (b != null && o.at > b)) s.range = { preset: 'all', from: null, to: null }; }
+      rangeSel.value = s.range.preset;
+      renderTools(); renderFilters(); renderTimeBar();
+      return load(o.ref ? { anchor: { ref: o.ref } } : {});
+    }
+
+    // ── 弹层（月历、自定时间）：页面内的、非模态；Esc 关，焦点回到触发它的控件，点外面关 ──
+    let pop = null;
+    function closePop(back = true) {
+      if (!pop) return;
+      const { box, trigger, onClose } = pop;
+      pop = null;
+      box.remove();
+      document.removeEventListener('pointerdown', outside, true);
+      trigger.setAttribute('aria-expanded', 'false');
+      onClose?.();
+      if (back && trigger.isConnected) trigger.focus({ preventScroll: true });
+    }
+    function outside(e) { if (pop && !pop.box.contains(e.target) && !pop.trigger.contains(e.target)) closePop(false); }
+    function openPop(trigger, box, onClose) {
+      closePop(false);
+      pop = { box, trigger, onClose };
+      box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePop(); } });
+      timeWrap.append(box);
+      // 放在触发它的控件下面；横向不出卡片
+      const wr = timeWrap.getBoundingClientRect(); const tr = trigger.getBoundingClientRect();
+      box.style.top = `${Math.round(tr.bottom - wr.top + 6)}px`;
+      box.style.left = `${Math.round(Math.max(0, Math.min(tr.left - wr.left, wr.width - box.offsetWidth)))}px`;
+      trigger.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', outside, true);
+      fitPop();
+    }
+    /** 弹层下面被视口截掉了就把整页往上滚一点（不滚到页签栏下面去）；内容变高（月历数完了）以后再调一次。 */
+    function fitPop() {
+      if (!pop) return;
+      const r = pop.box.getBoundingClientRect();
+      const over = Math.min(r.bottom - innerHeight + 12, r.top - (document.querySelector('.pm-navbar')?.offsetHeight ?? 40) - 8);
+      if (over > 0) document.scrollingElement.scrollTop += over;
+    }
+    /** 自定时间范围：起止精确到分钟，可以只填一头。 */
+    function openCustom(trigger) {
+      if (pop?.trigger === trigger) { closePop(); return; }
+      const [a, b] = rangeOf(s.range);
+      const v = (t) => (t == null ? '' : `${dateOf(t)}T${hm(t)}`);
+      const fi = h('input', { type: 'datetime-local', class: 'pm-input', value: v(a) });
+      const ti = h('input', { type: 'datetime-local', class: 'pm-input', value: v(b) });
+      const err = h('div', { class: 'pm-faint', role: 'alert' });
+      const apply = () => {
+        const f = fi.value ? new Date(fi.value).getTime() : null;
+        const t = ti.value ? new Date(ti.value).getTime() + 59_999 : null;   // 到那一分钟的最后
+        if (f == null && t == null) { err.textContent = '至少填一头；要看全部时间就选「全部时间」。'; return; }
+        if (f != null && t != null && f > t) { err.textContent = '结束不能早于开始。'; return; }
+        setRange({ preset: 'custom', from: f, to: t });
+      };
+      for (const i of [fi, ti]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+      const box = h('div', { class: 'pm-pop', role: 'dialog', 'aria-label': '自定时间范围' },
+        h('label', { class: 'pm-field' }, h('span', { class: 'lbl' }, '从'), fi),
+        h('label', { class: 'pm-field' }, h('span', { class: 'lbl' }, '到'), ti),
+        h('span', { class: 'pm-faint' }, '精确到分钟，可以只填一头。'), err,
+        h('div', { class: 'pm-row end' }, btn('取消', () => closePop(), { kind: 'sm' }), btn('看这段时间', apply, { kind: 'sm primary' })));
+      openPop(trigger, box, () => { rangeSel.value = s.range.preset; });
+      fi.focus();
+    }
+    /**
+     * 「跳到」：小月历 + 可选的时刻。每天标出这一天在当前列表、当前其他筛选条件下有几条（深浅也跟着），没有的那天置灰但能点；
+     * 「最新」「最早」两个快捷项。方向键移动、PageUp / PageDown 换月、Enter 选、Esc 关。
+     */
+    function openCal() {
+      if (pop?.trigger === jumpBtn) { closePop(); return; }
+      // 按相关排时点「跳到」：先切到按时间（跳转只在按时间排时有意义）
+      if (order() === 'rank') { s.rank = false; renderTimeBar(); load(); }
+      const start = timeOf(s.items[0]) ?? Date.now();
+      const c = { month: monthOf(start), focus: dateOf(start), days: new Map(), first: null, last: null, loaded: false, err: null, seq: 0 };
+      const timeIn = h('input', { type: 'time', class: 'pm-input', 'aria-label': '时刻（可以不填）' });
+      const box = h('div', { class: 'pm-pop pm-cal', role: 'dialog', 'aria-label': '跳到某一天' });
+      const pick = (key) => {
+        const [hh, mm] = timeIn.value ? timeIn.value.split(':').map(Number) : [null, null];
+        const n = c.days.get(key) ?? 0;
+        closePop();
+        // 不填时刻：落在那一天里——新的在前从那天最后一条开始、旧的在前从第一条开始；那天没有就找离那天中午最近的
+        const anchor = hh != null ? { at: msOfDay(key, hh, mm) } : !n && c.loaded ? { at: msOfDay(key, 12) }
+          : s.order === 'asc' ? { at: msOfDay(key), near: 'after' } : { at: dayEnd(msOfDay(key)), near: 'before' };
+        load({ anchor: { ...anchor, day: key } });
+      };
+      const edge = (which) => {
+        closePop();
+        if (which === 'last') load({ anchor: { at: c.last ?? Date.now(), near: 'before' } });
+        else load({ anchor: { at: c.first ?? 0, near: 'after' } });
+      };
+      async function fetchMonth() {
+        const my = ++c.seq;
+        c.loaded = false;
+        try {
+          const d = await api.get('memoryDays', { ...params(), month: c.month });
+          if (my !== c.seq) return;
+          c.days = new Map((d.items ?? []).map((x) => [x.day, x.n])); c.first = d.first ?? null; c.last = d.last ?? null; c.err = null; c.loaded = true;
+        } catch (e) { if (my !== c.seq) return; c.err = e?.message ?? String(e); }
+        if (pop?.box === box) draw();
+      }
+      const shift = (key, months) => { const [y, m, d] = key.split('-').map(Number); const last = new Date(y, m - 1 + months + 1, 0).getDate(); return dateOf(new Date(y, m - 1 + months, Math.min(d, last)).getTime()); };
+      function moveTo(key) {
+        c.focus = key;
+        if (key.slice(0, 7) !== c.month) { c.month = key.slice(0, 7); c.days = new Map(); draw(); fetchMonth(); } else draw();
+      }
+      function draw() {
+        const hadFocus = box.contains(document.activeElement) && document.activeElement?.classList.contains('pm-cal-d');
+        const [y, m] = c.month.split('-').map(Number);
+        const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;   // 周一在前
+        const n = new Date(y, m, 0).getDate();
+        if (c.focus.slice(0, 7) !== c.month) c.focus = `${c.month}-01`;
+        const max = Math.max(1, ...c.days.values());
+        const today = dateOf(Date.now());
+        const cells = [];
+        for (let i = 0; i < lead; i++) cells.push(h('span', { 'aria-hidden': 'true' }));
+        for (let d = 1; d <= n; d++) {
+          const key = `${c.month}-${pad(d)}`;
+          const k = c.days.get(key) ?? 0;
+          const lv = !k ? 0 : k >= max * 0.66 ? 4 : k >= max * 0.33 ? 3 : k >= max * 0.1 ? 2 : 1;
+          cells.push(h('button', { type: 'button', class: `pm-cal-d l${lv}${k || !c.loaded ? '' : ' none'}${key === today ? ' today' : ''}`, tabindex: key === c.focus ? '0' : '-1',
+            'data-day': key, 'aria-label': `${m}月${d}日${key === today ? '（今天）' : ''}：${c.loaded ? (k ? `${k} 条` : '没有') : '还在数'}`, onclick: () => pick(key) },
+          h('span', null, String(d)), h('small', null, k ? (k > 999 ? '999+' : String(k)) : '')));
+        }
+        const grid = h('div', { class: 'pm-cal-g', role: 'group', 'aria-label': `${y}年${m}月` }, cells);
+        grid.addEventListener('keydown', (e) => {
+          const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+          const ms = e.key === 'PageUp' ? -1 : e.key === 'PageDown' ? 1 : 0;
+          if (!step && !ms) return;
+          e.preventDefault();
+          moveTo(step ? dateOf(addDays(msOfDay(c.focus), step)) : shift(c.focus, ms));
+        });
+        const lastMonth = monthOf(Math.max(c.last ?? 0, Date.now()));
+        const prevM = h('button', { type: 'button', class: 'pm-cal-nav', 'aria-label': '上个月', disabled: c.first != null && c.month <= monthOf(c.first), onclick: () => moveTo(shift(c.focus, -1)) }, '‹');
+        const nextM = h('button', { type: 'button', class: 'pm-cal-nav', 'aria-label': '下个月', disabled: c.month >= lastMonth, onclick: () => moveTo(shift(c.focus, 1)) }, '›');
+        clear(box,
+          h('div', { class: 'pm-cal-h' }, prevM, h('b', { 'aria-live': 'polite' }, `${y}年${m}月`), nextM),
+          h('div', { class: 'pm-cal-w', 'aria-hidden': 'true' }, [...'一二三四五六日'].map((w) => h('span', null, w))),
+          grid,
+          h('div', { class: 'pm-cal-f' }, h('label', { class: 'pm-row' }, h('span', null, '时刻'), timeIn), h('span', { class: 'pm-faint' }, '不填就从那一天开始看')),
+          h('div', { class: 'pm-cal-f' },
+            btn('最新', () => edge('last'), { kind: 'sm', disabled: c.loaded && c.last == null }), btn('最早', () => edge('first'), { kind: 'sm', disabled: c.loaded && c.first == null }),
+            h('span', { class: 'pm-faint', style: { marginLeft: 'auto' } }, c.err ? `数不出来：${c.err}` : c.loaded ? `数字是那天有几条（${TIMED[s.list][1]}，按现在的筛选）` : '正在数每天有几条…')));
+        if (hadFocus || !box.dataset.shown) { box.dataset.shown = '1'; box.querySelector(`.pm-cal-d[data-day="${c.focus}"]`)?.focus({ preventScroll: true }); }
+        if (pop?.box === box) fitPop();
+      }
+      draw();
+      openPop(jumpBtn, box);
+      box.querySelector(`.pm-cal-d[data-day="${c.focus}"]`)?.focus({ preventScroll: true });
+      fetchMonth();
+    }
+
     function renderTools() {
-      const search = h('input', { class: 'pm-input', type: 'search', placeholder: s.list === 'entities' ? '搜名字' : '搜内容', value: s.q, 'aria-label': '搜索' });
-      search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { s.q = search.value.trim(); load(); }, 350); });
+      const ph = { entities: '搜名字', percepts: '搜原话', windows: '搜原文' }[s.list] ?? '搜内容';
+      const search = h('input', { class: 'pm-input', type: 'search', placeholder: ph, value: s.q, 'aria-label': '搜索' });
+      search.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { s.q = search.value.trim(); if (!s.q) s.rank = true; load(); }, 350);
+      });
       clear(searchSlot, SEARCHABLE.has(s.list) ? h('div', { class: 'pm-search' }, search) : null);
-      clear(tools, seg(LISTS, s.list, (v) => { s.list = v; s.q = ''; s.state = 'all'; renderTools(); renderFilters(); return load(); }, { small: true, label: '看哪一类', splitBefore: 'suppressed' }));
+      // 换列表种类：搜索词和状态清掉；时间筛选和顺序保留（它们是「我在看哪段时间」）
+      clear(tools, seg(LISTS, s.list, (v) => { s.list = v; s.q = ''; s.state = 'all'; s.rank = true; closePop(false); renderTools(); renderFilters(); renderTimeBar(); return load(); },
+        { small: true, label: '看哪一类', splitBefore: 'suppressed' }));
     }
     /** 第二行：按场合、按人、按状态筛（名字表跟着列表一起来，第一次加载完才有）。 */
     function renderFilters() {
       const settingOpts = Object.entries(names.settings);
       const people = Object.entries(names.entities).filter(([, n]) => n);
+      // 「前后」带过来的场合可能不在名字表里（名字表只列有名字的）：补一项，下拉框不至于显示成「全部场合」
+      if (s.settingKey && !settingOpts.some(([k]) => k === s.settingKey)) settingOpts.push([s.settingKey, settingName(s.settingKey)]);
       const parts = [
         BY_SETTING.has(s.list) && settingOpts.length ? select([['', '全部场合'], ...settingOpts], s.settingKey, (v) => { s.settingKey = v; load(); }, { label: '场合' }) : null,
         BY_ENTITY.has(s.list) && people.length ? select([['', '全部的人'], ...people], String(s.entityId), (v) => { s.entityId = v; load(); }, { label: '人' }) : null,
-        SEARCHABLE.has(s.list) ? select([['all', '全部状态'], ['active', '正常'], ['hidden', '已隐藏'], ['forgotten', '已忘掉']], s.state, (v) => { s.state = v; load(); }, { label: '状态' }) : null,
+        STATEFUL.has(s.list) ? select([['all', '全部状态'], ['active', '正常'], ['hidden', '已隐藏'], ['forgotten', '已忘掉']], s.state, (v) => { s.state = v; load(); }, { label: '状态' }) : null,
         s.list === 'checks' ? select([['', '只看改过的'], ['1', '全部核对过的']], s.all, (v) => { s.all = v; load(); }, { label: '看哪些' }) : null,
         s.list === 'lessons' ? select([['', '验证过和没验证的'], ['verified', '只看验证过的'], ['unverified', '只看还没验证的']], s.lstatus ?? '', (v) => { s.lstatus = v; load(); }, { label: '状态' }) : null,
         s.list === 'lessons' ? select([['', '现在的'], ['1', '连旧版本']], s.all, (v) => { s.all = v; load(); }, { label: '版本' }) : null,
@@ -1558,6 +1929,23 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       filters.hidden = !parts.length && !SEARCHABLE.has(s.list);
       selectSlot.hidden = !parts.length;
       clear(selectSlot, parts);
+    }
+    /** 第三行（D159）：时间筛选、跳到、顺序、（有筛选时）一键清掉的标记、这个列表的「时间」指什么。人与物没有。 */
+    function renderTimeBar() {
+      timeWrap.hidden = !timed();
+      if (!timed()) { closePop(false); return; }
+      rangeSel.value = s.range.preset;
+      const ords = [...(searching() ? [['rank', '最相关']] : []), ['desc', '新的在前'], ['asc', '旧的在前']];
+      const oseg = seg(ords, order(), (v) => { if (v === 'rank') s.rank = true; else { s.rank = false; s.order = v; } return load(); }, { small: true, label: '顺序' });
+      const rt = rangeText(s.range);
+      let chip = null;
+      if (rt) {
+        const edit = h('button', { type: 'button', class: 'txt', title: '改时间范围', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, rt);
+        edit.addEventListener('click', () => openCustom(edit));
+        chip = h('span', { class: 'pm-tchip' }, edit, h('button', { type: 'button', class: 'x', 'aria-label': `清掉时间筛选（${rt}）`, title: '清掉时间筛选', onclick: () => setRange({ preset: 'all', from: null, to: null }) }, '×'));
+      }
+      clear(timeBar, rangeSel, jumpBtn, oseg, chip, h('span', { class: 'pm-thint' }, TIMED[s.list][1]));
+      clear(noteBox, s.note ? h('div', { class: 'pm-note', role: 'status' }, s.note) : null);
     }
     function pick(x) {
       if (!x.ref) return null;
@@ -1568,47 +1956,55 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
     function supActions(x, state) {
       const ref = x.ref;
       if (!ref) return [];
-      const after = async (verb, fn) => { await fn(); toast(verb); load(); };
+      const after = async (verb, fn) => { await fn(); toast(verb); refresh(); };
       return [
-        act('详情', () => openMemory(ref, { onChange: () => load() })),
+        act('详情', () => openMemory(ref, { onChange: () => refresh() })),
         state ? act('恢复', () => after('已恢复', () => api.act('memory.restore', { ref }))) : act('隐藏', () => after('已对别人隐藏（你仍然看得到）', () => api.act('memory.hide', { ref })), { title: '对别人隐藏；你和审核视图仍然看得到' }),
         !state && act('忘掉', () => after('已忘掉（30 天内可恢复）', () => api.act('memory.forget', { ref })), { kind: 'danger', title: '隐藏，并且以后别再记同样的内容；30 天内可以恢复' }),
         act('彻底删除', () => purge([ref]), { kind: 'danger', arm: false }),
       ];
     }
+    /** 「这段时间的原话」：原话列表，场合 = 这一条的场合，时间筛选 = 它的起止，旧的在前。 */
+    const spanAct = (x) => (x.settingKey && x.tStart != null && x.tEnd != null
+      ? act('这段时间的原话', () => focus({ list: 'percepts', settingKey: x.settingKey, range: { preset: 'custom', from: x.tStart, to: x.tEnd }, order: 'asc' }), { title: '看这段时间里这个场合的原话（按时间顺序）' }) : null);
     function row(x) {
       const state = x.state ?? x.suppression ?? null;
       const supBadge = state ? badge(label(SUP, state), tone(SUP, state)) : null;
+      // 按天分组时每条只显示时刻（完整时间在 title 里）
+      const clock = grouped();
+      const E = (o) => entry({ ...o, clock });
       switch (s.list) {
         case 'assertions': {
           const about = (x.entities ?? []).filter((r) => r.role === 'subject').slice(0, 3).map((r) => entityName(r.entityId)).join('、');
-          return entry({
+          return E({
             pick: pick(x), kind: [label(CERT, x.certainty), x.certainty === 'hearsay' || x.certainty === 'inferred' ? 'warn' : ''], title: about ? `关于 ${about}` : null,
             extra: supBadge, at: x.recordedAt, body: x.text ?? '（没有文字）',
             foot: meta(x.confidence != null ? `把握 ${pct(x.confidence)}` : null, x.planStatus ? `计划：${label(PLAN, x.planStatus)}` : null,
               x.supersededBy ? '已有更新的版本' : null, x.expiredAt ? '已失效' : null, x.pinned ? '钉住' : null, x.needsReview ? '待复核' : null),
             actions: supActions(x, state) });
         }
-        case 'episodes': return entry({
+        case 'episodes': return E({
           pick: pick(x), kind: [label(EP_KIND, x.epKind), ''], title: x.title, ctx: x.settingKey ? settingName(x.settingKey) : null, at: x.tEnd,
           body: x.narrative ?? '', clamp: true, extra: supBadge, foot: meta((x.participants ?? []).slice(0, 5).map(entityName).join('、') || null, x.tStart ? `${when(x.tStart)} – ${when(x.tEnd)}` : null),
-          actions: supActions(x, state) });
-        case 'entities': return entry({
+          actions: [spanAct(x), ...supActions(x, state)] });
+        case 'entities': return E({
           pick: pick(x), kind: [label(ENT_KIND, x.kind), ''], title: x.name || '（还不知道名字）',
           status: x.authority && x.authority !== 'none' ? [label(AUTH, x.authority), 'info'] : null,
           extra: supBadge, foot: meta(label(ENT_STATUS, x.status), x.isSelf ? '她自己' : null, x.closeness != null ? `亲密度 ${fmtNum(x.closeness)}` : null,
             x.mentionDays != null ? `被提到 ${x.mentionDays} 天` : null, x.lastMentionAt ? `上次 ${when(x.lastMentionAt)}` : null),
           actions: supActions(x, state) });
-        case 'intentions': return entry({
-          pick: pick(x), kind: [label(INT_STATE, x.state), x.state === 'armed' ? 'info' : ''], body: x.text ?? x.act ?? '',
+        case 'intentions': return E({
+          pick: pick(x), kind: [label(INT_STATE, x.state), x.state === 'armed' ? 'info' : ''], body: x.text ?? x.act ?? '', at: x.formedAt,
           extra: x.suppression ? badge(label(SUP, x.suppression), tone(SUP, x.suppression)) : null, foot: meta(x.targetEntityId ? `对 ${entityName(x.targetEntityId)}` : null,
             x.windowEnd ? `到 ${when(x.windowEnd)}` : null, `想起于 ${when(x.formedAt)}`, x.executions?.length ? `做过 ${x.executions.length} 次` : null),
           actions: supActions(x, x.suppression) });
-        case 'percepts': return entry({
+        case 'percepts': return E({
           pick: pick(x), kind: [x.self ? '她' : (entityName(x.actorEntityId) ?? '有人'), x.self ? 'info' : ''], ctx: settingName(x.settingKey), at: x.at,
           body: x.textState === 'expired' ? (x.text ? h('span', null, h('span', { class: 'pm-faint' }, '（原话已过保留期）'), ' ', x.text) : h('span', { class: 'pm-faint' }, '（原话已过保留期）')) : (x.text ?? ''), clamp: true,
           extra: supBadge, foot: meta(x.addressedBy === 'glance' ? `${label(ADDR, x.addressed)}（按意思判断）` : label(ADDR, x.addressed), label(ATTN, x.attention), x.visibleTo === 'her-only' ? '只有她看到' : null, x.textState === 'edited' ? '编辑过' : x.textState === 'retracted' ? '撤回了' : null, x.historical ? '回填' : null),
-          actions: supActions(x, state) });
+          // 「前后」：同一个场合、按时间顺序，以这一句为锚点（搜到一句话以后看它的上下文）
+          actions: [x.settingKey && act('前后', () => focus({ list: 'percepts', settingKey: x.settingKey, ref: x.ref, order: 'asc', at: x.at }), { title: '看这句话前后的原话（同一个场合，按时间顺序）' }),
+            ...supActions(x, state)].filter(Boolean) });
         case 'lessons': {
           // 她的经验（D124）：规则、要避开的坑、怎么知道的、证据；你可以确认（算验证过）、忘掉、彻底删除
           const lines = [h('div', null, x.text ?? '')];
@@ -1618,13 +2014,13 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
               ? `${e.self ? '她' : (entityName(e.actorEntityId) ?? '有人')}${e.settingKey ? `（在「${settingName(e.settingKey)}」，${when(e.at)}）` : ''}：${e.text ?? '（原话已过保留期）'}`
               : `${LESSON_EV[e.kind] ?? '依据'}（${when(e.at)}）${e.text ? `：${e.text}` : ''}`));
           }
-          return entry({
+          return E({
             pick: pick(x), kind: [x.status === 'verified' ? '验证过' : '还没验证', x.status === 'verified' ? 'ok' : 'warn'],
             title: x.tool ? `用 ${x.tool} 时` : null, ctx: x.settingKey ? `只在「${settingName(x.settingKey)}」` : null, at: x.updatedAt,
             body: h('div', { class: 'pm-tight', style: { paddingLeft: '0' } }, lines), extra: supBadge,
             foot: meta(LESSON_ORIGIN[x.origin] ?? x.how ?? null, (x.about ?? []).length ? `关于 ${x.about.map(entityName).join('、')}` : null,
               x.usedDays ? `最近 30 天有 ${x.usedDays} 天想起过` : '最近 30 天没想起过', x.promoted ? '常驻在她心里' : null, x.tainted ? '记下时读过来路不明的东西' : null, x.supersededBy ? '已有更新的版本' : null),
-            actions: [x.confirmable && !state && act('确认', async () => { await api.act('lesson.confirm', { id: x.id }); toast('已确认，这条算验证过'); load(); }, { title: '你确认这条经验是对的：算验证过' }),
+            actions: [x.confirmable && !state && act('确认', async () => { await api.act('lesson.confirm', { id: x.id }); toast('已确认，这条算验证过'); refresh(); }, { title: '你确认这条经验是对的：算验证过' }),
               ...supActions(x, state)].filter(Boolean) });
         }
         case 'checks': {
@@ -1640,34 +2036,71 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
           if (x.why) lines.push(h('div', null, h('span', { class: 'pm-faint' }, '为什么：'), x.why));
           if (x.reverted) lines.push(h('div', { class: 'pm-faint' }, `你在 ${when(x.reverted.at)} 撤销了这次改正：原来那条按「确认过」恢复，夜里不会再改它。`));
           for (const e of x.evidence ?? []) lines.push(h('div', { class: 'pm-q pm-clamp' }, `${e.self ? '她' : (entityName(e.actorEntityId) ?? '有人')}${e.settingKey ? `（在「${settingName(e.settingKey)}」，${when(e.at)}）` : ''}：${e.text ?? '（原话已过保留期）'}`));
-          return entry({
+          return E({
             kind: [vName, vTone], at: x.at, body: h('div', { class: 'pm-tight', style: { paddingLeft: '0' } }, lines), extra: x.reverted ? badge('已撤销', 'info') : null,
             foot: meta(x.verdict === 'confirmed' ? `连续确认 ${x.streak} 次` : null, x.nextAt ? `约 ${dateOf(x.nextAt)} 再核对` : null),
-            actions: [x.before && act(x.after ? '看原来那条' : '详情', () => openMemory(x.before.ref, { onChange: () => load() })), x.after && act('看新的', () => openMemory(x.after.ref, { onChange: () => load() })),
-              x.reverted?.restored && act('看恢复的', () => openMemory(x.reverted.restored.ref, { onChange: () => load() })),
+            actions: [x.before && act(x.after ? '看原来那条' : '详情', () => openMemory(x.before.ref, { onChange: () => refresh() })), x.after && act('看新的', () => openMemory(x.after.ref, { onChange: () => refresh() })),
+              x.reverted?.restored && act('看恢复的', () => openMemory(x.reverted.restored.ref, { onChange: () => refresh() })),
               x.revertable && act('撤销这次改正', () => revertCheck(x), { title: '原来那条按「确认过」恢复，夜里不会再改它' })] });
         }
-        case 'windows': return entry({
+        case 'windows': return E({
           pick: pick(x), kind: ['原文片段', ''], ctx: settingName(x.settingKey), at: x.tEnd, body: x.text ?? h('span', { class: 'pm-faint' }, '（已过保留期）'), clamp: true,
-          extra: supBadge, foot: meta(x.tStart ? `${when(x.tStart)} – ${when(x.tEnd)}` : null), actions: supActions(x, state) });
-        default: return entry({
+          extra: supBadge, foot: meta(x.tStart ? `${when(x.tStart)} – ${when(x.tEnd)}` : null), actions: [spanAct(x), ...supActions(x, state)] });
+        default: return E({
           pick: pick(x), kind: [label(SUP, x.state), tone(SUP, x.state)], title: KIND_NAME[x.kind] ?? '一条记忆', at: x.at,
           body: x.preview ?? h('span', { class: 'pm-faint' }, '（没有文字）'), clamp: true,
           foot: meta(x.by === 'owner' ? '你操作的' : x.by ? `由 ${x.by}` : null, x.reason && /^cascade:/.test(x.reason) ? '跟着别的一起隐藏的' : x.reason && /^purged:/.test(x.reason) ? '还复述着被删掉的内容' : null,
             x.restoreUntil ? (x.restorable ? `${daysLeft(x.restoreUntil)} 天内可恢复` : '已过恢复期') : null),
-          actions: [act('详情', () => openMemory(x.ref, { onChange: () => load() })), x.restorable !== false && act('恢复', async () => { await api.act('memory.restore', { ref: x.ref }); toast('已恢复'); load(); }), act('彻底删除', () => purge([x.ref]), { kind: 'danger', arm: false })] });
+          actions: [act('详情', () => openMemory(x.ref, { onChange: () => refresh() })), x.restorable !== false && act('恢复', async () => { await api.act('memory.restore', { ref: x.ref }); toast('已恢复'); refresh(); }),
+            act('彻底删除', () => purge([x.ref]), { kind: 'danger', arm: false })] });
       }
     }
-    function render() {
-      if (!s.items.length) {
-        clear(listBox, h('div', { class: 'pm-entry nosel' }, s.q ? empty(`没有搜到「${s.q}」`, '换个说法试试；搜的是她记下的文字，不是原话。') : empty('这里还是空的', s.list === 'forgotten' ? '忘掉的记忆 30 天内可以在这里恢复。' : s.list === 'suppressed' ? '隐藏的记忆对别人不提，你仍然看得到。'
+    /** 没有结果的几种：搜不到、这段时间里没有、本来就是空的。 */
+    function emptyRow() {
+      const rt = timed() ? rangeText(s.range) : null;
+      let node;
+      if (searching()) node = empty(`没有搜到「${s.q}」`, `${SEARCH_HINT[s.list] ?? ''}${rt ? `现在只在 ${rt} 里搜，可以清掉时间筛选再试。` : ''}`);
+      else if (rt) {
+        node = h('div', { class: 'pm-empty' }, h('b', null, `${rt} 没有${LIST_NAME[s.list] ?? '记忆'}`), h('span', null, '换个时间范围，或者清掉时间筛选。'),
+          btn('清掉时间筛选', () => setRange({ preset: 'all', from: null, to: null }), { kind: 'sm' }));
+      } else {
+        node = empty('这里还是空的', s.list === 'forgotten' ? '忘掉的记忆 30 天内可以在这里恢复。' : s.list === 'suppressed' ? '隐藏的记忆对别人不提，你仍然看得到。'
           : s.list === 'lessons' ? '她做事学到的经验会列在这里：规则、要避开的坑、怎么知道的。你教她的、她试出来的算验证过；她自己琢磨的、别人说的、夜里总结的先标还没验证，你可以确认。'
-          : s.list === 'checks' ? '每天夜里整理时，她会挑几条最可能记错、或最常想起的事实，回到原话核对；改了什么、为什么，会列在这里。你做过的（钉住、改正、确认、你说的）不会被自动改。'
-            : '她在场时感知到的会慢慢整理成这些。')));
-        clear(foot); return;
+            : s.list === 'checks' ? '每天夜里整理时，她会挑几条最可能记错、或最常想起的事实，回到原话核对；改了什么、为什么，会列在这里。你做过的（钉住、改正、确认、你说的）不会被自动改。'
+              : s.list === 'percepts' && (s.settingKey || s.entityId) ? '这个场合（或这个人）还没有原话。' : '她在场时感知到的会慢慢整理成这些。');
       }
-      clear(listBox, s.items.map(row));
-      clear(foot, pagerFoot(s.total, s.items.length, s.next, () => load(true)));
+      return h('div', { class: 'pm-entry nosel' }, node);
+    }
+    function render() {
+      if (!s.items.length) { clear(listBox, emptyRow()); clear(foot); return; }
+      const out = [];
+      const asc = s.order === 'asc';
+      // 列表上面：还有就给加载入口（按钮，不做无限滚动）；定位过来的、上面到头了给一句说明
+      if (grouped() && s.prev) out.push(h('div', { class: 'pm-more' }, btn(asc ? '更早的' : '更晚的', () => load({ mode: 'prev' }), { kind: 'sm', busy: '加载中…' })));
+      else if (grouped() && s.anchored) out.push(h('div', { class: 'pm-more' }, asc ? '没有更早的了' : '已经是最新的了'));
+      // 按天分组：每天一个块，日期头只在自己那一块里吸顶（下一天的块上来就把它推走，不会两个头叠着）
+      let day;
+      let group = null;
+      for (const x of s.items) {
+        if (grouped()) {
+          const t = timeOf(x); const k = t != null ? dateOf(t) : '';
+          if (!group || k !== day) {
+            day = k;
+            const n = k ? dayName(k) : null;
+            group = h('div', { class: 'pm-dgroup', role: 'group', 'aria-label': n ? `${n.main}${n.sub ? ` ${n.sub}` : ''}` : '没有时间' },
+              n && h('div', { class: 'pm-day', 'aria-hidden': 'true' }, h('b', null, n.main), n.sub && h('span', null, n.sub)));
+            out.push(group);
+          }
+        }
+        const e = row(x);
+        const k = keyOf(x);
+        if (k) e.dataset.k = k;
+        if (group) group.append(e); else out.push(e);
+      }
+      clear(listBox, out);
+      if (!grouped()) { clear(foot, pagerFoot(s.total, s.items.length, s.next, () => load({ mode: 'next' }))); return; }
+      clear(foot, h('div', { class: 'pm-foot' }, h('span', null, `共 ${s.total} 条${s.items.length < s.total ? `，显示 ${s.items.length} 条` : ''}`),
+        s.next ? btn(asc ? '更晚的' : '更早的', () => load({ mode: 'next' }), { kind: 'sm', busy: '加载中…' }) : h('span', null, asc ? '已经是最新的了' : '没有更早的了')));
     }
     function renderBulk() {
       const n = s.picked.size;
@@ -1683,17 +2116,18 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
           h('div', null, h('span', { class: 'pm-faint' }, '恢复成：'), x.before?.text ?? '（原来那条已经不在了）'),
           h('p', { class: 'pm-desc' }, '原来那条会按「确认过」恢复（把握 90%），夜里整理不会再改它；改出来的那一条留在版本历史里。')),
       });
-      if (r !== null) { toast('已撤销，原来那条按确认过恢复'); load(); }
+      if (r !== null) { toast('已撤销，原来那条按确认过恢复'); refresh(); }
     }
     async function purge(refs) {
       const r = await purgeDialog(refs);
-      if (r) { purgeDone(r); load(); }
+      if (r) { purgeDone(r); refresh(new Set(refs)); }
     }
     renderTools();
     renderFilters();
+    renderTimeBar();
     add(el, card({ title: '她记得的', cls: 'cq', desc: '你看得到全部，包括对别人隐藏的。隐藏：对别人不提；忘掉：隐藏并且以后别再记同样的内容，30 天内可恢复；彻底删除：连同只靠它作证据的内容一起删，找不回来。' },
-      tools, filters, listBox, foot), bulk);
-    return { load: () => load(), show: () => {} };
+      tools, filters, timeWrap, noteBox, listBox, foot), bulk);
+    return { load: (o) => (o?.focus ? focus(o.focus) : load()), show: (o) => { if (o?.focus) focus(o.focus); } };
   }
   /**
    * 【D143】彻底删除做完：一切顺利就提示一下；有备份包没改成、或者数据库日志没能截断，弹一个框照实说（没改成的不当成功）。
@@ -1759,7 +2193,10 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
       mainText && h('div', { class: 'pm-block' }, mainText),
       x.sources?.length ? sec(`从哪儿知道的（${x.sources.length}）`, h('div', { class: 'pm-list' }, x.sources.slice(0, 20).map((s) => entry({
         kind: [label(SRC_MODE, s.mode), ''], title: s.speaker ? entityName(s.speaker) : null, ctx: s.settingKey ? `在「${settingName(s.settingKey)}」` : null, at: s.at,
-        quote: s.percept?.text ?? s.quote ?? null, foot: meta(s.hop ? `转了 ${s.hop} 手` : null, s.confidence != null ? `把握 ${pct(s.confidence)}` : null) })))) : null,
+        quote: s.percept?.text ?? s.quote ?? null, foot: meta(s.hop ? `转了 ${s.hop} 手` : null, s.confidence != null ? `把握 ${pct(s.confidence)}` : null),
+        // 【D159】看这句来源原话前后的原话（关掉详情框，到原话列表里定位）
+        actions: s.perceptId && (s.settingKey ?? s.percept?.settingKey) ? [act('看前后', () => { dlg.close(); showContext({ list: 'percepts', settingKey: s.settingKey ?? s.percept?.settingKey, ref: `p${s.perceptId}`, order: 'asc', at: s.percept?.at ?? s.at }); },
+          { title: '看这句话前后的原话（同一个场合，按时间顺序）' })] : null })))) : null,
       x.norm && !x.norm.unassessed ? sec('分寸', kv([
         ['限制', label(RESTRICT, x.norm.restriction)],
         x.norm.allow?.length ? ['可以告诉', x.norm.allow.map(entityName).join('、')] : null,
@@ -1781,8 +2218,14 @@ dialog.pm-dlg[open]{display:flex;flex-direction:column}
         x.injectedIn?.length ? h('div', { class: 'pm-chips' }, x.injectedIn.slice(0, 12).map((i) => h('span', { class: 'pm-badge pm-mono', title: i.sessionId }, `${String(i.sessionId).slice(0, 12)} · ${when(i.lastAt)}`))) : null),
       x.activation ? h('div', { class: 'pm-faint' }, meta(`被想起 ${x.activation.traceCount ?? 0} 次`, x.activation.lastTraceAt ? `上次 ${when(x.activation.lastTraceAt)}` : null, x.activation.tier ? `层：${x.activation.tier}` : null)) : null);
     const refresh = () => { dlg.close(); onChange?.(); };
+    // 【D159】经历、原文片段：这段时间的原话；原话：前后的原话
+    const sk = row.setting_key ?? row.settingKey ?? null;
+    const t0 = row.t_start ?? row.tStart; const t1 = row.t_end ?? row.tEnd;
+    const ctxBtn = !sk ? null : x.kind === 'percept' ? btn('看前后', () => { dlg.close(); showContext({ list: 'percepts', settingKey: sk, ref, order: 'asc', at: row.at }); })
+      : (x.kind === 'episode' || x.kind === 'window') && t0 != null && t1 != null
+        ? btn('这段时间的原话', () => { dlg.close(); showContext({ list: 'percepts', settingKey: sk, range: { preset: 'custom', from: t0, to: t1 }, order: 'asc' }); }) : null;
     add(dlg.foot,
-      h('span', { class: 'pm-faint pm-mono' }, ref),
+      h('span', { class: 'pm-faint pm-mono' }, ref), ctxBtn,
       sup ? btn('恢复', async () => { await api.act('memory.restore', { ref }); toast('已恢复'); refresh(); }) : btn('隐藏', async () => { await api.act('memory.hide', { ref }); toast('已对别人隐藏'); refresh(); }),
       !sup && btn('忘掉', async () => { await api.act('memory.forget', { ref }); toast('已忘掉（30 天内可恢复）'); refresh(); }, { kind: 'danger' }),
       btn('彻底删除', async () => { const r = await purgeDialog([ref]); if (r) { purgeDone(r); refresh(); } }, { kind: 'danger' }));

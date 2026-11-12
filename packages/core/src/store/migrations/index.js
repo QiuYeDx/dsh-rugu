@@ -20,9 +20,10 @@ import m018 from './018-encode.js';
 import m019 from './019-encode.js';
 import m020 from './020-retrieve.js';
 import m021 from './021-discretion.js';
+import m022 from './022-admin.js';
 
 /** @type {readonly import('../migrate.js').Migration[]} */
-export const MIGRATIONS = Object.freeze([m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012, m013, m014, m015, m016, m017, m018, m019, m020, m021]);
+export const MIGRATIONS = Object.freeze([m001, m002, m003, m004, m005, m006, m007, m008, m009, m010, m011, m012, m013, m014, m015, m016, m017, m018, m019, m020, m021, m022]);
 
 /** 代码支持的 schema 版本。库的版本比它新 → 只读（§12.5）。 */
 export const SCHEMA_VERSION = MIGRATIONS.at(-1).version;

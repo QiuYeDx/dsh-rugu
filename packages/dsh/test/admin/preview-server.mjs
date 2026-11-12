@@ -20,9 +20,11 @@ const port = (i > 0 && Number(process.argv[i + 1])) || 3471;
 const exportDir = fs.mkdtempSync(path.join(process.env.PM_PREVIEW_TMP ?? os.tmpdir(), 'pm-preview-export-'));
 fs.writeFileSync(path.join(exportDir, 'pm-export-20261104T063000Z.jsonl'), '{"type":"header"}\n');
 
+// PM_PREVIEW_NOW=<毫秒>：假数据以这一刻为「现在」（看「今天」「昨天」这类相对时间时用真的现在）；不给用 fixtures 的固定时刻
+const previewNow = Number(process.env.PM_PREVIEW_NOW) || undefined;
 const scenarios = {};
 for (const s of ['normal', 'empty', 'errors']) {
-  const h = createAdminHandlers({ pm: makeFakePm({ scenario: s }), host: makeFakeHost({ scenario: s }), exportDir, log: { info() {}, warn() {}, error() {} } });
+  const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow }), host: makeFakeHost({ scenario: s }), exportDir, log: { info() {}, warn() {}, error() {} } });
   scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
 }
 

@@ -177,6 +177,68 @@ test('记忆浏览：按场合 / 按人筛只传给认这些条件的列表；�
   assert.deepEqual(d.identity, [{ namespace: 'qq', scope: null, strength: 'platform', hash: 'abcdef01', at: 1 }]);
 });
 
+test('记忆浏览按时间（D159）：from / to / order / around / aroundRef / prev / tz 校验后透传；原话、原文片段能搜；人与物不收时间条件', async () => {
+  const s = setup();
+  const last = (view) => s.callsOf('admin.list').filter((c) => c.args[0].view === view).at(-1).args[0];
+  const from = String(NOW - 3 * 86_400_000); const to = String(NOW);
+  let r = await s.view('memories', { list: 'percepts', q: '打两把', from, to, order: 'asc', around: String(NOW - 86_400_000), near: 'after', tz: '480', settingKey: 'sk-group-small' });
+  assert.equal(r.status, 200);
+  assert.deepEqual({ ...last('percepts'), limit: undefined }, { view: 'percepts', limit: undefined, q: '打两把', settingKey: 'sk-group-small', from: Number(from), to: Number(to), order: 'asc',
+    tzOffsetMin: 480, around: NOW - 86_400_000, near: 'after' });
+  assert.ok(r.body.data.anchor, '带回锚点');
+  await s.view('memories', { list: 'windows', q: '九点', aroundRef: 'w3', prev: 'abc' });
+  assert.deepEqual({ ...last('windows'), limit: undefined }, { view: 'windows', limit: undefined, q: '九点', aroundRef: 'w3', prev: 'abc' }, '原文片段能搜');
+  await s.view('memories', { list: 'entities', q: '阿', from, to, order: 'asc', around: from });
+  // （名字表也会列一次人与物：取带搜索词的那一次）
+  const ent = s.callsOf('admin.list').filter((c) => c.args[0].view === 'entities' && c.args[0].q).at(-1).args[0];
+  assert.deepEqual(Object.keys(ent).sort(), ['limit', 'q', 'view'], '人与物没有时间条件');
+  await s.view('memories', { list: 'lessons', q: '路径' });
+  assert.equal(last('lessons').q, undefined, '经验不能搜，不往下传');
+  await s.view('memories', { list: 'forgotten', from, order: 'desc' });
+  assert.deepEqual({ ...last('forgotten'), limit: undefined }, { view: 'forgotten', limit: undefined, from: Number(from), order: 'desc' });
+  // 坏参数一律 400，不往核心送
+  for (const bad of [{ from: 'x' }, { from: '-5' }, { to: '12' }, { from: to, to: from }, { order: 'random' }, { tz: '900' }, { tz: '8.5' }, { around: 'soon' }, { near: 'left' }, { aroundRef: 'p 1' },
+    { prev: 'x'.repeat(201) }]) {
+    const n = s.callsOf('admin.list').length;
+    const b = await s.view('memories', { list: 'percepts', ...bad });
+    assert.equal(b.status, 400, JSON.stringify(bad));
+    assert.equal(b.body.code, 'BAD_INPUT');
+    assert.equal(s.callsOf('admin.list').length, n, '没往核心送');
+  }
+  // 别的种类的 aroundRef：集成层不解析引用，核心拒（契约错误 → 400）
+  r = await s.view('memories', { list: 'percepts', aroundRef: 'a1' });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'CONTRACT');
+  // 往两头翻：假 pm 照核心的契约给 next / prev，拼起来不重不漏
+  const first = (await s.view('memories', { list: 'percepts', around: String(NOW - 2 * 86_400_000), limit: '20' })).body.data;
+  const up = (await s.view('memories', { list: 'percepts', prev: first.prev, limit: '20' })).body.data;
+  const down = (await s.view('memories', { list: 'percepts', next: first.next, limit: '20' })).body.data;
+  const whole = (await s.view('memories', { list: 'percepts', limit: '200' })).body.data.items.map((x) => x.ref);
+  const joined = [...up.items, ...first.items, ...down.items].map((x) => x.ref);
+  const at = whole.indexOf(joined[0]);
+  assert.deepEqual(joined, whole.slice(at, at + joined.length));
+});
+
+test('按天计数（D159）：memoryDays 和列表同样的条件、month / tz 校验；不按时间的列表 400', async () => {
+  const s = setup();
+  const r = await s.view('memoryDays', { list: 'percepts', month: '2026-11', tz: '480', settingKey: 'sk-group-small', q: '打两把', from: String(NOW - 5 * 86_400_000) });
+  assert.equal(r.status, 200);
+  const q = s.callsOf('admin.list').at(-1).args[0];
+  assert.deepEqual(q, { view: 'days', of: 'percepts', month: '2026-11', q: '打两把', settingKey: 'sk-group-small', from: NOW - 5 * 86_400_000, tzOffsetMin: 480 });
+  const d = r.body.data;
+  assert.ok(d.items.length > 0 && d.items.every((x) => /^2026-11-\d\d$/.test(x.day) && x.n > 0));
+  assert.equal(typeof d.first, 'number');
+  const all = (await s.view('memoryDays', { list: 'percepts', month: '2026-11', tz: '480' })).body.data;
+  const gap = new Date(NOW + 8 * 3_600_000 - 4 * 86_400_000).toISOString().slice(0, 10);
+  assert.ok(!all.items.some((x) => x.day === gap), '假数据里往前第 4 天整天没有原话');
+  for (const bad of [{ month: '2026-13' }, { month: '26-11' }, {}, { month: '2026-11', tz: '-900' }, { month: '2026-11', list: 'entities' }, { month: '2026-11', list: 'nope' },
+    { month: '2026-11', around: String(NOW) }]) {
+    const b = await s.view('memoryDays', { list: 'percepts', ...bad });
+    if (bad.around) { assert.equal(b.status, 200, 'around 不是计数的条件：不校验也不往下传'); assert.equal(s.callsOf('admin.list').at(-1).args[0].around, undefined); continue; }
+    assert.equal(b.status, 400, JSON.stringify(bad));
+  }
+});
+
 test('审核队列：挂起的发言按令牌对上原文、她的转念和命中的理由；需要你知道默认只看未读', async () => {
   const s = setup();
   const r = (await s.view('review')).body.data;
