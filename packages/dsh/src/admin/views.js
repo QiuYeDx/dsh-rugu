@@ -4,6 +4,7 @@
 import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride, mergeConfig, recallCaps } from 'rugu-core';
 import { InputError, nonNegInt, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
 import { verdictOf } from '../ports/llm.js';
+import { createSettingsViews } from './settings-views.js';
 
 const DAY = 86_400_000;
 /** 今天 0 点（北京时间，UTC+8；管理页的「今天」只用来数次数）。 */
@@ -796,6 +797,8 @@ export function createViews(deps) {
       return { ...r, ...(q.id ? { allSettings: settingLabels() } : {}) };
     },
   };
+  // D173：「设置」七个小节和首次设置向导的视图（settings-views.js）
+  Object.assign(VIEWS, createSettingsViews({ pm, host, now, config, hostStatus, selfCheck, gpuView, part, exportDir: deps.exportDir }).views);
 
   return {
     names: Object.keys(VIEWS),

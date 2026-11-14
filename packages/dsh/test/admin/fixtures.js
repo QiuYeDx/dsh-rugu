@@ -131,6 +131,14 @@ function dayCounts(all0, q, spec) {
  * readonly 记忆库只读；off 总开关关着。
  */
 export const HOME_VARIANTS = new Set(['llmdown', 'fallback', 'readonly', 'off']);
+/**
+ * 「设置」和首次设置（D173）的几种状态（数据同 normal，只有宿主那一半不一样）：
+ *   llmthink 后台模型正常但关不掉思考；llmoff 选了「不用后台模型」；noqq 还没接 QQ；qqgen1 桥接不是二代模式；
+ *   wiz / wiz-noollama 首次设置模式（还没有核心；预览服务器给它们开设置模式的路由），一个本机有 Ollama、一个没有。
+ */
+export const SETTINGS_VARIANTS = Object.freeze(['llmthink', 'llmoff', 'noqq', 'qqgen1']);
+export const WIZARD_VARIANTS = Object.freeze(['wiz', 'wiz-noollama']);
+for (const v of [...SETTINGS_VARIANTS, ...WIZARD_VARIANTS]) HOME_VARIANTS.add(v);
 const err = (code, message) => Object.assign(new Error(message ?? code), { code, name: code === 'CONTRACT' ? 'ContractError' : code === 'READ_ONLY' ? 'ReadOnlyError' : 'Error' });
 
 const NAMES = ['阿明', '小刚', '阿杰', '小雨', '老周', '可乐', '阿青', '小鹿', '团子', '大宇', '小北', '阿洛', '星星', '木木', '十一', '小满', '阿远', '豆豆', '七七', '阿哲'];
@@ -379,6 +387,12 @@ export function makeFakePm(o = {}) {
     blocked: (q) => blockedRows.filter((x) => (!q.basis || x.basis === q.basis || (q.basis === 'current' && x.basis !== 'legacy')) && (!q.verdict || x.verdict === q.verdict) && (!Number.isFinite(q.from) || x.at >= q.from)),
     limits: () => limitRows,
   };
+  // D173：最近几次把记忆放进对话（照核心 admin.list({view:'injections'}) 的形状；只有时间、场合、层，没有内容）
+  VIEWS.injections = () => (full ? [
+    { id: 30, ts: now - 25 * 60_000, sessionId: 's-web-1', cycle: 4, settingKey: 'sk-web', layer: 'recalled', items: [], chars: 420, mode: 'live', seen: true },
+    { id: 29, ts: now - 40 * 60_000, sessionId: 's-qq-1', cycle: 9, settingKey: 'sk-group-small', layer: 'working', items: [], chars: 300, mode: 'live', seen: true },
+    { id: 28, ts: now - 3 * HOUR, sessionId: 's-qq-1', cycle: 8, settingKey: 'sk-group-small', layer: 'resident', items: [], chars: 900, mode: 'live', seen: true },
+  ] : []);
   function stateOk(x, s) { return !s || s === 'all' || (s === 'active' ? !x.state : x.state === s); }
   const byRef = () => new Map([...assertions, ...episodes, ...entities, ...intentions, ...percepts, ...windows].map((x) => [x.ref, x]));
   const writable = () => { if (readOnly) throw err('READ_ONLY', '数据库是只读的'); };
@@ -808,6 +822,7 @@ export function makeFakeHost(o = {}) {
         pairs: [{ use: 'extract', pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, state: 'ok', lastOkAt: now - 60_000, byCode: {} }], catchUp: 0 }),
     summary: () => ({ plugin: '0.0.0', state: 'ok', providerKind: 'deepseek-account', model: 'deepseek-flash', effort: 'off', errors24h: {}, compat: {} }),
   };
+  addSettingsParts(host, { variant, scenario, now, calls, hostCfg, setCfg });
   if (scenario === 'empty') delete host.gpu.setPolicy;
   return host;
 }
@@ -1023,4 +1038,83 @@ function addMemoryFakes(pm, d) {
     }
     return out;
   };
+}
+
+/**
+ * 「设置」和首次设置（D173）要的宿主部分：她是谁（host.self / adapters.qq / preset）、数据在哪儿（paths）、首次设置（setup，含草稿）、
+ * 想起来的方式（embeddingSetup）、QQ 桥接（bridgeSetup）、预设的状态（status().preset），以及后台模型的几种状态。全是编的。
+ * 名字、目录、群名都是编的，不对应任何真实的人和群。
+ */
+function addSettingsParts(host, { variant, scenario, now, calls, hostCfg, setCfg }) {
+  const wizard = WIZARD_VARIANTS.includes(variant);
+  const qqOn = scenario === 'normal' && variant !== 'noqq' && !wizard;
+  const bridgeDir = 'D:\\apps\\dsh-qq';
+  Object.assign(hostCfg, {
+    self: wizard ? {} : { principalLabel: '主人' },
+    preset: wizard || scenario === 'empty' ? {} : { name: '', personaPrefix: '我是云云，主人的朋友。平时话不多，喜欢听大家聊天，偶尔接一句；被问到以前的事会先想一想再说。' },
+    adapters: { qq: qqOn ? { enabled: true, bridgeDir, selfNames: ['云云', '小云'] } : { enabled: true, bridgeDir: '' } },
+    setup: { completedAt: wizard ? 0 : now - 30 * DAY, draft: wizard ? { step: 1 } : {} },
+  });
+  // 「关于 · 数据在哪儿」从宿主状态的 dataDir / configFile 读（不另给 host.paths：导出目录的测试要它走自己的推断）
+  const paths = { dataDir: 'E:\\data\\memory', configFile: 'C:\\Users\\someone\\.dsh\\persona-memory.json' };
+  // 预设的状态（照 preset/index.js 的 status() 和 roster()）
+  const status0 = host.status;
+  host.status = () => ({ ...status0(), preset: { id: 'persona-chat', enabled: true, registered: true, name: hostCfg.preset?.name || '人设聊天', source: 'standard', rows: 25, broken: null, error: null,
+    roster: scenario === 'errors' ? [] : [{ id: 'standard', name: '标准模式', broken: false }, { id: 'persona-chat', name: hostCfg.preset?.name || '人设聊天', broken: false }] } });
+  // 首次设置（D128 / D173）
+  host.setup = {
+    status: () => ({ needed: wizard, starting: false, dataDir: paths.dataDir, configFile: paths.configFile, retention: '2y' }),
+    draft: () => ({ ...(hostCfg.setup?.draft ?? {}) }),
+    saveDraft: (d) => { calls.push({ name: 'setup.saveDraft', args: [d] }); if (!wizard) throw Object.assign(new Error('已经设置过了'), { code: 'CONFLICT' }); hostCfg.setup = { ...hostCfg.setup, draft: { ...d } }; return { saved: true }; },
+    finish: async (p) => { calls.push({ name: 'setup.finish', args: [p] }); if (!wizard) throw Object.assign(new Error('已经设置过了'), { code: 'CONFLICT' }); hostCfg.setup = { completedAt: now, draft: {} }; return { ok: true }; },
+  };
+  // 想起来的方式（照 host/embedding-setup.js 的 status() 形状）：wiz-noollama 没装 Ollama
+  const reachable = variant !== 'wiz-noollama';
+  let pull = { state: 'idle', tier: null, model: null, status: null, completed: 0, total: 0, error: null, at: null, pct: null };
+  host.embeddingSetup = {
+    status: async () => ({
+      mode: hostCfg.embedding.provider === 'none' ? 'none' : hostCfg.embedding.provider === 'openai-compat' ? 'external' : 'ollama', url: hostCfg.embedding.url ?? '', tier: hostCfg.embedding.tier ?? 'standard', external: null, hasKey: false,
+      ollama: { url: 'http://127.0.0.1:11434', reachable, version: reachable ? '0.12.5' : null, models: reachable && !wizard ? ['qwen3-embedding:4b'] : [], error: reachable ? null : 'ECONNREFUSED' },
+      tiers: { standard: { model: 'qwen3-embedding:4b', dim: 1024, size: '约 2.5 GB', present: reachable && !wizard }, light: { model: 'qwen3-embedding:0.6b', dim: 1024, size: '约 640 MB', present: false } },
+      hardware: { vramMb: 12_288, ramMb: 32_768 }, recommended: { tier: 'standard', reason: '显卡显存 12 GB，跑 4B 没问题' }, pull, downloadUrl: 'https://ollama.com/download',
+    }),
+    startPull: ({ tier }) => { calls.push({ name: 'embedding.pull', args: [tier] }); pull = { ...pull, state: 'running', tier, status: '正在下载', completed: 0, total: 100, pct: 0 }; return pull; },
+    cancelPull: () => { pull = { ...pull, state: 'cancelled' }; return pull; },
+    test: async (p) => { calls.push({ name: 'embedding.test', args: [{ ...p, apiKey: p.apiKey ? '***' : '' }] }); return { ok: true, dim: 1024, sendDimensions: true, ms: 180, thirdParty: true }; },
+    reasonsFor: (p) => ({ reasons: p.mode === 'external' ? ['记忆文本会发给这个服务算向量。只有你信任这个服务才选它。'] : [], changesSpace: false, thirdParty: p.mode === 'external' }),
+    save: (p) => { calls.push({ name: 'embedding.save', args: [{ ...p, apiKey: p.apiKey ? '***' : undefined }] }); hostCfg.embedding.provider = p.mode === 'none' ? 'none' : p.mode === 'external' ? 'openai-compat' : 'ollama-native'; if (p.tier) hostCfg.embedding.tier = p.tier; return { saved: true }; },
+  };
+  // QQ 桥接（照 host/bridge-setup.js 的 status() 形状）：noqq 没配、找到一个候选；qqgen1 不是二代模式；empty 白名单没打补丁
+  const inspect = (dir, o = {}) => ({ dir, isBridge: true, hasSocial: o.gen1 !== true, whitelist: { readable: true, applicable: true, patched: o.patched !== false, missing: o.patched === false ? ['memory_recall', 'memory_note', 'memory_fix', 'memory_look'] : [], canRevert: o.patched !== false, hasBackup: o.patched !== false },
+    mode: o.gen1 ? { value: 'chat', secondGen: false, readable: true } : { value: 'reserved2', secondGen: true, readable: true } });
+  const groups = { readable: true, allowAll: false, groups: [{ id: '10001', name: '周末桌游小分队' }, { id: '10002', name: '摄影交流' }, { id: '10003', name: null }] };
+  host.bridgeSetup = {
+    selfKnown: () => (qqOn ? true : null),
+    status: (q = {}) => {
+      const cur = hostCfg.adapters.qq.bridgeDir;
+      const gen1 = variant === 'qqgen1';
+      return { configured: cur, current: cur ? inspect(cur, { gen1, patched: scenario !== 'empty' }) : null, groups: cur ? groups : null,
+        candidates: cur ? [] : [inspect(bridgeDir, { patched: false })], manual: q.dir ? (/qq/i.test(q.dir) ? inspect(q.dir) : { dir: q.dir, isBridge: false }) : null,
+        mark: '// persona-memory patch', restartNote: '改白名单要彻底重启 DSH 才生效（已经开着的 QQ 会话要重建才拿到）。' };
+    },
+    preview: ({ dir, revert }) => ({ ok: true, error: null, file: `${dir}\\plugins\\qq-agent-presets\\qq-tool-restrict.mjs`, already: [], changes: revert ? [{ op: 'remove', line: "'memory_recall', // persona-memory patch" }] : ['memory_recall', 'memory_note', 'memory_fix', 'memory_look'].map((t) => ({ op: 'add', line: `'${t}', // persona-memory patch` })), restart: true }),
+    apply: ({ revert }) => { calls.push({ name: 'bridge.apply', args: [revert] }); return { applied: true, changed: 4, backup: true, restart: true }; },
+    setDir: (dir) => { calls.push({ name: 'bridge.setDir', args: [dir] }); hostCfg.adapters.qq = { ...hostCfg.adapters.qq, enabled: true, bridgeDir: dir }; return { dir }; },
+  };
+  // 后台模型的另几种状态：关不掉思考、选了「不用」
+  if (variant === 'llmthink') {
+    const base = host.llmSetup.status;
+    host.llmSetup.status = () => ({ ...base(), pairs: [{ use: 'extract', pair: { provider: 'deepseek-account', model: 'deepseek-flash' }, state: 'ok', lastOkAt: now - 60_000, thinkHeavy: true, byCode: {} }] });
+  }
+  if (variant === 'llmoff') {
+    host.llmSetup.status = () => ({ state: 'off', mode: 'off', code: null, pair: null, fallback: null, fallbackToChat: true, pairs: [], catchUp: null });
+    const list0 = host.llmSetup.list;
+    host.llmSetup.list = async () => { const l = await list0(); return { ...l, current: { ...l.current, target: 'off' } }; };
+  }
+  if (wizard) {
+    // 首次设置时还没选：建议的那一对
+    const list0 = host.llmSetup.list;
+    host.llmSetup.list = async () => { const l = await list0(); return { ...l, current: { ...l.current, target: null } }; };
+  }
+  void setCfg;
 }

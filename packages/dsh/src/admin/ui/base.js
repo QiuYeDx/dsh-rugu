@@ -510,8 +510,12 @@
    * @returns {HTMLElement} nav 元素（放进 .sidenav-layout 的第一列）
    */
   function sideNav(items, value, onChange, label = '设置的分类') {
-    return h('nav', { class: 'snav', 'aria-label': label }, items.map(([k, text, ic, dot]) => h('button', { type: 'button', 'aria-current': k === value ? 'true' : null, onclick: () => onChange(k) },
+    const nav = h('nav', { class: 'snav', 'aria-label': label }, items.map(([k, text, ic, dot]) => h('button', { type: 'button', 'aria-current': k === value ? 'true' : null, onclick: () => onChange(k) },
       ic ? icon(ic, 16) : null, text, dot ? h('span', { class: 'dotw', 'aria-label': '有要看的' }) : null)));
+    // 窄屏变成横排时放不下：两头渐隐（README 说已经处理，之前漏了这一句；D173 补上），选中的那一项滚进来
+    edgeFade(nav);
+    requestAnimationFrame(() => { const cur = nav.querySelector('[aria-current="true"]'); if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.offsetLeft - 24); });
+    return nav;
   }
   /**
    * 一节：小标题（h2）+ 右边的小字或链接 + 内容。
@@ -1025,6 +1029,8 @@
     // 记下「在用新版」（DSH 外壳下次按它给地址）
     if (q.get('ui') === 'next') rememberUi('next');
     cur = parseHash(G.location.hash);
+    // D173：首次设置模式（page.js 放的标记：还没有核心，别的去处都打不开）——一打开就进向导
+    if (document.querySelector('meta[name="rugu-setup-mode"]') && cur.dest !== 'wizard') { cur = parseHash('#/wizard'); G.history.replaceState(null, '', buildHash(cur.path)); }
     if (!G.location.hash) G.history.replaceState(null, '', buildHash(cur.path));
     render();
     // 导航上「待处理」的数字：首页和待处理页打开时自己会设；直接打开别的去处时这里读一次（读不到就不显示，不打扰）

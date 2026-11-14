@@ -21,7 +21,8 @@ export const HOST_DEFAULTS = deepFreeze({
   dataDir: '',                       // 空 = <DSH 家目录>/persona-memory（§12.1）
   // 首次设置（D128）：配置文件不存在时插件等主人在管理页走完设置才开库、开始记；completedAt 是走完的时间（毫秒），0 = 没走过（手写配置的也算设置过）
   // offGroups（D131）：向导里取消的群号，开库后写成「这个场合关」（之后在「场合与规则」里改），写完清空，不留在配置里
-  setup: { completedAt: 0, acknowledged: false, inProgress: false, offGroups: [] },
+  // draft（D173）：新版向导的草稿（填到哪一步、填了什么）；中途关掉再打开回到那一步。写它时宿主照样标 inProgress（不会被当成设置完了），走完清空
+  setup: { completedAt: 0, acknowledged: false, inProgress: false, offGroups: [], draft: {} },
   // 功能开关（§15：一次交付 beta，按功能开关）
   features: {
     observe: true,                   // 会话事件和工具结果当场入库
@@ -155,7 +156,7 @@ export const HOST_DEFAULTS = deepFreeze({
 });
 
 /** 这些对象是「开放」的：主人可以加新键（键名自定），值照原样保留。 */
-const OPEN_PATHS = new Set(['adapters', 'egress.extraTools', 'adapters.qq', 'adapters.web']);
+const OPEN_PATHS = new Set(['adapters', 'egress.extraTools', 'adapters.qq', 'adapters.web', 'setup.draft']);
 const ENUMS = {
   'gpu.policy': ['off', 'on', 'adaptive'],
   'embedding.tier': ['standard', 'light', 'custom'],
@@ -216,7 +217,8 @@ const RISKY = [
   ['host.features.egress', (v) => v === false && '关掉外发审视：她发到别处的话不再先看一眼'],
   ['host.gpu.policy', (v) => v === 'on' && '显卡「开」档不看显存：玩游戏、开 TTS 时可能换页卡顿'],
   ['host.dataDir', () => '换数据目录要重启插件，旧目录里的记忆不会自动搬过去'],
-  ['mode.global', (v) => v !== 'live' && `总开关改成 ${v}`],
+  // D173：确认框里给人看的话，不写 off / live 这种配置值
+  ['mode.global', (v) => v !== 'live' && '关掉记忆总开关：她在哪儿都不再记新的事、也不再想起以前的事，直到你再打开'],
   ['budget.overrides.balanceProtectDays', (v) => v === 0 && '关掉余额保护：余额被后台用完时她的聊天也会停（H5）'],
   // D121：重度用户的「不设上限」和单项去掉上限——程序失控时花费不会被拦住，只剩余额保护
   ['budget.preset', (v) => v === 'unlimited' && '换成「效果优先」：后台的调用次数、token 和比例都不设上限，程序失控时也不会被拦住，只剩余额保护（余额不够 1 天时停后台）；记忆给得最多（她的上下文长得更快、压缩得更早）'],

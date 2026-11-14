@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { planPatch, runPatch, RESTRICT_REL, TOOLS, MARK } from './bridge-whitelist.js';
-import { projectBridgeConfig, projectSocial, canonicalKey, splitKey } from '../adapters/qq/files.js';
+import { projectBridgeConfig, projectSocial, canonicalKey, splitKey, projectMode, isSecondGen } from '../adapters/qq/files.js';
 import { createPlatformNames } from '../adapters/qq/names.js';
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
@@ -91,6 +91,20 @@ function whitelistOf(dir) {
 
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return null; } };
 
+const MODE_REL = path.join('state', 'mode.json');
+/**
+ * \u6865\u63A5\u73B0\u5728\u662F\u4EC0\u4E48\u6A21\u5F0F\uFF08D173 / \u4E596\uFF09\uFF1A\u8BFB state/mode.json\uFF08\u548C QQ \u9002\u914D\u5668\u540C\u4E00\u4E2A\u6295\u5F71\uFF0Cadapters/qq/files.js \u7684 projectMode\uFF09\u3002
+ * \u53EA\u6709\u4E8C\u4EE3\u6A21\u5F0F\uFF08reserved2\uFF0C\u522B\u540D simulation\uFF09\u624D\u5199 social-v2\uFF0C\u522B\u7684\u6A21\u5F0F\u4E0B QQ \u91CC\u7684\u6D88\u606F\u5979\u542C\u4E0D\u5230\u3002
+ * \u8BFB\u4E0D\u5230\u6587\u4EF6\uFF08\u6865\u63A5\u8FD8\u6CA1\u8DD1\u8D77\u6765\u8FC7\uFF09\u2192 value \u662F null\u3001secondGen \u662F null\uFF08\u8BF4\u4E0D\u51C6\uFF09\u3002
+ * @returns {{value: string|null, secondGen: boolean|null, readable: boolean}}
+ */
+export function bridgeMode(dir) {
+  const raw = readJson(path.join(dir, MODE_REL));
+  if (!raw) return { value: null, secondGen: null, readable: false };
+  const { mode } = projectMode(raw);
+  return { value: mode, secondGen: isSecondGen(mode), readable: true };
+}
+
 /**
  * 桥接放行了哪些群（D131，首次设置列出来让主人取消）。名字：桥接配置里的备注 → SnowLuma 缓存库里的真实群名；都没有就只有群号。
  * 桥接没设白名单、又放行全部时（allowAll）列不全，只列出已经有聊天的群。只读，不调 QQ。
@@ -128,9 +142,19 @@ export function createBridgeSetup({ hostConfig, setConfig, sessionsDir, log = { 
   function inspect(dir) {
     const d = path.resolve(dir);
     if (!isBridgeDir(d)) return { dir: d, isBridge: false };
-    return { dir: d, isBridge: true, hasSocial: isFile(path.join(d, SOCIAL_REL)), whitelist: whitelistOf(d) };
+    return { dir: d, isBridge: true, hasSocial: isFile(path.join(d, SOCIAL_REL)), whitelist: whitelistOf(d), mode: bridgeMode(d) };
+  }
+  /** 她自己的账号能不能从 SnowLuma 的缓存里认出来（D162 的规矩；账号本身不往外交，只回答认没认出来）。没配桥接、读不到 → null。 */
+  function selfKnown() {
+    const cur = configured();
+    if (!cur || !isBridgeDir(cur)) return null;
+    const raw = readJson(path.join(cur, 'config.json'));
+    if (!raw) return null;
+    const cfg = projectBridgeConfig(raw);
+    try { return !!createPlatformNames({ dir: () => cfg.snowlumaHome || null, now: () => Date.now() }).selfAccount(); } catch { return null; }
   }
   return {
+    selfKnown,
     /** @param {{dir?: string}} [q]  手填的目录：顺便看看它 */
     status(q = {}) {
       const cur = configured();

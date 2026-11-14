@@ -14,6 +14,7 @@ import {
 import { ConfirmError } from './confirm.js';
 import { BUDGET_OVERRIDE_KEYS } from 'rugu-core';
 import { RETENTION_ORDER, codeOf, within, retentionLabel, configParts, budgetConfigView, budgetValue, budgetRisks, BUDGET_PRESETS } from './views.js';
+import { createSettingsActions } from './settings-actions.js';
 
 const DAY = 86_400_000;
 /** 场合的档只有关 / 开（用户反馈第 6 轮：不要影子模式；说不说由关口①②逐条判断）。 */
@@ -719,6 +720,8 @@ export function createActions(deps) {
       },
     },
   };
+  // D173：「设置」和首次设置向导的写操作（settings-actions.js：她是谁、她的 QQ 账号、评估不了时怎么办、向导的草稿）
+  Object.assign(A, createSettingsActions({ host, setConfig, warningsOf, unavailable }));
 
   return {
     names: Object.keys(A),

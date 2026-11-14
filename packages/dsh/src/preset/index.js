@@ -20,14 +20,27 @@ const PREFIX_MAX = 2000;
 const str = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : '');
 const codeOf = (e) => String(e?.code ?? (/Duplicate agent preset/.test(String(e?.message ?? '')) ? 'DUPLICATE' : e?.name ?? 'Error')).slice(0, 40);
 
-/** host.preset 配置 → 生效的设置（类型不对的按默认）。 */
-export function presetSettings(hostCfg) {
+/**
+ * 没走完首次设置时（插件休眠、什么都不记，D173 / 乙4）预设的名字后面加的一句、说明前面加的一段：
+ * 「人设聊天」照样能选（用它开过的旧会话要靠它打开），但要让人一眼看出来现在选了也不记。走完设置就换回来。
+ */
+export const SETUP_NAME_SUFFIX = '（还没设置好）';
+export const SETUP_NOTICE = '如故还没走完首次设置：这个对话里她暂时不记新的事、也想不起以前的事。到 DSH 的「设置 → 如故」走完首次设置就好（几分钟）。';
+
+/**
+ * host.preset 配置 → 生效的设置（类型不对的按默认）。
+ * @param {any} hostCfg
+ * @param {{setupPending?: boolean}} [o]  setupPending：还没走完首次设置（名字和说明里带提醒）
+ */
+export function presetSettings(hostCfg, { setupPending = false } = {}) {
   const p = hostCfg && typeof hostCfg === 'object' && hostCfg.preset && typeof hostCfg.preset === 'object' ? hostCfg.preset : {};
   const prefix = typeof p.personaPrefix === 'string' && p.personaPrefix.trim() ? p.personaPrefix.trim() : '';
+  const name = str(p.name, 40) || DEFAULT_PRESET_NAME;
+  const description = str(p.description, 300) || DEFAULT_PRESET_DESCRIPTION;
   return {
     enabled: p.enabled !== false,
-    name: str(p.name, 40) || DEFAULT_PRESET_NAME,
-    description: str(p.description, 300) || DEFAULT_PRESET_DESCRIPTION,
+    name: setupPending ? `${name}${SETUP_NAME_SUFFIX}` : name,
+    description: setupPending ? `${SETUP_NOTICE}${description}` : description,
     order: Number.isFinite(p.order) ? p.order : DEFAULT_PRESET_ORDER,
     personaPrefix: prefix.length <= PREFIX_MAX ? prefix : '',
   };
@@ -69,11 +82,13 @@ export function standardRowsOf(registry) {
  *          waitMs?: number, pollMs?: number, retryMs?: number, retries?: number, listTimeoutMs?: number}} opt
  */
 export function createPersonaPreset({ ctx, hostConfig = () => ({}), log = {}, setTimer = setTimeout, now = () => Date.now(),
-  waitMs = 15_000, pollMs = 100, retryMs = 200, retries = 10, listTimeoutMs = 5000 } = {}) {
+  waitMs = 15_000, pollMs = 100, retryMs = 200, retries = 10, listTimeoutMs = 5000, setupPending = () => false } = {}) {
   const warn = (ev, f) => { try { log.warn?.(ev, f); } catch { /* 忽略 */ } };
   const info = (ev, f) => { try { log.info?.(ev, f); } catch { /* 忽略 */ } };
   const sleep = (ms) => new Promise((r) => { setTimer(r, ms); });
-  const settings = () => { try { return presetSettings(hostConfig()); } catch { return presetSettings({}); } };
+  // setupPending（D173）：还没走完首次设置——名字和说明里带提醒（宿主走完设置时调 sync() 换回来）
+  const pending = () => { try { return setupPending() === true; } catch { return false; } };
+  const settings = () => { try { return presetSettings(hostConfig(), { setupPending: pending() }); } catch { return presetSettings({}); } };
 
   /** 现在的预设服务（DSH 的 agentPresets）。 */
   let registry = null;

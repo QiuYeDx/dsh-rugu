@@ -35,7 +35,8 @@ const open = arg('open', null);
 fs.mkdirSync(out, { recursive: true });
 const server = spawn(process.execPath, [path.join(HERE, 'preview-server.mjs'), '--port', String(port)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PM_PREVIEW_TMP: path.join(ROOT, '.tmp') } });
 await new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(new Error('预览没起来')), 15_000);
+  // D173：场景多了（设置和首次设置的 6 种），预览起来要二十秒上下：多等一会儿
+  const t = setTimeout(() => reject(new Error('预览没起来')), 60_000);
   server.stdout.on('data', (b) => { if (String(b).includes('管理页预览')) { clearTimeout(t); resolve(); } });
   server.on('exit', (c) => reject(new Error(`预览退出了（${c}）`)));
 });
