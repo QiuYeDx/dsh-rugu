@@ -448,6 +448,10 @@ function buildApi(core, { startup, files }) {
           ...(Number.isInteger(o.top) ? { top: o.top } : {}),
         });
       },
+      /** 【D171】管理页「记忆」：合并的记忆列表（事实、经历、打算、经验按时间混排）、它的按天计数、人物卡片。只读，只读库也能用。 */
+      feed: (q) => core.mods.admin.feed(core, q && typeof q === 'object' ? q : {}),
+      feedDays: (q) => core.mods.admin.feedDays(core, q && typeof q === 'object' ? q : {}),
+      people: (q) => core.mods.admin.people(core, q && typeof q === 'object' ? q : {}),
       simulate: (s) => core.mods.admin.simulate(core, s),
       review: {
         list: () => core.mods.admin.listReview(core, { status: 'pending' }),

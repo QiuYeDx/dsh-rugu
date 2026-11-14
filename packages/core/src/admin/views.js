@@ -834,3 +834,6 @@ export function get(core, ref) {
   }
   return out;
 }
+
+// 【D171】管理页「记忆」的合并列表（feed.js）复用这里的列表口径：各列表的 spec（带 SPEC_ONLY 只拿条件）和按人筛。
+export { VIEWS as LIST_VIEWS, SPEC_ONLY, entityFilter };

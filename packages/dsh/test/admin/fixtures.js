@@ -658,6 +658,7 @@ export function makeFakePm(o = {}) {
       },
     },
   };
+  addMemoryFakes(pm, { scenario, now, full, assertions, episodes, intentions, entities, settings, suppressions, lessons: () => VIEWS.lessons({}),isReadOnly: () => readOnly, rec });
   if (scenario === 'old') delete pm.admin.starmap;
   return pm;
 }
@@ -853,3 +854,173 @@ export async function dispatch(ctx, request, peer = { principal: 'owner' }) {
 }
 
 export const NOW = Date.UTC(2026, 10, 4, 6, 30);
+
+// ════════════════════════════════════════════════════════════════════════
+// 【D171】新管理页「记忆」这一路的假数据：合并的记忆列表（pm.admin.feed / feedDays）、人物（pm.admin.people）。
+// 照核心 admin/feed.js 的契约写的替身（同一套参数和返回形状；算法从简：整个数组排好再按游标切）。
+// 场景 many：在 normal 之上再编 3000 条事实、600 段经历（跨 120 天），看翻页、按天分组和性能。内容全是编的。
+// ════════════════════════════════════════════════════════════════════════
+const FEED_RANK = { fact: 0, episode: 1, intent: 2, lesson: 3 };
+const FEED_KIND_OF = Object.keys(FEED_RANK);
+function addMemoryFakes(pm, d) {
+  const { now, full, assertions, episodes, intentions, entities, settings, suppressions, rec } = d;
+  if (d.scenario === 'many') {
+    const R = rng(23);
+    const things = ['周末去爬山', '换了新手机', '在学吉他', '养了一只猫', '要去外地出差', '最近在减肥', '买了一台咖啡机', '在追一部老剧', '报了游泳课', '想换个工作'];
+    for (let i = 0; i < 3000; i++) {
+      const who = entities[2 + (i % 20)];
+      const id = 1000 + i;
+      assertions.push({ ref: `a${id}`, kind: 'assertion', id, text: `${who.name}${things[i % things.length]}（第 ${i + 1} 条编的）`, predicate: '事', kindHint: 'state',
+        certainty: ['stated', 'hearsay', 'confirmed', 'inferred'][i % 4], confidence: Math.round((0.5 + R() * 0.45) * 100) / 100, imp: 2,
+        recordedAt: now - Math.round((i / 3000) * 120 * DAY + R() * 3 * HOUR), validFrom: now, validToKnown: null, expiredAt: null, supersededBy: null, planStatus: null,
+        pinned: false, needsReview: false, entities: [{ entityId: who.id, role: 'subject' }], state: i % 97 === 5 ? 'hidden' : null });
+    }
+    for (let i = 0; i < 600; i++) {
+      const id = 1000 + i;
+      const tEnd = now - Math.round((i / 600) * 120 * DAY + R() * 5 * HOUR);
+      episodes.push({ ref: `e${id}`, kind: 'episode', id, settingKey: SETTINGS[i % 4].key, epKind: 'event', title: `${NAMES[i % 20]}和大家聊${['周末', '工作', '游戏', '吃的', '天气'][i % 5]}（第 ${i + 1} 段）`,
+        narrative: '几个人在群里聊了一会儿。', header: null, tStart: tEnd - 40 * 60_000, tEnd, participants: [10 + (i % 20), 11 + (i % 19)], emotion: null, state: null });
+    }
+  }
+  const lessonIds = new Set([31, 32, 33, 34]);
+  const restoreOf = (ref) => suppressions.find((s) => s.ref === ref)?.restoreUntil ?? null;
+  const touches = (m, ids) => ids.some((id) => m.who === id || (m.participants ?? []).includes(id) || (m.subjects ?? []).includes(id));
+  function items(q) {
+    const kinds = Array.isArray(q.kinds) && q.kinds.length ? q.kinds : FEED_KIND_OF;
+    const versions = q.versions ?? 'current';
+    const out = [];
+    if (!full) return out;
+    if (kinds.includes('fact')) {
+      for (const a of assertions) {
+        if (lessonIds.has(a.id)) continue;
+        if (versions === 'current' && a.supersededBy != null) continue;
+        if (versions === 'old' && a.supersededBy == null) continue;
+        const subjects = a.entities.filter((e) => e.role === 'subject').map((e) => e.entityId);
+        out.push({ ref: a.ref, kind: 'fact', id: a.id, text: a.text, at: a.recordedAt, who: subjects[0] ?? null, settingKey: SETTINGS[a.id % 4].key, subjects, certainty: a.certainty,
+          confidence: a.confidence, supersededBy: a.supersededBy, expiredAt: a.expiredAt, planStatus: a.planStatus, needsReview: a.needsReview, pinned: a.pinned, state: a.state ?? null });
+      }
+    }
+    if (kinds.includes('episode') && versions !== 'old') {
+      for (const e of episodes) {
+        out.push({ ref: e.ref, kind: 'episode', id: e.id, text: e.title || e.narrative, title: e.title, narrative: e.narrative, epKind: e.epKind, at: e.tEnd, tStart: e.tStart,
+          settingKey: e.settingKey, participants: e.participants, state: e.state ?? null });
+      }
+    }
+    if (kinds.includes('intent') && versions !== 'old' && !q.settingKey) {
+      for (const t of intentions) {
+        out.push({ ref: t.ref, kind: 'intent', id: t.id, text: t.text, act: t.act, at: t.formedAt, who: t.targetEntityId, intentState: t.state, until: t.windowEnd,
+          executions: t.executions.length, state: t.suppression ?? null });
+      }
+    }
+    if (kinds.includes('lesson') && versions !== 'old') {
+      for (const l of d.lessons()) {
+        if (q.lessonStatus && l.status !== q.lessonStatus) continue;
+        out.push({ ref: l.ref, kind: 'lesson', id: l.id, text: l.text, at: l.updatedAt, status: l.status, origin: l.origin, how: l.how, tool: l.tool, settingKey: l.settingKey,
+          trap: l.trap, confirmable: l.confirmable, supersededBy: l.supersededBy, about: l.about, state: l.state ?? null });
+      }
+    }
+    const st = q.state ?? 'shown';
+    const members = q.entityId === 10 || q.entityId === 44 ? [10, 44] : q.entityId ? [q.entityId] : null;
+    return out.filter((m) => {
+      if (st === 'shown' && m.state === 'forgotten') return false;
+      if (st === 'active' && m.state) return false;
+      if ((st === 'hidden' || st === 'forgotten') && m.state !== st) return false;
+      if (members && !touches(m, members)) return false;
+      if (q.settingKey && m.settingKey !== q.settingKey) return false;
+      if (Number.isFinite(q.from) && m.at < q.from) return false;
+      if (Number.isFinite(q.to) && (m.tStart ?? m.at) > q.to) return false;
+      if (q.q && !String(m.text).includes(q.q)) return false;
+      return true;
+    });
+  }
+  const cmp = (a, b) => (a.at - b.at) || (FEED_RANK[a.kind] - FEED_RANK[b.kind]) || (a.id - b.id);
+  const encK = (m, o) => Buffer.from(JSON.stringify({ v: 2, t: m.at, k: FEED_RANK[m.kind], i: m.id, d: o })).toString('base64url');
+  const decK = (s, o) => { try { const c = JSON.parse(Buffer.from(String(s), 'base64url').toString('utf8')); return c?.v === 2 && c.d === o ? { at: c.t, kind: FEED_KIND_OF[c.k], id: c.i } : null; } catch { return null; } };
+  function namesFor(list) {
+    const ids = new Set(list.flatMap((m) => [m.who, ...(m.participants ?? []), ...(m.subjects ?? [])]).filter((x) => x != null));
+    const keys = new Set(list.map((m) => m.settingKey).filter(Boolean));
+    const names = {};
+    for (const e of entities) if (ids.has(e.id)) names[e.id] = { name: e.name, self: !!e.isSelf, principal: e.authority === 'principal' };
+    const out = {};
+    for (const s of settings) if (keys.has(s.key)) out[s.key] = { label: s.ownerLabel ?? s.label, labelKind: s.labelKind, hint: s.hint };
+    return { names, settings: out };
+  }
+  const withRestore = (rows) => rows.map((m) => (m.state === 'forgotten' ? { ...m, restoreUntil: restoreOf(m.ref) } : m));
+  pm.admin.feed = (q = {}) => {
+    rec('admin.feed', q);
+    if (d.scenario === 'errors') throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' });
+    const order = q.order === 'asc' ? 'asc' : 'desc';
+    const asc = order === 'asc';
+    const all = items(q).sort(cmp);
+    if (!asc) all.reverse();
+    const limit = Math.max(1, Math.min(200, Number.isInteger(q.limit) ? q.limit : 50));
+    const listCmp = (a, b) => (asc ? cmp(a, b) : cmp(b, a));
+    const nc = q.next ? decK(q.next, order) : null;
+    const pc = q.prev ? decK(q.prev, order) : null;
+    let a = 0;
+    let end = null;
+    let anchor;
+    if (Number.isFinite(q.around)) {
+      a = all.findIndex((m) => (asc ? m.at >= q.around : m.at <= q.around));
+      anchor = { at: q.around, side: asc ? 'after' : 'before' };
+      if (a < 0) { a = Math.max(0, all.length - limit); anchor.side = asc ? 'before' : 'after'; }
+    } else if (pc) {
+      end = all.findIndex((m) => listCmp(m, pc) >= 0);
+      if (end < 0) end = all.length;
+      a = Math.max(0, end - limit);
+    } else if (nc) {
+      a = all.findIndex((m) => listCmp(m, nc) > 0);
+      if (a < 0) a = all.length;
+    }
+    const b = end ?? Math.min(all.length, a + limit);
+    const rows = all.slice(a, b);
+    return { items: withRestore(rows), total: nc || pc ? null : all.length,
+      ...(b < all.length && rows.length ? { next: encK(rows.at(-1), order) } : {}), ...(a > 0 && rows.length ? { prev: encK(rows[0], order) } : {}),
+      ...(anchor ? { anchor } : {}), order, kinds: q.kinds ?? FEED_KIND_OF, ...namesFor(rows), readOnly: d.isReadOnly() };
+  };
+  pm.admin.feedDays = (q = {}) => {
+    rec('admin.feedDays', q);
+    const off = (Number.isInteger(q.tzOffsetMin) ? q.tzOffsetMin : 480) * 60_000;
+    const all = items(q);
+    const by = new Map();
+    for (const m of all) { const day = new Date(m.at + off).toISOString().slice(0, 10); if (day.startsWith(q.month)) by.set(day, (by.get(day) ?? 0) + 1); }
+    const ts = all.map((m) => m.at);
+    return { items: [...by].sort().map(([day, n]) => ({ day, n })), first: ts.length ? Math.min(...ts) : null, last: ts.length ? Math.max(...ts) : null, tzOffsetMin: 480 };
+  };
+  const IMPRESSIONS = { 2: '在赶一个设计稿；喜欢偏暖的照片色调', 10: '爱开玩笑，常在群里发表情包', 25: '在学车，说话很直', 14: '组局的那个人', 15: '喜欢吃辣' };
+  pm.admin.people = (q = {}) => {
+    rec('admin.people', q);
+    if (d.scenario === 'errors') throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' });
+    if (!full) return { items: [], total: 0, readOnly: d.isReadOnly() };
+    const list = items({ state: 'shown' });
+    const groups = entities.filter((e) => e.kind !== 'setting' && e.kind !== 'self' && e.status !== 'retracted' && e.name && e.id !== 44)
+      .map((e) => {
+        const members = e.id === 10 ? [10, 44] : [e.id];
+        const mine = list.filter((m) => touches(m, members));
+        return { id: e.id, name: e.name, aliases: e.id === 10 ? ['明哥'] : [], kind: e.kind, status: e.status, principal: e.authority === 'principal', members,
+          n: mine.length, facts: mine.filter((m) => m.kind === 'fact').length, episodes: mine.filter((m) => m.kind === 'episode').length,
+          intents: mine.filter((m) => m.kind === 'intent').length, lastAt: e.lastMentionAt ?? null, impression: IMPRESSIONS[e.id] ?? null };
+      })
+      .filter((g) => g.n > 0 || g.principal || g.kind !== 'person')
+      .sort((x, y) => Number(y.principal) - Number(x.principal) || y.n - x.n || x.id - y.id);
+    const out = { items: groups, total: groups.length, readOnly: d.isReadOnly() };
+    if (Number.isSafeInteger(q.id)) {
+      const g = groups.find((x) => x.members.includes(q.id));
+      out.items = g ? [g] : [];
+      if (g) {
+        out.detail = {
+          names: g.id === 10 ? [{ entityId: 10, text: '阿明', scope: 'sk-group-small', count: 12, last: now - HOUR }, { entityId: 44, text: '明哥', scope: 'sk-group-big', count: 3, last: now - DAY },
+            { entityId: 10, text: '小明', scope: null, count: 1, last: now - 9 * DAY }] : [{ entityId: g.id, text: g.name, scope: 'sk-group-small', count: 5, last: now - HOUR }],
+          descriptors: g.id === 10 ? [{ entityId: 10, anchor: 22, relation: '朋友', text: '一起打球' }] : [],
+          impressions: g.impression ? [{ entityId: g.id, layer: 'shared', text: g.impression, version: 2, builtAt: now - DAY },
+            ...(g.id === 10 ? [{ entityId: 10, layer: 'private', text: '最近好像有心事，说话少了', version: 1, builtAt: now - 2 * DAY }] : [])] : [],
+          links: g.id === 10 ? [{ a: 10, b: 44, rel: 'same', confidence: 1, decidedBy: 'owner', at: now - 5 * DAY }] : [],
+          members: g.members.map((id) => { const e = entities.find((x) => x.id === id); return { id, kind: e.kind, status: e.status, name: e.name, mentionDays: e.mentionDays, lastMentionAt: e.lastMentionAt }; }),
+          settings: Object.fromEntries(settings.map((s) => [s.key, { label: s.ownerLabel ?? s.label, labelKind: s.labelKind, hint: s.hint }])),
+          who: { 22: { name: '星星', self: false, principal: false } },
+        };
+      }
+    }
+    return out;
+  };
+}

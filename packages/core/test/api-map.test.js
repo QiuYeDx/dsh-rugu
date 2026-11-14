@@ -90,6 +90,10 @@ export const API_MAP = [
   // D163：记忆星图
   ['admin.starmap', [{}], 'admin.starmap'],
   ['admin.home', [{}], 'admin.home'],
+  // D171：新管理页「记忆」的合并列表、按天计数、人物
+  ['admin.feed', [{}], 'admin.feed'],
+  ['admin.feedDays', [{}], 'admin.feedDays'],
+  ['admin.people', [{}], 'admin.people'],
   ['admin.backup.now', [], 'backup.createPack'],
   ['admin.backup.verify', ['p'], 'backup.verifyPack'],
   ['admin.backup.preview', ['p'], 'backup.previewRestore'],

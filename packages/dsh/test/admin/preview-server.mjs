@@ -27,7 +27,7 @@ fs.writeFileSync(path.join(exportDir, 'pm-export-20261104T063000Z.jsonl'), '{"ty
 const previewNow = Number(process.env.PM_PREVIEW_NOW) || undefined;
 const scenarios = {};
 // 首页（D170）的几种状态：llmdown 后台模型不工作、fallback 在用聊天模型顶着、readonly 只读、off 总开关关着（数据同 normal）
-const SCENARIOS = ['normal', 'empty', 'errors', 'big', 'old', 'llmdown', 'fallback', 'readonly', 'off'];
+const SCENARIOS = ['normal', 'empty', 'errors', 'big', 'old', 'llmdown', 'fallback', 'readonly', 'off', 'many'];
 const SC = SCENARIOS.join('|');
 // 星图的「现在」跟着真的时间往前走（从假数据的那一刻起），实时增量才看得到新的想起
 const started = Date.now();

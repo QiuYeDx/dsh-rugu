@@ -50,6 +50,8 @@ function memoryQuery(q, { paging }) {
   const query = { view, ...(paging ? pageOf(q) : {}) };
   if (q.q != null && q.q !== '' && SEARCHABLE.has(view)) query.q = text(q.q, 'q', { max: 100 });
   if (state !== 'all' && ['assertions', 'episodes', 'entities'].includes(view)) query.state = state;
+  // 【D171】新页面的「已隐藏」：收起来的列表只列隐藏的（核心 suppressed 视图认 state）
+  if ((state === 'hidden' || state === 'forgotten') && view === 'suppressed') query.state = state;
   if (q.settingKey && BY_SETTING.has(view)) query.settingKey = opaque(q.settingKey, 'settingKey');
   if (q.entityId && BY_ENTITY.has(view)) query.entityId = posInt(q.entityId, 'entityId');
   // 夜里核对过的（D122）：默认只列改了的，all=1 连没问题的也列
@@ -772,6 +774,27 @@ export function createViews(deps) {
         settings: rules.settings, names: rules.names, pickable: rules.pickable, people: rules.people,
       };
     },
+
+    // ── 【D171】新管理页「记忆」：合并的记忆列表、它的按天计数、人物（核心 pm.admin.feed / feedDays / people；老核心没有 → unsupported） ─────────
+    /** 合并的记忆列表（一页）。meta=1 时另给下拉要的：全部场合的名字、能选的人（第一页要，翻页不要）。 */
+    feed(q) {
+      if (typeof pm?.admin?.feed !== 'function') return { unsupported: true };
+      const r = pm.admin.feed(feedQuery(q, { paging: true }));
+      return { ...r, ...(q.meta === '1' ? { allSettings: settingLabels(), pickable: pickable() } : {}) };
+    },
+    /** 合并列表的按天计数（「跳到某一天」的月历）。 */
+    feedDays(q) {
+      if (typeof pm?.admin?.feedDays !== 'function') return { unsupported: true };
+      if (typeof q.month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(q.month)) throw new InputError('month', '应为 YYYY-MM');
+      const d = pm.admin.feedDays({ ...feedQuery(q, { paging: false }), month: q.month });
+      return { items: Array.isArray(d?.items) ? d.items.map((x) => ({ day: String(x.day), n: Number(x.n) || 0 })) : [], first: num(d?.first), last: num(d?.last) };
+    },
+    /** 人物卡片；id=… 时只给这个人，带详情（各档案的名字、关系、印象、链接）。 */
+    people(q) {
+      if (typeof pm?.admin?.people !== 'function') return { unsupported: true };
+      const r = pm.admin.people({ ...(q.id ? { id: posInt(q.id, 'id') } : {}) });
+      return { ...r, ...(q.id ? { allSettings: settingLabels() } : {}) };
+    },
   };
 
   return {
@@ -1385,3 +1408,34 @@ export function homeView({ core, o, alerts, hostCfg }) {
 }
 
 export const retentionLabel = (v) => ({ '1y': '1 年', '2y': '2 年', '5y': '5 年', forever: '永久' })[v] ?? String(v);
+
+// ── 【D171】合并的记忆列表的查询（页面传来的都是字符串）→ 核心 pm.admin.feed 的查询 ─────────
+const FEED_KINDS = ['fact', 'episode', 'intent', 'lesson'];
+const FEED_STATES = ['shown', 'active', 'hidden', 'forgotten', 'all'];
+const FEED_VERSIONS = ['current', 'all', 'old'];
+/**
+ * @param {Record<string, string>} q   kinds（逗号分隔）、state、versions、lessonStatus、entityId、settingKey、q、from、to、order、tz、
+ *                                     paging 时另有 next、prev、around、limit
+ * @param {{paging: boolean}} o
+ */
+export function feedQuery(q, { paging }) {
+  const out = {};
+  if (q.kinds != null && q.kinds !== '') out.kinds = [...new Set(String(q.kinds).split(','))].map((k, i) => oneOf(k, FEED_KINDS, `kinds[${i}]`));
+  if (q.state) out.state = oneOf(q.state, FEED_STATES, 'state');
+  if (q.versions) out.versions = oneOf(q.versions, FEED_VERSIONS, 'versions');
+  if (q.lessonStatus) out.lessonStatus = oneOf(q.lessonStatus, ['verified', 'unverified'], 'lessonStatus');
+  if (q.entityId) out.entityId = posInt(q.entityId, 'entityId');
+  if (q.settingKey) out.settingKey = opaque(q.settingKey, 'settingKey');
+  if (q.q != null && q.q !== '') out.q = text(q.q, 'q', { max: 100 });
+  if (q.from != null && q.from !== '') out.from = timeMs(q.from, 'from');
+  if (q.to != null && q.to !== '') out.to = timeMs(q.to, 'to');
+  if (out.from != null && out.to != null && out.from > out.to) throw new InputError('to', '结束不能早于开始');
+  if (q.order) out.order = oneOf(q.order, ['desc', 'asc'], 'order');
+  if (q.tz != null && q.tz !== '') out.tzOffsetMin = tzMin(q.tz, 'tz');
+  if (paging) {
+    Object.assign(out, pageOf(q));
+    if (q.prev) out.prev = text(q.prev, 'prev', { max: 200 });
+    if (q.around != null && q.around !== '') out.around = timeMs(q.around, 'around');
+  }
+  return out;
+}
