@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { createAdminHandlers, ROUTES } from '../../src/admin/index.js';
-import { makeFakePm, makeFakeHost } from './fixtures.js';
+import { makeFakePm, makeFakeHost, SETTINGS_VARIANTS, WIZARD_VARIANTS } from './fixtures.js';
 
 process.env.PM_ADMIN_PAGE_NOCACHE = '1';   // 改了 page.html 刷新就能看到
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -28,12 +28,19 @@ const previewNow = Number(process.env.PM_PREVIEW_NOW) || undefined;
 const scenarios = {};
 // 首页（D170）的几种状态：llmdown 后台模型不工作、fallback 在用聊天模型顶着、readonly 只读、off 总开关关着（数据同 normal）
 const SCENARIOS = ['normal', 'empty', 'errors', 'big', 'old', 'llmdown', 'fallback', 'readonly', 'off'];
+// D173：「设置」的几种状态（llmthink / llmoff / noqq / qqgen1）和首次设置模式（wiz：有 Ollama；wiz-noollama：没有），见 fixtures.js
+SCENARIOS.push(...SETTINGS_VARIANTS, ...WIZARD_VARIANTS);
 const SC = SCENARIOS.join('|');
 // 星图的「现在」跟着真的时间往前走（从假数据的那一刻起），实时增量才看得到新的想起
 const started = Date.now();
 const skyClock = () => (previewNow ?? Date.UTC(2026, 10, 4, 6, 30)) + (Date.now() - started);
 for (const s of SCENARIOS) {
   const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow, clock: skyClock }), host: makeFakeHost({ scenario: s, now: previewNow }), exportDir, now: skyClock, log: { info() {}, warn() {}, error() {} } });
+  scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
+}
+// 首次设置模式（还没有核心）：和真的一样只开设置模式的路由（?ui=next 看新版的向导，不带是旧版的）
+for (const s of WIZARD_VARIANTS) {
+  const h = createAdminHandlers({ pm: null, setupMode: true, host: makeFakeHost({ scenario: s, now: previewNow }), exportDir, now: skyClock, log: { info() {}, warn() {}, error() {} } });
   scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
 }
 

@@ -357,20 +357,27 @@ export function createHost(ctx, config = {}, deps = {}) {
   async function finishSetup(p) {
     if (!setupGate) throw codeError('CONFLICT', '已经设置过了');
     try { await embeddingSetup.settleDefault(); } catch (e) { log.warn('setup.settle', { error: errCode(e) }); }
+    // D173：新版向导把人设开头、她自己的 QQ 账号也存在草稿里（setup.finish 的参数照旧，旧版向导不用改）；参数里给了的优先
+    const draft = isPlain(hostConfig().setup?.draft) ? hostConfig().setup.draft : {};
     const self = {};
     if (p.principalLabel) self.principalLabel = p.principalLabel;
     const adapters = {};
     if (p.selfNames?.length) adapters.qq = { selfNames: p.selfNames };
+    if (typeof draft.selfAccount === 'string' && /^[1-9]\d{4,11}$/.test(draft.selfAccount)) adapters.qq = { ...(adapters.qq ?? {}), selfAccount: draft.selfAccount };
+    const preset = {};
+    if (p.presetName) preset.name = p.presetName;
+    if (typeof draft.personaPrefix === 'string' && draft.personaPrefix.trim() && draft.personaPrefix.length <= 2000) preset.personaPrefix = draft.personaPrefix.trim();
     // 后台模型（D168）：向导里没选的，钉在建议的那一对上（DSH 里有 DeepSeek 的通道、目录里有 deepseek-flash 就是它；否则聊天用的那一对）。
     // 建议不出来（DSH 还没有任何模型）就不写：之后按升级前的做法解析，第一次成功再钉住；选不出来总览会说
     let llm = null;
     if (hostConfig().llm?.target == null) {
       try { const s = (await llmSetup.list())?.suggest; if (isLlmPair({ provider: s?.provider, model: s?.model })) llm = { target: { provider: s.provider, model: s.model } }; } catch (e) { log.warn('setup.llm', { error: errCode(e) }); }
     }
-    const patch = { host: { setup: { completedAt: now(), acknowledged: true, inProgress: false, ...(p.offGroups?.length ? { offGroups: p.offGroups } : {}) },
+    const patch = { host: { setup: { completedAt: now(), acknowledged: true, inProgress: false, draft: {}, ...(p.offGroups?.length ? { offGroups: p.offGroups } : {}) },
       ...(llm ? { llm } : {}),
-      ...(Object.keys(self).length ? { self } : {}), ...(Object.keys(adapters).length ? { adapters } : {}), ...(p.presetName ? { preset: { name: p.presetName } } : {}) } };
-    setConfig(patch, { confirm: true });
+      ...(Object.keys(self).length ? { self } : {}), ...(Object.keys(adapters).length ? { adapters } : {}), ...(Object.keys(preset).length ? { preset } : {}) } };
+    // 草稿整个清掉（不和原来的合并）
+    setConfig(patch, { confirm: true, replace: ['host.setup.draft'] });
     log.info('setup.finished', {});
     openGate();
     return { ok: true };
@@ -381,6 +388,8 @@ export function createHost(ctx, config = {}, deps = {}) {
     setupGate = null;
     if (g.timer) clearInterval(g.timer);
     g.resolve();
+    // D173：没走完设置时预设的名字和说明带着提醒，走完了换回来
+    try { deps.preset?.sync?.(); } catch { /* 预设同步失败只在自检里报 */ }
   }
 
   // ── 给管理页的 host 对象（admin/ 的固定接口）──
@@ -393,6 +402,14 @@ export function createHost(ctx, config = {}, deps = {}) {
       /** needed：还没走首次设置；starting：走完了，核心还在打开。 */
       status: () => ({ needed: dormant(), starting: !dormant() && !fullAdmin && !openError, dataDir: paths.dataDir, configFile: paths.configFile, retention: '2y' }),
       finish: finishSetup,
+      /** D173：新版向导的草稿（填到哪一步、填了什么）。 */
+      draft: () => (isPlain(hostConfig().setup?.draft) ? { ...hostConfig().setup.draft } : {}),
+      /** 存草稿：只在还没走完设置时；整个换掉（不和原来的合并）。写配置时自动标成「向导写了一半」（setConfig 里），重启后照样回到向导。 */
+      saveDraft(d) {
+        if (!dormant()) throw codeError('CONFLICT', '已经设置过了');
+        setConfig({ host: { setup: { draft: isPlain(d) ? d : {} } } }, { confirm: true, replace: ['host.setup.draft'] });
+        return { saved: true };
+      },
     },
     paths: Object.freeze({ dataDir: paths.dataDir, exportDir: paths.exportDir, configFile: paths.configFile }),
     status: () => status(),
@@ -501,7 +518,7 @@ export function createHost(ctx, config = {}, deps = {}) {
       tooltable: tooltable.status(), scheduler: scheduler.status(), llm: ports.llm.status(), embedding: ports.embedding.status(),
       rerank: ports.rerank?.status?.() ?? { configured: false }, gpu: governor.status(), budget: ports.budget.status(), selfProfile: ports.selfProfile.status(),
       service: service.status(),
-      preset: deps.preset ? { ...(safeCall(() => deps.preset.status()) ?? {}), selections: { ...presetSelections } } : null,
+      preset: deps.preset ? { ...(safeCall(() => deps.preset.status()) ?? {}), selections: { ...presetSelections }, roster: safeCall(() => deps.preset.roster()) } : null,
       adapters: adapters.map((a) => ({ id: a.id, name: typeof a.adapter?.displayName === 'string' ? a.adapter.displayName.slice(0, 40) : null, ok: !a.error && !a.disabled && !a.selfCheckFailed && !a.pending, disabled: !!a.disabled, error: a.error ?? null, pending: !!a.pending,
         denied: !!a.selfCheckFailed, tools: (a.binding?.tools ?? []).length, status: adapterStatus(a) })),
       heartbeat: Object.fromEntries([...heartbeat].map(([id, h]) => [id, { gap: h.gap, rising: h.rising, alarm: h.alarm }])),
@@ -720,7 +737,9 @@ export function createHost(ctx, config = {}, deps = {}) {
     states.clear();
   }
 
-  return { ready, dispose, status, selfCheck, api: hostApi, service: service.facade, log, configStore, paths, getPm: () => pm, claims, tooltable, governor, ports, registered, assembler, egress, media, tools: memoryTools, scheduler, checkHeartbeat };
+  return { ready, dispose, status, selfCheck, api: hostApi, service: service.facade, log, configStore, paths, getPm: () => pm, claims, tooltable, governor, ports, registered, assembler, egress, media, tools: memoryTools, scheduler, checkHeartbeat,
+    /** D173：还没走完首次设置（插件休眠、什么都不记）：预设据此在名字和说明里提醒。 */
+    dormant };
 }
 
 /** 首次设置还没走完：配置文件不存在，或者向导写了一半。判断不了（读不了、JSON 坏了）就当走完了，按原来的路开库并在总览报错。 */

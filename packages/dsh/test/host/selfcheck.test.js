@@ -68,7 +68,9 @@ test('失败的项写明关掉了什么：钩子没挂上、没有模型服务�
   assert.equal(m['llm.target'].status, 'fail', '手写的模型不在允许清单里（原来的 llm.allowlist 并进 llm.target，D168）');
   assert.deepEqual(m['llm.target'].disables, ['llm:sleep']);
   assert.equal(m['embed.service'].status, 'fail');
-  assert.match(m['embed.service'].label, /L3/);
+  // D173：说人话，不写 L3 这种内部说法
+  assert.match(m['embed.service'].label, /只按字面/);
+  assert.doesNotMatch(m['embed.service'].label, /L3/);
   assert.equal(m['store.open'].status, 'fail');
   assert.equal(m['bridge.freeze'].status, 'warn', 'pre-execute 没挂上，冻结只剩守卫');
   assert.equal(r.level, 'fail');

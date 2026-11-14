@@ -88,13 +88,15 @@ test('每个模块一个 <script>：一个出语法错只坏它自己，别的�
   for (const m of ['home', 'memory', 'settings', 'wizard']) assert.equal(st[m], 'pending', m);
 });
 
-test('新旧开关：?ui= 优先，没给按 host.admin.ui（默认旧版），首次设置一律旧版', async () => {
+test('新旧开关：?ui= 优先，没给按 host.admin.ui（默认旧版）；首次设置也跟着开关走（D173：新版有自己的向导）', async () => {
   assert.equal(pickUi(null, undefined), 'classic');
   assert.equal(pickUi(null, 'next'), 'next');
   assert.equal(pickUi('classic', 'next'), 'classic');
   assert.equal(pickUi('next', 'classic'), 'next');
   assert.equal(pickUi('weird', 'classic'), 'classic');
-  assert.equal(pickUi('next', 'next', true), 'classic');
+  assert.equal(pickUi('next', 'next', true), 'next');
+  assert.equal(pickUi(null, 'next', true), 'next');
+  assert.equal(pickUi(null, undefined, true), 'classic');
   const s = setup();
   const get = async (q) => (await s.h.page(new Request(`${ORIGIN}${ROUTES.page}${q}`))).text();
   const classic = await get('');

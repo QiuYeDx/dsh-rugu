@@ -19,6 +19,8 @@ import { ConfirmError, createConfirmStore } from './confirm.js';
 import { createViews, codeOf } from './views.js';
 import { createActions, exportFileName } from './actions.js';
 import { renderPage, renderNextPage, pickUi, pageCsp } from './page.js';
+import { SETUP_MODE_VIEWS } from './settings-views.js';
+import { SETUP_MODE_ACTIONS } from './settings-actions.js';
 
 export const ROUTES = Object.freeze({
   page: '/api/rugu/admin',
@@ -31,6 +33,9 @@ const MAX_BODY = 64 * 1024;
 /** 设置模式（D128，还没有核心）下只开这几条：向导本身、嵌入、QQ 桥接、后台模型（D168）。 */
 const SETUP_VIEWS = new Set(['setup', 'embeddingSetup', 'bridge', 'llmSetup']);
 const SETUP_ACTIONS = new Set(['prepare', 'setup.finish', 'embedding.pull', 'embedding.pullCancel', 'embedding.test', 'embedding.save', 'bridge.apply', 'bridge.setDir', 'llm.list', 'llm.test', 'llm.save']);
+// D173：新版首次设置向导要的（视图 wizard：设置的状态和草稿；操作 setup.draft：存草稿）
+for (const v of SETUP_MODE_VIEWS) SETUP_VIEWS.add(v);
+for (const a of SETUP_MODE_ACTIONS) SETUP_ACTIONS.add(a);
 
 const BASE_HEADERS = Object.freeze({
   'cache-control': 'no-store',
@@ -140,12 +145,12 @@ export function createAdminHandlers(deps) {
     page(req) {
       return guarded('page', req, ['GET'], { needToken: false }, async (meta) => {
         const nonce = crypto.randomBytes(18).toString('base64');
-        // D170：新旧两版并存——?ui=next|classic，没给按配置 host.admin.ui（默认旧版）；首次设置一律旧版的向导
+        // D170：新旧两版并存——?ui=next|classic，没给按配置 host.admin.ui（默认旧版）；首次设置也跟着这个开关（D173：新版有自己的向导）
         let configured = null;
         try { configured = views.config().host?.admin?.ui ?? null; } catch { configured = null; }
         const ui = pickUi(new URL(req.url).searchParams.get('ui'), configured, setupMode);
         meta.ui = ui;
-        const html = ui === 'next' ? renderNextPage({ nonce, token }) : renderPage({ nonce, token });
+        const html = ui === 'next' ? renderNextPage({ nonce, token, setupMode }) : renderPage({ nonce, token });
         return new Response(html, { status: 200, headers: { ...BASE_HEADERS, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': pageCsp(nonce) } });
       });
     },

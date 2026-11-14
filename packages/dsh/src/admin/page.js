@@ -108,11 +108,13 @@ export function uiParts() {
  * @param {ReturnType<typeof uiParts>} [parts]  测试换成别的（缺文件、坏文件）
  * @returns {string}
  */
-export function renderNextPage({ nonce, token }, parts = uiParts()) {
+export function renderNextPage({ nonce, token, setupMode = false }, parts = uiParts()) {
   if (!/^[A-Za-z0-9+/=]+$/.test(nonce) || !/^[A-Za-z0-9_-]+$/.test(token)) throw new TypeError('nonce / token 格式不对');
   const { shell, scripts, styles } = parts;
   const tag = (body) => `<script nonce="${nonce}">${body}</script>`;
-  const css = styles.filter(([, src]) => src != null).map(([name, src]) => `<style nonce="${nonce}" data-ui="${name}">\n${src}\n</style>`).join('\n');
+  // D173：首次设置模式（还没有核心）——页面一打开就进向导（base.js 的 start 认这个标记）
+  const setupMeta = setupMode === true ? '<meta name="rugu-setup-mode" content="1">\n' : '';
+  const css = setupMeta + styles.filter(([, src]) => src != null).map(([name, src]) => `<style nonce="${nonce}" data-ui="${name}">\n${src}\n</style>`).join('\n');
   const js = scripts.map(([name, src]) => (src == null
     ? tag(`window.Rugu && window.Rugu.missing(${JSON.stringify(name)}, '这一页的脚本没有读到');`)
     : tag(`${src}\n//# sourceURL=rugu-ui/${name}.js`))).join('\n');
@@ -123,15 +125,15 @@ export function renderNextPage({ nonce, token }, parts = uiParts()) {
 }
 
 /**
- * 这次打开哪一版：地址上的 ?ui=next|classic 优先，没有就按配置 host.admin.ui（默认 classic）；首次设置（setupMode）一律旧版的向导。
+ * 这次打开哪一版：地址上的 ?ui=next|classic 优先，没有就按配置 host.admin.ui（默认 classic）。
+ * 首次设置（setupMode）也跟着这个开关走（D173）：新版开着就用新版的一步一屏向导，否则旧版的一长页。
  * 以后切默认：把 host/config.js 里 admin.ui 的默认值改成 'next'；删旧页：这里只剩 next。
  * @param {string|null} param   地址上的 ui
  * @param {unknown} configured  配置里的 host.admin.ui
- * @param {boolean} setupMode
+ * @param {boolean} [_setupMode]  不再影响选哪一版（留着参数，调用方不用改）
  * @returns {'next'|'classic'}
  */
-export function pickUi(param, configured, setupMode = false) {
-  if (setupMode) return 'classic';
+export function pickUi(param, configured, _setupMode = false) {
   if (param === 'next' || param === 'classic') return param;
   return configured === 'next' ? 'next' : 'classic';
 }

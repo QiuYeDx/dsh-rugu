@@ -124,32 +124,37 @@ export async function runSelfCheck(d) {
   const pm = d.getPm();
 
   // ── 宿主 ──
+  // D173（乙10、丁3）：标题说人话（这一项管什么、不过时会怎样）；DSH 的接口名只放在 detail 里（管理页「诊断 → 开发者明细」看得到）
   const sp = d.ctxGet('systemPrompt');
   add('host.systemPrompt', 'host', d.registered.resident ? 'ok' : 'fail',
-    d.registered.resident ? 'systemPrompt.context 可用（interpolate:false、required:true）' : '没法注册常驻区（systemPrompt.context 不可用）',
-    d.registered.resident ? {} : { hint: typeof sp?.context === 'function' ? '注册时报错，看 DSH 日志' : '宿主没有 systemPrompt 服务', disables: ['resident'] });
-  add('host.preStep', 'host', d.registered.preStep ? 'ok' : 'fail', d.registered.preStep ? 'agent/pre-step 已挂上' : 'agent/pre-step 没挂上', d.registered.preStep ? {} : { disables: ['inject', 'claim'] });
-  add('host.preExecute', 'host', d.registered.preExecute ? 'ok' : 'fail', d.registered.preExecute ? 'tools/pre-execute 已挂上（外发审视、冻结桥接记忆）' : 'tools/pre-execute 没挂上',
-    d.registered.preExecute ? {} : { disables: ['egress', 'freeze'] });
-  add('host.postExecute', 'host', d.registered.postExecute ? 'ok' : 'fail', d.registered.postExecute ? 'tools/post-execute 已挂上（可以返回 additionalContexts）' : 'tools/post-execute 没挂上',
-    d.registered.postExecute ? {} : { disables: ['outcome', 'ingest-tool-results'] });
-  add('host.guard', 'host', d.registered.guard ? 'ok' : 'warn', d.registered.guard ? 'tools.guard 已挂上（冻结的兜底）' : 'tools.guard 不可用：冻结只靠 pre-execute');
-  add('host.sessionEvent', 'host', d.registered.sessionEvent ? 'ok' : 'fail', d.registered.sessionEvent ? 'session/event 已挂上' : 'session/event 没挂上',
-    d.registered.sessionEvent ? {} : { disables: ['confirm', 'compaction'] });
+    d.registered.resident ? '常驻的记忆块能放进对话' : '常驻的记忆块放不进对话',
+    d.registered.resident ? { hint: 'DSH 的 systemPrompt.context 可用' } : { hint: typeof sp?.context === 'function' ? 'systemPrompt.context 注册时报错，看 DSH 日志' : 'DSH 没有 systemPrompt 服务', disables: ['resident'] });
+  add('host.preStep', 'host', d.registered.preStep ? 'ok' : 'fail', d.registered.preStep ? '每轮回话前能把记忆放进对话' : '每轮回话前放不进记忆，也认不出对话是谁的',
+    d.registered.preStep ? { hint: 'agent/pre-step 已挂上' } : { hint: 'agent/pre-step 没挂上', disables: ['inject', 'claim'] });
+  add('host.preExecute', 'host', d.registered.preExecute ? 'ok' : 'fail', d.registered.preExecute ? '她发出去的话能先检查一遍，桥接自带的记忆能冻结' : '她发出去的话没法先检查，桥接自带的记忆也冻结不了',
+    d.registered.preExecute ? { hint: 'tools/pre-execute 已挂上' } : { hint: 'tools/pre-execute 没挂上', disables: ['egress', 'freeze'] });
+  add('host.postExecute', 'host', d.registered.postExecute ? 'ok' : 'fail', d.registered.postExecute ? '工具的结果能记下来' : '工具的结果记不下来',
+    d.registered.postExecute ? { hint: 'tools/post-execute 已挂上' } : { hint: 'tools/post-execute 没挂上', disables: ['outcome', 'ingest-tool-results'] });
+  add('host.guard', 'host', d.registered.guard ? 'ok' : 'warn', d.registered.guard ? '冻结桥接自带记忆的兜底挂上了' : '冻结桥接自带的记忆只剩一道检查（少了兜底）',
+    { hint: d.registered.guard ? 'tools.guard 已挂上' : 'tools.guard 不可用：冻结只靠 tools/pre-execute' });
+  add('host.sessionEvent', 'host', d.registered.sessionEvent ? 'ok' : 'fail', d.registered.sessionEvent ? '对话里的事件收得到' : '收不到对话里的事件：确认放进去的记忆、压缩时记下来都做不了',
+    d.registered.sessionEvent ? { hint: 'session/event 已挂上' } : { hint: 'session/event 没挂上', disables: ['confirm', 'compaction'] });
   const agents = d.ctxGet('agents');
-  add('host.agents', 'host', typeof agents?.list === 'function' ? 'ok' : 'warn', typeof agents?.list === 'function' ? 'agents.list 可用' : '拿不到 agents 服务：插件重载后要等新建的会话才有记忆工具');
+  add('host.agents', 'host', typeof agents?.list === 'function' ? 'ok' : 'warn', typeof agents?.list === 'function' ? '看得到已经开着的对话' : '看不到已经开着的对话：插件重载后要等新建的对话才有记忆工具',
+    { hint: typeof agents?.list === 'function' ? 'agents.list 可用' : '拿不到 agents 服务' });
   const llm = d.ctxGet('llm');
-  add('host.llm', 'host', typeof llm?.stream === 'function' ? 'ok' : 'fail', typeof llm?.stream === 'function' ? 'ctx.llm.stream 可用' : '宿主没有模型服务：提炼、评估、审视都做不了（往公开的地方说的改口；群里、私聊不需要模型审，照常）',
-    typeof llm?.stream === 'function' ? {} : { disables: ['background-llm'] });
-  add('host.defineTool', 'host', d.defineToolAvailable ? 'ok' : 'warn', d.defineToolAvailable ? '@deepseek-ai/dsh-tools 的 defineTool 可用' : '找不到 defineTool：记忆工具没注册', d.defineToolAvailable ? {} : { disables: ['tools'] });
+  add('host.llm', 'host', typeof llm?.stream === 'function' ? 'ok' : 'fail', typeof llm?.stream === 'function' ? 'DSH 的模型服务可用' : 'DSH 没有模型服务：整理、说话前的细看、发出前的检查都做不了（往公开的地方说的改口；群里、私聊照常）',
+    typeof llm?.stream === 'function' ? { hint: 'ctx.llm.stream 可用' } : { disables: ['background-llm'] });
+  add('host.defineTool', 'host', d.defineToolAvailable ? 'ok' : 'warn', d.defineToolAvailable ? '她的记忆工具能注册' : '注册不了她的记忆工具',
+    d.defineToolAvailable ? { hint: '@deepseek-ai/dsh-tools 的 defineTool 可用' } : { hint: '找不到 @deepseek-ai/dsh-tools 的 defineTool', disables: ['tools'] });
   // D112：插件自己的 Agent 预设（新建任务的下拉里那一项）。不合格不关任何东西：只是告诉主人「选不了 / 用的是精简副本」
   if (d.preset) presetItem(add, d.preset);
   // 管理页只走只给主人的 Fetch 路由（§13.1、附录 G.4）；没有就不注册管理页（fail closed），绝不退回 webServer.register
   let conn = null;
   try { conn = d.ctx?.connection ?? d.ctxGet('connection'); } catch { conn = null; }
   add('host.connection', 'host', typeof conn?.fetch?.register === 'function' ? 'ok' : 'warn',
-    typeof conn?.fetch?.register === 'function' ? 'connection.fetch.register 可用（管理页只给主人）' : '没有 connection.fetch.register：管理页不注册（不会退回不鉴权的 webServer 路由）',
-    typeof conn?.fetch?.register === 'function' ? {} : { disables: ['admin'] });
+    typeof conn?.fetch?.register === 'function' ? '管理页只给你打开' : '没有只给主人的入口：管理页不打开（不会退回谁都能开的路由）',
+    typeof conn?.fetch?.register === 'function' ? { hint: 'connection.fetch.register 可用' } : { hint: '没有 connection.fetch.register（不退回不鉴权的 webServer 路由）', disables: ['admin'] });
   // D167：插件的行 id 从 persona-memory 改成了 rugu；用户自己手写的覆盖还指着旧 id 的话就不再生效了。没有就不报
   let stale = [];
   try { stale = legacyRowOverrides(d.paths?.dshHome, fsx); } catch { stale = []; }
@@ -160,19 +165,22 @@ export async function runSelfCheck(d) {
 
   // ── 运行时 ──
   const sq = await sqliteChecks();
-  add('runtime.sqlite', 'runtime', sq.sqlite && sq.moduleBackup && sq.fts5 && sq.quotedQuery ? 'ok' : 'fail',
-    `node:sqlite ${sq.sqlite ? '可用' : '不可用'}；模块级 backup ${sq.moduleBackup ? '有' : '没有'}；FTS5 ${sq.fts5 ? '有' : '没有'}；带引号的查询 ${sq.quotedQuery ? '正常' : '报错'}`);
+  const sqOk = sq.sqlite && sq.moduleBackup && sq.fts5 && sq.quotedQuery;
+  add('runtime.sqlite', 'runtime', sqOk ? 'ok' : 'fail', sqOk ? '数据库组件齐全（存、搜、备份都能用）' : '数据库组件不全：记忆库可能打不开，或者搜不了、备份不了',
+    { hint: `node:sqlite ${sq.sqlite ? '可用' : '不可用'}；模块级 backup ${sq.moduleBackup ? '有' : '没有'}；FTS5 ${sq.fts5 ? '有' : '没有'}；带引号的查询 ${sq.quotedQuery ? '正常' : '报错'}` });
   let sab = false;
   try { const b = new SharedArrayBuffer(8, { maxByteLength: 16 }); b.grow(16); sab = b.byteLength === 16; } catch { sab = false; }
-  add('runtime.sab', 'runtime', sab ? 'ok' : 'info', sab ? '可增长 SharedArrayBuffer 可用（向量增量写入）' : '没有可增长 SharedArrayBuffer：向量按块追加（§8.7）');
+  add('runtime.sab', 'runtime', sab ? 'ok' : 'info', sab ? '新算的向量能直接接上' : '新算的向量按块接上（这版 Node 少一个功能，不影响用）',
+    { hint: sab ? '可增长 SharedArrayBuffer 可用' : '没有可增长 SharedArrayBuffer：向量按块追加' });
   let jieba = false;
   try { import.meta.resolve('@node-rs/jieba'); jieba = true; } catch { jieba = false; }
-  add('runtime.jieba', 'runtime', 'info', jieba ? '@node-rs/jieba 可以加载：中文分词用词典' : '没装 @node-rs/jieba：中文分词退回二元组（装不装要主人同意，附录 G.5）');
+  add('runtime.jieba', 'runtime', 'info', jieba ? '中文分词用词典' : '中文分词按两个字一组切（没装分词词典，不影响用；装不装你定）',
+    { hint: jieba ? '@node-rs/jieba 可以加载' : '没装 @node-rs/jieba' });
   let st = null;
   try { st = pm?.status?.() ?? null; } catch { st = null; }
   const w = st?.startup?.worker;
   add('runtime.worker', 'runtime', !st ? 'fail' : w && typeof w === 'object' && w.error ? 'warn' : 'ok',
-    !st ? '核心没打开' : w && typeof w === 'object' && w.error ? `worker 没起来（${w.error}）：慢查询退回主线程降级` : 'worker 和只读连接正常');
+    !st ? '记忆库没打开' : w && typeof w === 'object' && w.error ? `后台线程没起来（${w.error}）：慢的查询改在主线程做，会慢一些` : '后台线程正常');
 
   // ── 库 ──
   if (!pm || !st) add('store.open', 'store', 'fail', '记忆库没打开：这段时间不感知、不注入，聊天照常', { disables: ['all'] });
@@ -196,15 +204,15 @@ export async function runSelfCheck(d) {
   if (!d.skipNetwork) {
     let eh = null;
     try { eh = await d.ports.embedding.checkHealth(); } catch { eh = null; }
-    if (eh?.disabled) add('embed.service', 'models', 'info', '没有用嵌入服务（管理页「设置」里可以改）：按字面、人和事、时间、在场的人回想，意思相近但说法不同的事不容易想起来', { disables: ['dense-recall'] });
-    else add('embed.service', 'models', eh?.ok ? 'ok' : 'fail', eh?.ok ? `嵌入服务可达${eh.version ? `（Ollama ${eh.version}）` : ''}` : `嵌入服务不可达：检索降到 L3（${eh?.error ?? '没响应'}）`,
-      eh?.ok ? {} : { disables: ['dense-recall'] });
+    if (eh?.disabled) add('embed.service', 'models', 'info', '想起来的方式选的是「不用」（「设置 → 模型」里可以改）：按字面、人和事、时间、在场的人回想，意思相近但说法不同的事不容易想起来', { disables: ['dense-recall'] });
+    else add('embed.service', 'models', eh?.ok ? 'ok' : 'fail', eh?.ok ? `想起来的方式连得上${eh.version ? `（Ollama ${eh.version}）` : ''}` : `想起来的方式连不上：现在只按字面、人和事、时间找（${eh?.error ?? '没响应'}）`,
+      eh?.ok ? {} : { hint: '本机的 Ollama 没开，或者外部服务连不上。到「设置 → 模型」看看', disables: ['dense-recall'] });
     if (eh?.ok) {
-      add('embed.model', 'models', eh.modelPresent === false ? 'fail' : 'ok', eh.modelPresent === false ? `嵌入模型不在：${eh.model ?? '没配置'}（到管理页「设置 → 嵌入」下载）` : `嵌入模型${eh.modelPresent == null ? '：服务没给模型清单，以实际请求为准' : '在'}（${eh.model}，${eh.dim} 维，档位 ${eh.tier}）`,
+      add('embed.model', 'models', eh.modelPresent === false ? 'fail' : 'ok', eh.modelPresent === false ? `想起来的方式要的模型还没下载：${eh.model ?? '没配置'}（到「设置 → 模型」下载）` : `想起来的方式的模型${eh.modelPresent == null ? '：服务没给模型清单，以实际请求为准' : '在'}（${eh.model}，${eh.dim} 维，档位 ${eh.tier}）`,
         eh.modelPresent === false ? { disables: ['dense-recall'] } : {});
       let prev = null;
       try { prev = readJson(d.paths.hostStateFile, {})?.ollamaVersion ?? null; } catch { prev = null; }
-      if (eh.version && prev && prev !== eh.version) add('embed.version', 'models', 'warn', `Ollama 版本变了（${prev} → ${eh.version}）：核心会重嵌探针句子比较，模型被悄悄换过会降到 L3`);
+      if (eh.version && prev && prev !== eh.version) add('embed.version', 'models', 'warn', `Ollama 升级了（${prev} → ${eh.version}）：插件会重新比对一遍；模型被悄悄换过的话，想起来先只按字面找`);
       if (eh.version) { try { writeJsonAtomic(d.paths.hostStateFile, { ...(readJson(d.paths.hostStateFile, {}) ?? {}), ollamaVersion: eh.version, checkedAt: d.now?.() ?? Date.now() }); } catch { /* 只是比较用 */ } }
     }
   }
@@ -213,8 +221,8 @@ export async function runSelfCheck(d) {
     const eh2 = pm?.admin?.embedding?.health?.() ?? null;
     if (eh2) {
       const level = eh2.activeUnproducible ? 'fail' : eh2.dense ? 'ok' : 'warn';
-      if (!(h.embedding?.provider === 'none' && !eh2.dense)) add('embed.space', 'models', level, eh2.activeUnproducible ? '现在的向量空间对不上嵌入模型（模型可能被悄悄换过）：检索降到 L3，到管理页确认'
-        : eh2.dense ? '向量空间正常，稠密召回可用' : `稠密召回暂不可用（${String(eh2.reason ?? eh2.mode ?? '原因不明').slice(0, 40)}）：检索降到 L3`);
+      if (!(h.embedding?.provider === 'none' && !eh2.dense)) add('embed.space', 'models', level, eh2.activeUnproducible ? '算好的向量对不上现在的模型（模型可能被悄悄换过）：想起来先只按字面找，到「设置 → 模型 → 技术细节」确认'
+        : eh2.dense ? '按「意思」想起来能用' : `按「意思」想起来暂时用不了（${String(eh2.reason ?? eh2.mode ?? '原因不明').slice(0, 40)}）：先只按字面找`);
     }
   } catch { /* 核心没有这个接口就不报 */ }
   // 回想的稳定性（D117）：今天（UTC 日）回想了几次、出错几处（按步骤）、整轮什么都没给几次、宿主等超时几次；最近一次出错在哪一步、什么错。
@@ -235,29 +243,32 @@ export async function runSelfCheck(d) {
         last ? { hint: `最近一次：${String(last.stage ?? '?')} · ${String(last.code ?? '?')}${last.frame ? ` @ ${last.frame}` : ''}（${new Date(Number(last.at) || 0).toISOString().slice(0, 16)}Z）；到诊断页看明细` } : {});
     }
   } catch { /* 核心没有这个接口就不报 */ }
-  add('rerank', 'models', 'info', d.ports.rerank ? '重排已配置，只在显卡有空时启用' : '重排没配置（五路召回照常，§15.2）');
+  add('rerank', 'models', 'info', d.ports.rerank ? '想起来以后再排一次序：配置了，只在显卡有空时用' : '想起来以后不再排一次序（没配置，回想照常）');
   const gs = d.governor?.status?.();
-  if (gs) add('gpu.policy', 'models', 'info', `显卡策略 ${gs.policy}：现在 ${gs.device === 'gpu' ? 'GPU' : 'CPU'}${gs.reason ? `（${gs.reason}）` : ''}；采样器${gs.sampler ? '可用' : '不可用'}`);
+  const POLICY = { off: '不用', on: '一直用', adaptive: '有空才用' };
+  if (gs) add('gpu.policy', 'models', 'info', `显卡：${POLICY[gs.policy] ?? gs.policy}，现在在 ${gs.device === 'gpu' ? '显卡' : 'CPU'} 上算${gs.reason ? `（${gs.reason}）` : ''}；${gs.sampler ? '读得到显卡的占用' : '读不到显卡的占用'}`);
 
   // ── 核心自我 ──
   const ss = d.ports.selfProfile?.status?.() ?? {};
-  if (!ss.configured) add('self.coreSelf', 'self', 'warn', '没有配置 core-self.md（私有 kit）：常驻区只有用法说明');
-  else if (!ss.present) add('self.coreSelf', 'self', 'fail', `core-self.md 读不到（${ss.error ?? '不存在'}）`);
+  if (!ss.configured) add('self.coreSelf', 'self', 'warn', '没有写她的核心自我：常驻的记忆块里只有用法说明', { hint: '核心自我是一个文件，路径写在配置文件的 host.self.coreSelfFile' });
+  else if (!ss.present) add('self.coreSelf', 'self', 'fail', `她的核心自我读不到（${ss.error ?? '文件不在'}）`, { hint: '路径写在配置文件的 host.self.coreSelfFile' });
   else {
     const text = d.ports.selfProfile.coreSelf().text;
     const longDigits = /\d{5,}/.test(text);
     const contact = /@[\w-]+\.|https?:\/\//i.test(text);
     add('self.coreSelf', 'self', longDigits || contact || ss.chars > 400 ? 'warn' : 'ok',
-      `核心自我 ${ss.chars} 字${ss.chars > 400 ? '（超过 400 字的部分不进常驻区）' : ''}${longDigits ? '；里面有像账号的长数字' : ''}${contact ? '；里面有邮箱或链接' : ''}`,
-      longDigits || contact ? { hint: '核心自我只该有性格、口吻和价值观（§5.7）' } : {});
+      `她的核心自我 ${ss.chars} 字${ss.chars > 400 ? '（超过 400 字的部分不放进对话）' : ''}${longDigits ? '；里面有像账号的长数字' : ''}${contact ? '；里面有邮箱或链接' : ''}`,
+      longDigits || contact ? { hint: '核心自我只该写性格、口吻和价值观' } : {});
   }
 
   // ── 适配器 ──
+  const ENTRY = { qq: 'QQ', 'dsh-web': 'DSH 桌面', bili: 'B站' };
+  const en = (id) => ENTRY[id] ?? id;
   for (const a of d.adapters ?? []) {
-    if (a.disabled) { add(`adapter.${a.id}`, 'adapters', 'info', `适配器 ${a.id} 在配置里停用了：它的会话特征进拒认名单`); continue; }
+    if (a.disabled) { add(`adapter.${a.id}`, 'adapters', 'info', `${en(a.id)} 这个入口在配置里停用了：它的对话不记、也不放记忆`); continue; }
     if (a.error) {
       add(`adapter.${a.id}`, 'adapters', a.error === 'NOT_CONFIGURED' ? 'info' : 'fail',
-        a.error === 'NOT_CONFIGURED' ? `${a.id === 'qq' ? 'QQ' : a.id} 这个入口还没接上（${a.hint ?? '缺必填项'}）：可以在管理页「设置」里接` : `适配器 ${a.id} 没起来（${a.error}）：它的会话不感知、不注入`);
+        a.error === 'NOT_CONFIGURED' ? `${en(a.id)} 这个入口还没接上（${a.hint ?? '缺必填项'}）：可以在「设置 → 接入」里接` : `${en(a.id)} 这个入口没起来（${a.error}）：它的对话不记、也不放记忆`);
       continue;
     }
     if (a.external) {
@@ -266,14 +277,14 @@ export async function runSelfCheck(d) {
       if (!a.binding) { add(`adapter.${a.id}`, 'adapters', 'ok', `外来适配器 ${a.id}：协议 2，已注册（没有 DSH 绑定：不认领会话）`); continue; }
     }
     const v = a.binding ? validateBinding(a.binding) : { ok: false, errors: [{ path: 'binding', message: '没有 DSH 绑定' }] };
-    add(`adapter.${a.id}`, 'adapters', v.ok ? 'ok' : 'fail', v.ok ? `适配器 ${a.id}：工具分类 ${(a.binding.tools ?? []).length} 个` : `适配器 ${a.id} 的 DSH 绑定不合格：${v.errors.slice(0, 3).map((e) => e.path).join('、')}`,
-      v.ok ? {} : { disables: [`claim:${a.id}`] });
+    add(`adapter.${a.id}`, 'adapters', v.ok ? 'ok' : 'fail', v.ok ? `${en(a.id)} 这个入口正常（认得它的 ${(a.binding.tools ?? []).length} 个工具）` : `${en(a.id)} 这个入口和 DSH 对不上：认不出它的对话`,
+      v.ok ? {} : { hint: `DSH 绑定不合格：${v.errors.slice(0, 3).map((e) => e.path).join('、')}`, disables: [`claim:${a.id}`] });
     if (v.ok) {
       let sig = null;
       try { sig = a.binding.sessionSignature?.() ?? null; } catch { sig = null; }
       if (!(sig?.presets?.length || sig?.cwdPrefixes?.length)) {
-        add(`adapter.${a.id}.signature`, 'adapters', 'warn', `适配器 ${a.id} 没有声明会话特征（preset / 工作目录）：认不出它的会话，也没法在它停用时进拒认名单`,
-          { hint: '在设置里给它配 preset（例如网页会话用的 preset）' });
+        add(`adapter.${a.id}.signature`, 'adapters', 'warn', `${en(a.id)} 这个入口没说清哪些对话是它的：认不出它的对话`,
+          { hint: '没有声明会话特征（preset / 工作目录）；在配置文件里给它配 preset（例如网页会话用的预设）' });
       }
     }
     try {
@@ -282,36 +293,38 @@ export async function runSelfCheck(d) {
         const n = normalizeAdapterCheck(x);
         if (n) add(`adapter.${a.id}.${n.id}`, 'adapters', n.level, `${a.id}：${n.label}`, n.detail ? { hint: n.detail } : {});
       }
-    } catch (e) { add(`adapter.${a.id}.selfCheck`, 'adapters', 'warn', `适配器 ${a.id} 的自检出错（${errCode(e)}）`); }
+    } catch (e) { add(`adapter.${a.id}.selfCheck`, 'adapters', 'warn', `${en(a.id)} 这个入口自己的检查出错了（${errCode(e)}）`); }
   }
   const qq = h.adapters?.qq ?? {};
   if (qq.enabled !== false && qq.bridgeDir) {
     // 只看在不在（stat），不读内容：social-v2 里有 agentToken，内容只由 QQ 适配器按白名单字段读
     const has = (rel) => { try { return !!fsx.statSync(path.join(qq.bridgeDir, rel), { throwIfNoEntry: false }); } catch { return false; } };
     const missing = ['socialV2', 'mode', 'sessions', 'restrict'].filter((k) => !has(BRIDGE_FILES[k]));
-    add('bridge.files', 'bridge', missing.length ? 'warn' : 'ok', missing.length ? `桥接文件缺：${missing.map((k) => BRIDGE_FILES[k]).join('、')}` : '桥接文件都在（social-v2、mode、sessions、白名单）');
+    add('bridge.files', 'bridge', missing.length ? 'warn' : 'ok', missing.length ? '桥接目录里少了几个文件：QQ 里的消息可能听不到' : '桥接要的文件都在',
+      { hint: missing.length ? `缺：${missing.map((k) => BRIDGE_FILES[k]).join('、')}（桥接还没跑起来过，或者不是二代模式）` : 'social-v2、mode、sessions、白名单' });
     try {
       const src = fsx.readFileSync(path.join(qq.bridgeDir, BRIDGE_FILES.restrict), 'utf8');
       const ws = whitelistState(src);
       // 补丁是旧的（D156）：原来的三个工具都放行了，只缺后来加的（memory_look）——别的工具照常用，只是缺的那几个先不给她
       const stale = ws.found && ws.missing.length > 0 && ws.missing.every((t) => LATER_TOOLS.includes(t));
       add('bridge.whitelist', 'bridge', !ws.found ? 'fail' : ws.missing.length ? 'warn' : 'ok',
-        !ws.found ? '桥接白名单里找不到 SAFE_EXACT（桥接版本变了？）'
-          : stale ? `QQ 白名单的补丁是旧的：还没放行 ${ws.missing.join('、')}（别的记忆工具照常能用）`
-            : ws.missing.length ? `QQ 会话还用不了：${ws.missing.join('、')}（白名单补丁没打）` : 'QQ 白名单已放行记忆工具',
-        stale ? { hint: '到管理页「设置 → QQ 桥接」再打一次补丁（只会补上缺的那几行，已经有的不动），然后彻底重启 DSH', disables: ws.missing.map((t) => `tools:qq/${t}`) }
-          : ws.missing.length || !ws.found ? { hint: '到管理页「设置 → QQ 桥接」预览并打补丁，然后彻底重启 DSH', disables: ['tools:qq'] } : {});
+        !ws.found ? '桥接的白名单文件和插件认识的样子不一样（桥接升级了？）'
+          : stale ? `QQ 里的记忆补丁是旧的：还没放行 ${ws.missing.join('、')}（别的记忆工具照常能用）`
+            : ws.missing.length ? `QQ 里她还用不了记忆：${ws.missing.join('、')}（白名单补丁没打）` : 'QQ 里她能用记忆（白名单补丁打好了）',
+        stale ? { hint: '到「设置 → 接入 → QQ 桥接」再打一次补丁（只会补上缺的那几行，已经有的不动），然后彻底重启 DSH', disables: ws.missing.map((t) => `tools:qq/${t}`) }
+          : ws.missing.length || !ws.found ? { hint: `到「设置 → 接入 → QQ 桥接」预览并打补丁，然后彻底重启 DSH${!ws.found ? '（白名单里找不到 SAFE_EXACT）' : ''}`, disables: ['tools:qq'] } : {});
     } catch { add('bridge.whitelist', 'bridge', 'warn', '读不到桥接的白名单文件'); }
     try {
       const dir = path.join(qq.bridgeDir, BRIDGE_FILES.presetsDir);
       const residue = (fsx.readdirSync(dir) ?? []).filter((f) => /\.(ya?ml|json|md)$/i.test(f)).some((f) => fsx.readFileSync(path.join(dir, f), 'utf8').includes('【轻量记忆】'));
-      add('bridge.residue', 'bridge', 'info', residue ? '人设里还有【轻量记忆】段落（beta 期间桥接记忆冻结、不退役，正常）' : '人设里没有【轻量记忆】残留');
+      add('bridge.residue', 'bridge', 'info', residue ? '桥接的人设里还留着【轻量记忆】那一段（桥接自带的记忆冻结着、不删，正常）' : '桥接的人设里没有【轻量记忆】残留');
     } catch { /* 没有 presets 目录就不报 */ }
   }
   const frozen = h.features?.freeze !== false;
-  add('bridge.freeze', 'bridge', frozen && d.registered.preExecute ? 'ok' : 'warn', frozen && d.registered.preExecute ? `桥接自带的记忆已冻结：拒绝 ${(h.freeze?.tools ?? []).join('、')} 的写入` : '桥接自带的记忆没冻结');
+  add('bridge.freeze', 'bridge', frozen && d.registered.preExecute ? 'ok' : 'warn', frozen && d.registered.preExecute ? '桥接自带的记忆冻结着：她的记忆只记在如故里' : '桥接自带的记忆没冻结：可能有两份记忆',
+    { hint: frozen && d.registered.preExecute ? `拒绝 ${(h.freeze?.tools ?? []).join('、')} 的写入` : 'host.features.freeze 关着，或者工具执行前的检查没挂上' });
   const un = d.tooltable?.status?.().unclassified ?? [];
-  if (un.length) add('tools.unclassified', 'adapters', 'warn', `有 ${un.length} 个工具没有分类（照常放行，但它说的话没经过审视）：${un.slice(0, 5).map((x) => x.tool).join('、')}`, { hint: '让对应的适配器声明它（最好）；或者在配置文件的 host.egress.extraTools 里补分类：补成说话类的一律送审，标成不说话要在管理页确认' });
+  if (un.length) add('tools.unclassified', 'adapters', 'warn', `有 ${un.length} 个工具不知道是干什么的：用它们发出去的话没经过检查（照常放行）`, { hint: `${un.slice(0, 5).map((x) => x.tool).join('、')}。让对应的插件声明它（最好）；或者在配置文件的 host.egress.extraTools 里补分类：补成说话类的一律送审，标成不说话要在管理页确认` });
 
   const level = items.some((x) => x.level === 'fail') ? 'fail' : items.some((x) => x.level === 'warn') ? 'warn' : 'ok';
   return { at: d.now?.() ?? Date.now(), level, ok: level !== 'fail', items };
@@ -333,13 +346,13 @@ async function llmItems(add, llm, skipNetwork, at) {
   // 还没选的（升级前的配置）：手写的各用途模型要在允许清单里（原来那一项并到这里）
   const notAllowed = typeof llm.target === 'function' ? LLM_USES.filter((u) => ['MODEL_NOT_ALLOWED', 'NO_MODEL'].includes(llm.target(u)?.error)) : [];
   if (notAllowed.length) {
-    add('llm.target', 'models', 'fail', `这些用途的模型不在允许清单里：${notAllowed.join('、')}（配置文件的 host.llm.models / allow）`,
-      { hint: '到管理页「设置 → 后台模型」选一对（选了以后就不再看 models / allow）', disables: notAllowed.map((u) => `llm:${u}`) });
+    add('llm.target', 'models', 'fail', '配置文件里写的后台模型用不了：有的用途没有可用的模型',
+      { hint: `用途：${notAllowed.join('、')}（配置文件的 host.llm.models / allow）。到「设置 → 模型」选一对（选了以后就不再看 models / allow）`, disables: notAllowed.map((u) => `llm:${u}`) });
   } else if (noPair) {
-    add('llm.target', 'models', 'fail', `后台模型选不出来（${noPair.error}）：DSH 里没有默认的模型，也还没在「设置 → 后台模型」里选`,
-      { hint: '到管理页「设置 → 后台模型」选一对、点「试一下」', disables: ['background-llm'] });
+    add('llm.target', 'models', 'fail', `后台模型选不出来（${noPair.error}）：DSH 里没有默认的模型，也还没在「设置 → 模型」里选`,
+      { hint: '到「设置 → 模型」选一对、点「试一下」', disables: ['background-llm'] });
   } else {
-    const named = rows.map((r) => `${pairText(r.pair)}${r.use === 'glance' ? '（第一眼）' : ''}`).join('、');
+    const named = rows.map((r) => `${pairText(r.pair)}${r.use === 'glance' ? '（听到时的判断）' : ''}`).join('、');
     const how = hv.mode === 'chosen' ? '' : rows[0]?.source === 'pinned' ? '（升级前的配置，第一次成功时自动钉住的）' : '（还没选，按升级前的做法：主聊天的服务商 + deepseek-flash）';
     if (skipNetwork || typeof llm.recognize !== 'function') add('llm.target', 'models', 'info', `后台模型：${named}${how}`);
     else {
@@ -353,7 +366,7 @@ async function llmItems(add, llm, skipNetwork, at) {
       }
       if (bad.length) {
         add('llm.target', 'models', 'fail', `后台模型在 DSH 里认不出来：${bad.map((b) => `${pairText(b.pair)}（${b.code}）`).join('、')}`,
-          { hint: '到管理页「设置 → 后台模型」换一对、点「试一下」', disables: ['background-llm'] });
+          { hint: '到「设置 → 模型」换一对、点「试一下」', disables: ['background-llm'] });
       } else if (offCatalog.length) {
         add('llm.target', 'models', 'warn', `后台模型 ${offCatalog.map(pairText).join('、')} 不在 DSH 列出的模型里（DSH 不按目录拦，能不能用以「试一下」为准）${how}`);
       } else add('llm.target', 'models', 'ok', `后台模型 ${named} 在 DSH 里认得${how}`);
@@ -361,12 +374,12 @@ async function llmItems(add, llm, skipNetwork, at) {
   }
   if (hv.state === 'down') {
     add('llm.health', 'models', 'fail', `后台模型不工作（${hv.code ?? '配置有问题'}）${hv.fallback ? `：临时在用聊天的模型（${pairText(hv.fallback)}）顶着` : '：她记不住新的事、回想变少，聊天照常'}`,
-      { hint: '到管理页「设置 → 后台模型」换一对或者点「试一下」', disables: hv.fallback ? [] : ['background-llm'] });
+      { hint: '到「设置 → 模型」换一对或者点「试一下」', disables: hv.fallback ? [] : ['background-llm'] });
   } else if (hv.state === 'flaky') {
     add('llm.health', 'models', 'warn', `后台模型最近不稳定（最近 30 分钟失败过半，${hv.code ?? '暂时的错误'}）：会自己重试`);
   } else {
     const last = rows.map((r) => r.lastOkAt).filter(Boolean).sort((a, b) => b - a)[0];
-    add('llm.health', 'models', last ? 'ok' : 'info', last ? `后台模型上一次调用成功在 ${ago(last, at)}` : '后台模型还没调用过（可以在「设置 → 后台模型」里点「试一下」）');
+    add('llm.health', 'models', last ? 'ok' : 'info', last ? `后台模型上一次调用成功在 ${ago(last, at)}` : '后台模型还没调用过（可以在「设置 → 模型」里点「试一下」）');
   }
 }
 
@@ -377,7 +390,7 @@ function presetItem(add, p) {
   const name = `「${s.name || s.id}」`;
   const mine = Array.isArray(p.roster) ? p.roster.find((r) => r?.id === s.id) : null;
   if (s.enabled === false) {
-    add('host.preset', 'host', 'warn', `预设${name}关着（host.preset.enabled）：新建任务里没有它，用它开过的旧会话打不开`);
+    add('host.preset', 'host', 'warn', `预设${name}关着：新建任务里没有它，用它开过的旧会话打不开`, { hint: '配置文件里 host.preset.enabled 是 false' });
     return;
   }
   if (s.broken || mine?.broken) {

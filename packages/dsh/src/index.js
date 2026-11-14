@@ -26,7 +26,9 @@ export function apply(ctx, config) {
   };
   let preset = null;
   try {
-    preset = createPersonaPreset({ ctx, hostConfig: () => host?.configStore?.host?.() ?? {}, log: { warn: plog('warn'), info: plog('info') } });
+    // setupPending（D173）：还没走完首次设置时，新建任务里的「人设聊天」名字和说明带一句提醒（现在选了也不记）
+    preset = createPersonaPreset({ ctx, hostConfig: () => host?.configStore?.host?.() ?? {}, log: { warn: plog('warn'), info: plog('info') },
+      setupPending: () => host?.dormant?.() === true });
   } catch { preset = null; }
   try { host = createHost(ctx, config ?? {}, { preset, firstRun: true }); } catch (e) {
     // 插件出错只让插件不可用，不能让 DSH 起不来

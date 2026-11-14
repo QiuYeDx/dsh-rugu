@@ -1,2 +1,38 @@
-/* 首次设置（wizard.js）的样式。类名都带 wiz- 前缀；公共组件的样式在 shell.html，不要另起一套。
-   确认过的样稿里这一页的样式可以照搬过来，改成 wiz- 前缀。 */
+/* 首次设置（wizard.js）的样式。类名都带 wiz- 前缀；公共组件在 shell.html；共用的三块（后台模型、想起来的方式、QQ 桥接）的样式在 settings.css。 */
+.wiz { max-width: 600px; margin: 0 auto; padding: 48px 32px 120px; }
+.wiz-dots { display: flex; gap: 6px; align-items: center; margin-bottom: 40px; }
+.wiz-dots i { width: 8px; height: 8px; border-radius: 4px; background: var(--border); transition: width var(--duration-base) var(--ease-out-quint), background var(--duration-base); }
+:root[data-theme="dark"] .wiz-dots i:not(.done):not(.cur) { background: oklch(0.32 0 0); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .wiz-dots i:not(.done):not(.cur) { background: oklch(0.32 0 0); } }
+.wiz-dots i.done { background: var(--muted-foreground); }
+.wiz-dots i.cur { width: 24px; background: var(--foreground); }
+.wiz-dots span { margin-left: 10px; font-size: 13px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.wiz h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: 0.02em; }
+.wiz h1:focus { outline: none; }
+.wiz-lede { margin-top: 6px; color: var(--muted-foreground); }
+.wiz-body { margin-top: 32px; }
+.wiz-body > .note, .wiz-body > .form + .note { margin-top: 16px; }
+.wiz-foot { margin-top: 40px; display: flex; gap: 8px; align-items: center; }
+.wiz-foot .sp { flex: 1; }
+.wiz-facts { display: flex; flex-direction: column; gap: 20px; }
+.wiz-fact { display: flex; gap: 14px; }
+.wiz-fact > svg { margin-top: 3px; color: var(--muted-foreground); flex: none; }
+.wiz-fact > div { min-width: 0; }
+.wiz-fact b { display: block; font-weight: 500; }
+.wiz-fact > div > span { display: block; margin-top: 2px; font-size: 14px; line-height: 22px; color: var(--muted-foreground); }
+.wiz-fact .wiz-path { margin-top: 4px; color: var(--foreground); overflow-wrap: anywhere; }
+.wiz-ack { margin-top: 12px; font-weight: 500; }
+.wiz-intro { margin-bottom: 20px; }
+.wiz-sub { margin-top: 32px; }
+.wiz-sub:first-child { margin-top: 0; }
+.wiz-sub > .fhint { margin: -4px 0 12px; }
+.wiz-skip { margin-top: 8px; }
+.wiz-more { margin-top: 16px; }
+.wiz-finishnote { margin-top: 24px; text-align: right; }
+.wiz-wait { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted-foreground); }
+@media (max-width: 760px) { .wiz { padding: 32px 16px 120px; } }
+@media (max-width: 480px) {
+  .wiz-foot { flex-wrap: wrap; }
+  .wiz-foot .btn-primary { flex: 1 1 100%; order: 3; }
+  .wiz-finishnote { text-align: left; }
+}
