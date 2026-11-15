@@ -8,6 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/dsh-rugu)](https://www.npmjs.com/package/dsh-rugu)
 [![license](https://img.shields.io/npm/l/dsh-rugu)](LICENSE)
+[![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/qiuyedx/dsh-rugu)
 
 [快速开始](#快速开始) · [怎么运作](https://github.com/QiuYeDx/dsh-rugu/blob/main/docs/图解.md) · [花费](https://github.com/QiuYeDx/dsh-rugu/blob/main/docs/花费.md) · [反馈问题](https://github.com/QiuYeDx/dsh-rugu/issues)
 
