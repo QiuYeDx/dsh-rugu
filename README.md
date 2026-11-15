@@ -9,6 +9,7 @@
 [![npm](https://img.shields.io/npm/v/dsh-rugu)](https://www.npmjs.com/package/dsh-rugu)
 [![license](https://img.shields.io/npm/l/dsh-rugu)](LICENSE)
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/qiuyedx/dsh-rugu)
+[![QQ 交流群](https://img.shields.io/badge/QQ%20%E4%BA%A4%E6%B5%81%E7%BE%A4-1130276670-12B7F5?logo=qq&logoColor=white)](#交流与反馈)
 
 [快速开始](#快速开始) · [怎么运作](docs/图解.md) · [花费](docs/花费.md) · [反馈问题](https://github.com/QiuYeDx/dsh-rugu/issues)
 
@@ -143,6 +144,11 @@ node scripts/check-boundaries.mjs
 ```
 
 `packages/core` 是通用记忆核心（`rugu-core`，不依赖任何宿主），`packages/dsh` 是 DSH 插件（`dsh-rugu`）。本地联调用 `node packages/dsh/scripts/install.mjs`（默认只预演）。
+
+## 交流与反馈
+
+- QQ 交流群：**1130276670**
+- 问题和建议：[GitHub Issues](https://github.com/QiuYeDx/dsh-rugu/issues)
 
 ## 许可
 
