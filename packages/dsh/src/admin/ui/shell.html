@@ -125,9 +125,12 @@ h1, h2, h3, p { margin: 0; }
 svg.i { flex: none; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ── 顶部：品牌 + 主导航 ───────────────────────────────────────────────── */
-.top { position: sticky; top: 0; z-index: 30; background: var(--pm-page, var(--background)); border-bottom: 1px solid var(--border); transition: background var(--duration-fast); }
-.top.scrolled { background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
-.top-in { max-width: 1104px; margin: 0 auto; padding: 0 32px; display: flex; align-items: center; gap: 24px; height: 60px; }
+.top { position: sticky; top: 0; z-index: 30; padding: 8px 12px 0; background: transparent; border: 0; pointer-events: none; }
+.top-in { pointer-events: auto; max-width: 1080px; margin: 0 auto; padding: 0 20px 0 24px; display: flex; align-items: center; gap: 24px; height: 56px;
+  border-radius: var(--radius-xl); border: 1px solid transparent; background: transparent; box-shadow: none;
+  transition: background var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast), backdrop-filter var(--duration-fast); }
+.top.scrolled .top-in { background: var(--material); border-color: color-mix(in oklab, var(--border) 72%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); box-shadow: var(--shadow-card); }
 .brand { display: flex; align-items: center; gap: 10px; flex: none; }
 .brand b { font-size: 17px; font-weight: 600; letter-spacing: 0.04em; }
 .mark { flex: none; display: block; }
@@ -390,7 +393,8 @@ details.more > .body { padding-top: 8px; }
 /* ── 窄屏 ─────────────────────────────────────────────────────────────── */
 /* 顶部到 640 以下才折成两行（DSH 设置面板里常常只有 700–900 宽，一行放得下） */
 @media (max-width: 640px) {
-  .top-in { flex-wrap: wrap; height: auto; padding: 0 16px; gap: 0; }
+  .top { padding: 6px 8px 0; }
+  .top-in { flex-wrap: wrap; height: auto; padding: 0 14px; gap: 0; }
   .brand { height: 52px; }
   .uiswitch { margin-left: auto; }
   .nav { order: 3; flex: 0 0 calc(100% + 32px); margin: 0 -16px; padding: 0 8px; height: 44px; }
@@ -398,7 +402,7 @@ details.more > .body { padding-top: 8px; }
   .nav button::after { left: 10px; right: 10px; }
 }
 @media (max-width: 760px) {
-  .top-in { padding: 0 16px; column-gap: 16px; }
+  .top-in { padding: 0 14px; column-gap: 16px; }
   .wrap { padding: 28px 16px 120px; }
   .ph { margin-bottom: 24px; }
   .ph h1 { font-size: 22px; line-height: 30px; }
