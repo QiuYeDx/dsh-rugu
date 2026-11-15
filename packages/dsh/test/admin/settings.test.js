@@ -16,7 +16,7 @@ import { HOST_DEFAULTS, createConfigStore } from '../../src/host/config.js';
 import { bridgeMode } from '../../src/host/bridge-setup.js';
 import { presetSettings, SETUP_NAME_SUFFIX, SETUP_NOTICE } from '../../src/preset/index.js';
 import { lexJs } from '../../../../scripts/check-boundaries.mjs';
-import { makeFakeHost, NOW } from './fixtures.js';
+import { makeFakeHost, NOW, wizardPreviewDraft, WIZARD_VARIANTS } from './fixtures.js';
 import { setup, ORIGIN, TOKEN } from './helpers.js';
 
 const PRICES = HOST_DEFAULTS.budget.prices;
@@ -264,6 +264,18 @@ test('没走完首次设置时：「人设聊天」的名字和说明带提醒�
   assert.ok(!b.description.includes(SETUP_NOTICE));
   const src = fs.readFileSync(new URL('../../src/index.js', import.meta.url), 'utf8');
   assert.ok(src.includes('setupPending: () => host?.dormant?.() === true'), '入口把宿主的「休眠」交给预设');
+});
+
+test('预览分步向导：wizardPreviewDraft 预置 ack，配合 wiz-step 场景直链 #/wizard/N（产品仍要求未勾知情不能进第 2 步）', () => {
+  assert.deepEqual(wizardPreviewDraft('wiz'), { step: 1 });
+  assert.deepEqual(wizardPreviewDraft('wiz-step2'), { ack: true, step: 2 });
+  assert.deepEqual(wizardPreviewDraft('wiz-step3'), { ack: true, step: 3 });
+  assert.deepEqual(wizardPreviewDraft('wiz-step4'), { ack: true, step: 4 });
+  assert.deepEqual(wizardPreviewDraft('wiz-step5'), { ack: true, step: 4 });
+  assert.deepEqual(wizardPreviewDraft('wiz-noollama'), { ack: true, step: 3, embed: 'none' });
+  for (const v of ['wiz-step2', 'wiz-step3', 'wiz-step4', 'wiz-step5', 'wiz-noollama']) assert.ok(WIZARD_VARIANTS.includes(v), v);
+  const host = makeFakeHost({ scenario: 'wiz-step3' });
+  assert.deepEqual(host.setup.draft(), { ack: true, step: 3 });
 });
 
 test('向导：检测不到 Ollama 时想起来的方式默认「先不用」（乙2）；草稿里记的优先；设置页照现在配的', () => {
