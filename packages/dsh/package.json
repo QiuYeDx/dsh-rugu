@@ -1,6 +1,6 @@
 {
   "name": "dsh-rugu",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0",
   "description": "DeepSeek Harness 插件「如故」：让 Agent 像一个真实存在的人——有独立的记忆，只有一段人生。别的记忆插件记的是「你」，如故记的是「她自己经历过什么」：QQ、DSH 桌面（以及别的入口）在场时经历的一切进同一份记忆，回话前像人一样想起一些，并自己判断在这里能不能说。DSH 设置里带管理页。",
   "keywords": [
     "dsh",
@@ -48,7 +48,7 @@
     "node": ">=22.16"
   },
   "dependencies": {
-    "rugu-core": "0.1.0-beta.0"
+    "rugu-core": "0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "*"
