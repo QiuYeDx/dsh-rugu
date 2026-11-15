@@ -46,19 +46,28 @@ test('拼出来的新页面：每个 <script> / <style> 都带同一个 nonce；
   assert.throws(() => renderNextPage({ nonce: 'abc', token: '<script>' }), TypeError);
 });
 
+test('shell：内联 favicon，窄屏仍显示「回旧版」全文（不隐藏 span）', () => {
+  const shell = fs.readFileSync(new URL('../../src/admin/ui/shell.html', import.meta.url), 'utf8');
+  assert.match(shell, /rel="icon"[^>]+data:image\/svg\+xml/);
+  assert.ok(!/\.uiswitch span\s*\{\s*display:\s*none/.test(shell));
+  assert.ok(shell.includes('flex-shrink: 0') && shell.includes('.uiswitch'));
+});
+
 test('新页面的源文件：没有 innerHTML / outerHTML / insertAdjacentHTML / document.write / eval；不加载外部资源；没有本机路径', () => {
   const files = fs.readdirSync(UI_DIR).filter((f) => /\.(js|css|html)$/.test(f));
   assert.ok(files.length >= 13);
   for (const f of files) {
-    const src = fs.readFileSync(new URL(f, UI_DIR), 'utf8');
+    let src = fs.readFileSync(new URL(f, UI_DIR), 'utf8');
+  if (f === 'shell.html') src = src.replace(/<link rel="icon"[^>]*>\n?/, '');
     for (const bad of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(', 'new Function', "setAttribute('style'"]) assert.ok(!src.includes(bad), `${f}: ${bad}`);
     assert.ok(!/https?:\/\/(?!www\.w3\.org\/2000\/svg)/.test(src), `${f}: 外部地址`);
-    assert.ok(!/<link\b|@import|url\(\s*['"]?(?!#)/.test(src), `${f}: 外部样式 / 字体`);
+    const noExt = src;
+    assert.ok(!/<link\b|@import|url\(\s*['"]?(?!#)/.test(noExt), `${f}: 外部样式 / 字体`);
     assert.ok(!/[A-Z]:\\\\|[A-Z]:\\[^\\]/.test(src), `${f}: 本机路径`);
   }
   // 拼出来的整页也一样（启动脚本里的回旧版只用 textContent）
   const html = renderNextPage({ nonce: 'n', token: 't' });
-  assert.ok(!/innerHTML|<link\b|src="http/.test(html));
+  assert.ok(!/innerHTML|<link\b(?!\s+rel="icon")|src="http/.test(html));
   assert.ok(!UI_BOOT.includes('innerHTML') && UI_BOOT.includes('textContent'));
 });
 
