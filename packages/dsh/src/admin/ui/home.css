@@ -1,6 +1,8 @@
 /* 首页（home.js）。类名都带 home- 前缀；公共的列表行、小节、按钮用 shell.html 里的。 */
-.home-hero { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 48px; }
-.home-orb { width: 52px; height: 52px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--gold-soft); color: var(--gold-ink); }
+.home-hero { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 48px; overflow: visible; }
+.home-orb-wrap { flex: none; display: grid; place-items: center; padding: 32px 20px 20px 36px; margin: -20px 0 -16px -28px; overflow: visible; }
+.home-orb { width: 52px; height: 52px; border-radius: 50%; position: relative; display: grid; place-items: center; background: var(--gold-soft); color: var(--gold-ink); }
+.home-orb.ok::before { content: ""; position: absolute; inset: -34px; border-radius: 50%; background: radial-gradient(circle, rgba(214, 200, 166, 0.34) 0%, rgba(214, 200, 166, 0.1) 42%, transparent 72%); pointer-events: none; z-index: -1; }
 :root[data-theme="dark"] .home-orb.ok { box-shadow: var(--shadow-glow); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .home-orb.ok { box-shadow: var(--shadow-glow); } }
 .home-orb.warn { background: var(--secondary); color: var(--warning); }
@@ -41,7 +43,9 @@
 @media (max-width: 760px) { .home-grid { grid-template-columns: minmax(0, 1fr); gap: 48px; } }
 @media (max-width: 560px) {
   .home-hero { gap: 16px; }
+  .home-orb-wrap { padding: 28px 16px 16px 30px; margin-left: -24px; }
   .home-orb { width: 44px; height: 44px; }
+  .home-orb.ok::before { inset: -28px; }
   .home-hero h1 { font-size: 20px; line-height: 28px; }
 }
 .home-urgent { color: var(--warning); font-weight: 500; }

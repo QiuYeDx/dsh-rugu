@@ -101,7 +101,7 @@ Rugu.define('home', (R) => {
   function hero(d) {
     const hl = d.headline ?? { level: 'ok', title: '她在记着。', text: '' };
     const orb = { ok: ['ok', 'gu', 26, 1.9], quiet: ['quiet', 'gu', 26, 1.9], warn: ['warn', 'warn', 24], bad: ['bad', 'warn', 24] }[hl.level] ?? ['ok', 'gu', 26, 1.9];
-    return h('div', { class: 'home-hero' }, h('div', { class: `home-orb ${orb[0]}`, 'aria-hidden': 'true' }, icon(orb[1], orb[2], orb[3])),
+    return h('div', { class: 'home-hero' }, h('div', { class: 'home-orb-wrap', 'aria-hidden': 'true' }, h('div', { class: `home-orb ${orb[0]}` }, icon(orb[1], orb[2], orb[3]))),
       h('div', null, h('h1', { tabindex: '-1', 'data-page-title': '' }, hl.title), hl.text ? h('p', null, hl.text) : null,
         hl.action ? btn(hl.action.label, { kind: 'primary', onclick: () => R.go(hl.action.to) }) : null));
   }
