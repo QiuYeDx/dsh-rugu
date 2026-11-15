@@ -135,9 +135,23 @@ export const HOME_VARIANTS = new Set(['llmdown', 'fallback', 'readonly', 'off'])
  * 「设置」和首次设置（D173）的几种状态（数据同 normal，只有宿主那一半不一样）：
  *   llmthink 后台模型正常但关不掉思考；llmoff 选了「不用后台模型」；noqq 还没接 QQ；qqgen1 桥接不是二代模式；
  *   wiz / wiz-noollama 首次设置模式（还没有核心；预览服务器给它们开设置模式的路由），一个本机有 Ollama、一个没有。
+ *   wiz-step2 … wiz-step5：预览截图用，草稿里带好 ack（第 1 步门槛）与 step，直链 #/wizard/N 才能看到对应屏（产品行为不变）。
  */
 export const SETTINGS_VARIANTS = Object.freeze(['llmthink', 'llmoff', 'noqq', 'qqgen1']);
-export const WIZARD_VARIANTS = Object.freeze(['wiz', 'wiz-noollama']);
+export const WIZARD_VARIANTS = Object.freeze(['wiz', 'wiz-noollama', 'wiz-step2', 'wiz-step3', 'wiz-step4', 'wiz-step5']);
+
+/** 首次设置预览场景：宿主 setup.draft（含「我知道了」门槛所需的 ack）。 */
+export function wizardPreviewDraft(variant) {
+  switch (variant) {
+    case 'wiz': return { step: 1 };
+    case 'wiz-step2': return { ack: true, step: 2 };
+    case 'wiz-step3': return { ack: true, step: 3 };
+    case 'wiz-step4': return { ack: true, step: 4 };
+    case 'wiz-step5': return { ack: true, step: 4 };
+    case 'wiz-noollama': return { ack: true, step: 3, embed: 'none' };
+    default: return {};
+  }
+}
 for (const v of [...SETTINGS_VARIANTS, ...WIZARD_VARIANTS]) HOME_VARIANTS.add(v);
 const err = (code, message) => Object.assign(new Error(message ?? code), { code, name: code === 'CONTRACT' ? 'ContractError' : code === 'READ_ONLY' ? 'ReadOnlyError' : 'Error' });
 
@@ -1053,7 +1067,7 @@ function addSettingsParts(host, { variant, scenario, now, calls, hostCfg, setCfg
     self: wizard ? {} : { principalLabel: '主人' },
     preset: wizard || scenario === 'empty' ? {} : { name: '', personaPrefix: '我是云云，主人的朋友。平时话不多，喜欢听大家聊天，偶尔接一句；被问到以前的事会先想一想再说。' },
     adapters: { qq: qqOn ? { enabled: true, bridgeDir, selfNames: ['云云', '小云'] } : { enabled: true, bridgeDir: '' } },
-    setup: { completedAt: wizard ? 0 : now - 30 * DAY, draft: wizard ? { step: 1 } : {} },
+    setup: { completedAt: wizard ? 0 : now - 30 * DAY, draft: wizard ? wizardPreviewDraft(variant) : {} },
   });
   // 「关于 · 数据在哪儿」从宿主状态的 dataDir / configFile 读（不另给 host.paths：导出目录的测试要它走自己的推断）
   const paths = { dataDir: 'E:\\data\\memory', configFile: 'C:\\Users\\someone\\.dsh\\persona-memory.json' };

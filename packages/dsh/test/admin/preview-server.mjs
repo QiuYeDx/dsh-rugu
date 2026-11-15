@@ -28,7 +28,7 @@ const previewNow = Number(process.env.PM_PREVIEW_NOW) || undefined;
 const scenarios = {};
 // 首页（D170）的几种状态：llmdown 后台模型不工作、fallback 在用聊天模型顶着、readonly 只读、off 总开关关着（数据同 normal）
 const SCENARIOS = ['normal', 'empty', 'errors', 'big', 'old', 'llmdown', 'fallback', 'readonly', 'off', 'many'];
-// D173：「设置」的几种状态（llmthink / llmoff / noqq / qqgen1）和首次设置模式（wiz：有 Ollama；wiz-noollama：没有），见 fixtures.js
+// D173：「设置」的几种状态（llmthink / llmoff / noqq / qqgen1）和首次设置模式（wiz / wiz-step2…5 / wiz-noollama；分步场景的草稿见 fixtures.wizardPreviewDraft），见 fixtures.js
 SCENARIOS.push(...SETTINGS_VARIANTS, ...WIZARD_VARIANTS);
 const SC = SCENARIOS.join('|');
 // 星图的「现在」跟着真的时间往前走（从假数据的那一刻起），实时增量才看得到新的想起
