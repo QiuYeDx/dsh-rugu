@@ -228,8 +228,44 @@ Rugu.define('memory', (R) => {
     if (r?.sessions) lines.push(`她已经在 ${r.sessions} 个对话里用过它，那些对话记录里的字收不回。`);
     return lines;
   }
+  /** 场合键 → 下拉要显示的名字（字符串；和集成层 settingLabels 同一套说法）。 */
+  function settingsEntryLabel(v) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (!v || typeof v !== 'object') return null;
+    const label = typeof v.label === 'string' && v.label.trim() ? v.label.trim() : null;
+    if (!label) return null;
+    const hint = typeof v.hint === 'string' && v.hint.trim() ? v.hint.trim() : '';
+    return v.labelKind === 'description' && hint ? `${label}（${hint}）` : label;
+  }
+  /** 合并多份场合表（后来的不覆盖已有的）。 */
+  function mergeAllSettings(...parts) {
+    const out = {};
+    for (const p of parts) {
+      if (!p || typeof p !== 'object') continue;
+      for (const [k, v] of Object.entries(p)) {
+        if (out[k]) continue;
+        const label = settingsEntryLabel(v);
+        if (label) out[k] = label;
+      }
+    }
+    return out;
+  }
+  function hasPlaceMeta(meta) { return !!meta && Object.keys(meta.allSettings ?? {}).length > 0; }
+  /** 一页读回后更新下拉缓存（空 pickable 不能挡住 memories 里的 settings）。 */
+  function applyPageMeta(d, view, bag = S) {
+    const incoming = d.allSettings ?? (view === 'memories' ? d.settings : undefined);
+    const allSettings = mergeAllSettings(bag.meta?.allSettings, incoming);
+    const pickable = Array.isArray(d.pickable) ? d.pickable : (bag.meta?.pickable ?? []);
+    if (Object.keys(allSettings).length > 0) bag.meta = { allSettings, pickable };
+    else if (pickable.length > 0 && !bag.meta) bag.meta = { allSettings: {}, pickable };
+  }
+  function shouldRequestMeta(page, bag = S) {
+    if (page.meta === false) return false;
+    if (!hasPlaceMeta(bag.meta)) return true;
+    return page.meta === true;
+  }
   const lib = { TYPES, PURGE_ALSO_BACKUPS_DEFAULT, filtersOf, paramsOf, sameFilters, rangeOf, dims, requestFor, daysRequestFor, jumpAt, whoName, placeName,
-    metaParts, tagsOf, titleOf, normalize, purgeSummary, clip };
+    metaParts, tagsOf, titleOf, normalize, purgeSummary, clip, mergeAllSettings, hasPlaceMeta, applyPageMeta, shouldRequestMeta, settingsEntryLabel };
 
   // ════════════════════════════════════════════════════════════════════════
   // 状态
@@ -313,7 +349,7 @@ Rugu.define('memory', (R) => {
     const pOpts = [{ value: '', label: '全部的人' }, { sep: true },
       ...people.map((p) => ({ value: String(p.id), label: `${p.name}${p.aliases?.length ? `（也叫${p.aliases[0]}）` : ''}${dup.get(p.name) > 1 && p.place ? ` · ${placeName(ctxOf(L), p.place)}` : ''}` }))];
     if (f.who && !pOpts.some((o) => o.value === f.who)) pOpts.push({ value: f.who, label: whoName(ctxOf(L), Number(f.who)) ?? '这个人' });
-    const places = Object.entries(S.meta?.allSettings ?? {});
+    const places = Object.entries(mergeAllSettings(S.meta?.allSettings, L.settings));
     const plOpts = [{ value: '', label: '全部场合' }, { sep: true }, ...places.map(([k, v]) => ({ value: k, label: clip(v, 24) }))];
     if (f.place && !plOpts.some((o) => o.value === f.place)) plOpts.push({ value: f.place, label: placeName(ctxOf(L), f.place) });
     const tOpts = [...Object.entries(TIMES).map(([k, v]) => ({ value: k, label: v })),
@@ -344,13 +380,22 @@ Rugu.define('memory', (R) => {
     return f.from != null && f.to != null ? `${d(f.from)}–${d(f.to)}` : f.from != null ? `${d(f.from)} 以后` : f.to != null ? `${d(f.to)} 以前` : '自定';
   }
 
+  async function ensurePlaceMeta() {
+    if (hasPlaceMeta(S.meta)) return;
+    try {
+      const d = await R.api.get('settings', { limit: '200' });
+      const map = {};
+      for (const s of d.items ?? []) if (s.key) map[s.key] = s.title ?? settingsEntryLabel(s) ?? '某个场合';
+      if (Object.keys(map).length) S.meta = { allSettings: mergeAllSettings(S.meta?.allSettings, map), pickable: S.meta?.pickable ?? [] };
+    } catch { /* 场合页也读不出来就只靠当前页 */ }
+  }
+
   async function fetchPage(page) {
     const L = S.list;
-    const [view, q] = requestFor(L.f, { ...page, meta: !S.meta && page.meta !== false });
+    const [view, q] = requestFor(L.f, { ...page, meta: shouldRequestMeta(page) });
     const d = await R.api.get(view, q);
     if (d?.unsupported) throw Object.assign(new Error('这个版本的核心还没有合并的记忆列表，先去旧版看。'), { code: 'UNAVAILABLE', status: 503 });
-    if (d.allSettings || d.pickable) S.meta = { allSettings: d.allSettings ?? {}, pickable: d.pickable ?? [] };
-    if (view === 'memories' && !S.meta) S.meta = { allSettings: d.settings ?? {}, pickable: d.pickable ?? [] };
+    applyPageMeta(d, view);
     if (typeof d.readOnly === 'boolean') S.readOnly = d.readOnly;
     Object.assign(L.names, d.names ?? {});
     Object.assign(L.settings, d.settings ?? {});
@@ -375,6 +420,8 @@ Rugu.define('memory', (R) => {
     L.items = []; L.byRef.clear(); L.rows.clear(); L.lastDay = null; L.group = null;
     L.total = d.total ?? null;
     L.next = d.next ?? null; L.prev = d.prev ?? null;
+    await ensurePlaceMeta();
+    if (seq !== L.seq) return;
     R.clear(L.els.box);
     drawToolbar();
     append((d.items ?? []).map((x) => normalize(x, L.f.type)));
@@ -1216,6 +1263,7 @@ Rugu.define('memory', (R) => {
     document.querySelector('.mem-bulk')?.remove();
     S.sky?.inst?.hide();
     S.list?.io?.disconnect();
+    S.meta = null;
   }
 
   return { render, update, leave, lib };

@@ -38,7 +38,9 @@ test('feed：合并的列表（四种混排、新的在前）；meta=1 才带下
   assert.equal(d.items.length, 20);
   assert.ok(new Set(d.items.map((x) => x.kind)).size >= 3, '几种混在一起');
   for (let i = 1; i < d.items.length; i++) assert.ok(d.items[i - 1].at >= d.items[i].at, '新的在前');
-  assert.ok(d.allSettings && Array.isArray(d.pickable));
+  assert.ok(d.allSettings && typeof d.allSettings === 'object' && !Array.isArray(d.allSettings));
+  assert.ok(Object.keys(d.allSettings).length >= 3, '下拉场合至少多个');
+  assert.ok(Array.isArray(d.pickable));
   assert.equal(typeof d.readOnly, 'boolean');
   const seen = new Set(d.items.map((x) => x.ref));
   let next = d.next;
@@ -124,6 +126,31 @@ test('memory.js：地址栏参数 ⇄ 筛选条件（不认识的值退回默认
   assert.deepEqual({ ...lib.filtersOf(lib.paramsOf(f)) }, { ...f });
   assert.ok(lib.sameFilters(lib.filtersOf({ type: 'fact' }), lib.filtersOf({ type: 'fact', open: 'a9' })), '只是打开详情不算换了列表');
   assert.ok(!lib.sameFilters(lib.filtersOf({ type: 'fact' }), lib.filtersOf({ type: 'fact', at: '5' })));
+});
+
+test('memory.js：场合下拉缓存——空 pickable 不能挡住 memories.settings；合并不覆盖', () => {
+  const { lib } = memoryModule();
+  const merged = lib.mergeAllSettings({ sk: '已有' }, { sk: '新来的', sk2: '第二场合' });
+  assert.equal(merged.sk, '已有');
+  assert.equal(merged.sk2, '第二场合');
+  assert.ok(lib.hasPlaceMeta({ allSettings: { a: '场合' }, pickable: [] }));
+  assert.ok(!lib.hasPlaceMeta({ allSettings: {}, pickable: [] }));
+  assert.ok(!lib.shouldRequestMeta({ meta: false }));
+  assert.ok(lib.shouldRequestMeta({}));
+  assert.ok(!lib.shouldRequestMeta({}, { meta: { allSettings: { k: '场合' }, pickable: [] } }));
+  const bag = { meta: null };
+  lib.applyPageMeta({ pickable: [], settings: { k1: '和你的私聊', k2: { label: '一个 QQ 群', labelKind: 'description', hint: '9 人' } } }, 'memories', bag);
+  assert.equal(Object.keys(bag.meta.allSettings).length, 2);
+  assert.equal(bag.meta.allSettings.k2, '一个 QQ 群（9 人）');
+  const locked = { meta: { allSettings: {}, pickable: [] } };
+  lib.applyPageMeta({ pickable: [], settings: { k3: '网页对话' } }, 'memories', locked);
+  assert.equal(locked.meta.allSettings.k3, '网页对话', '以前会被空 pickable 拦住，现在要从 settings 填进来');
+});
+
+test('memories 视图：不依赖 meta 参数也带 settings 场合表', async () => {
+  const s = setup();
+  const d = (await s.view('memories', { list: 'assertions', limit: '5' })).body.data;
+  assert.ok(Object.keys(d.settings).length >= 3);
 });
 
 test('memory.js：一页的请求——全部 / 单种走 feed，原话、已隐藏走 memories；只给这一类认的筛选；时间按本地的天', () => {
