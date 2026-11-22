@@ -3726,11 +3726,9 @@ html.pm-sm-maxed{overflow:hidden}
     }
     // Tab 键进来时，选中的页签可能被渐隐盖住一半：滚进来
     list.addEventListener('focusin', (e) => { const b = e.target.closest?.('.pm-tab'); if (b) revealTab(b, true); });
-    // D170：新版管理页在 ?ui=next 后面；这里留一个去新版的小链接（点了记下选择，DSH 下次打开按它给地址）
-    let usedNext = false;
-    try { usedNext = localStorage.getItem('rugu.admin.ui') === 'next'; } catch { usedNext = false; }
+    // D170 / D174：新版是默认；能落在这一页是主人点过「回旧版」或配置写了 classic。留一个回新版的小链接（点了记下选择，DSH 下次打开按它给地址）
     const toNext = h('a', { class: 'pm-link', href: 'admin?ui=next', style: { marginLeft: '10px', fontSize: '13px', fontWeight: '400' },
-      onclick: () => { try { localStorage.setItem('rugu.admin.ui', 'next'); } catch { /* 存不了就算了 */ } } }, usedNext ? '回到新版' : '试试新版');
+      onclick: () => { try { localStorage.setItem('rugu.admin.ui', 'next'); } catch { /* 存不了就算了 */ } } }, '回到新版');
     const header = h('header', { class: 'pm-head' }, h('h1', null, '如故', toNext), headPills, headMeta);
     const edgeB = h('div', { class: 'pm-edge-b', 'aria-hidden': 'true' });
     clear(app, header, bar, pages);

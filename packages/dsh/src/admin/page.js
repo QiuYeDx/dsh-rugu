@@ -127,9 +127,10 @@ export function renderNextPage({ nonce, token, setupMode = false }, parts = uiPa
 }
 
 /**
- * 这次打开哪一版：地址上的 ?ui=next|classic 优先，没有就按配置 host.admin.ui（默认 classic）。
- * 首次设置（setupMode）也跟着这个开关走（D173）：新版开着就用新版的一步一屏向导，否则旧版的一长页。
- * 以后切默认：把 host/config.js 里 admin.ui 的默认值改成 'next'；删旧页：这里只剩 next。
+ * 这次打开哪一版：地址上的 ?ui=next|classic 优先，没有就按配置 host.admin.ui；配置没给、读不出来或写了别的，都是新版（D174）。
+ * 只有明确写了 'classic'（配置，或页面里点「回旧版」后 DSH 外壳带的 ?ui=classic）才是旧版。
+ * 首次设置（setupMode）也跟着这个开关走（D173）：新版用一步一屏的向导，旧版是一长页。
+ * 删旧页：这里只剩 next。
  * @param {string|null} param   地址上的 ui
  * @param {unknown} configured  配置里的 host.admin.ui
  * @param {boolean} [_setupMode]  不再影响选哪一版（留着参数，调用方不用改）
@@ -137,7 +138,7 @@ export function renderNextPage({ nonce, token, setupMode = false }, parts = uiPa
  */
 export function pickUi(param, configured, _setupMode = false) {
   if (param === 'next' || param === 'classic') return param;
-  return configured === 'next' ? 'next' : 'classic';
+  return configured === 'classic' ? 'classic' : 'next';
 }
 
 /** 管理页的 CSP。 */

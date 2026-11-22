@@ -67,7 +67,7 @@ window.__ModuleLoader__.load({
     /** 和页面（ui/base.js 的 THEME_MESSAGE）约定的消息类型。页面只认同源、来自父窗口、这个形状的消息。 */
     const THEME_MESSAGE = 'rugu:theme';
     const themeNow = () => (document.body && document.body.hasAttribute(DARK_ATTR) ? 'dark' : 'light');
-    /** 主人上次选的是新版还是旧版（页面里点「回旧版」「试试新版」时记下的；同源的 localStorage）。没选过返回 null：按服务端的配置。 */
+    /** 主人上次选的是新版还是旧版（页面里点「回旧版」「回到新版」时记下的；同源的 localStorage）。没选过返回 null：按服务端的配置（默认新版）。 */
     function chosenUi() {
       try { const v = window.localStorage.getItem('rugu.admin.ui'); return v === 'next' || v === 'classic' ? v : null; } catch { return null; }
     }
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
           let ok = true;
           try { ok = !!frame.contentDocument && frame.contentDocument.title !== '' && !/^\s*\{/.test(frame.contentDocument.body?.textContent ?? ''); } catch { ok = false; }
           setFailed(!ok);
-          // 页面里换了版本（「回旧版」「试试新版」是 iframe 里的链接）以后也对上颜色
+          // 页面里换了版本（「回旧版」「回到新版」是 iframe 里的链接）以后也对上颜色
           lastTheme = themeNow();
           postTheme(frame);
           later();

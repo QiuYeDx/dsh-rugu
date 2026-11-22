@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { ROUTES } from '../../src/admin/index.js';
 import { renderNextPage, uiParts, pickUi, UI_SCRIPTS, UI_STYLES, UI_BOOT, pageCsp } from '../../src/admin/page.js';
+import { HOST_DEFAULTS, mergeHost } from '../../src/host/config.js';
 import { makeFakeHost } from './fixtures.js';
 import { setup, ORIGIN } from './helpers.js';
 
@@ -97,34 +98,46 @@ test('每个模块一个 <script>：一个出语法错只坏它自己，别的�
   for (const m of ['home', 'memory', 'settings', 'wizard']) assert.equal(st[m], 'pending', m);
 });
 
-test('新旧开关：?ui= 优先，没给按 host.admin.ui（默认旧版）；首次设置也跟着开关走（D173：新版有自己的向导）', async () => {
-  assert.equal(pickUi(null, undefined), 'classic');
+test('新旧开关：?ui= 优先，没给按 host.admin.ui（D174：默认新版，只有明确写 classic 才是旧版）；首次设置也跟着开关走（D173：新版有自己的向导）', async () => {
+  assert.equal(pickUi(null, undefined), 'next', '没配置：新版');
+  assert.equal(pickUi(null, null), 'next', '配置读不出来：新版');
+  assert.equal(pickUi(null, 'weird'), 'next', '配置写了别的：新版');
   assert.equal(pickUi(null, 'next'), 'next');
+  assert.equal(pickUi(null, 'classic'), 'classic');
   assert.equal(pickUi('classic', 'next'), 'classic');
   assert.equal(pickUi('next', 'classic'), 'next');
-  assert.equal(pickUi('weird', 'classic'), 'classic');
+  assert.equal(pickUi('weird', 'classic'), 'classic', '地址上的值不认识：回头看配置');
+  assert.equal(pickUi('weird', undefined), 'next');
   assert.equal(pickUi('next', 'next', true), 'next');
   assert.equal(pickUi(null, 'next', true), 'next');
-  assert.equal(pickUi(null, undefined, true), 'classic');
+  assert.equal(pickUi(null, undefined, true), 'next', '首次设置：默认也是新版的向导');
+  assert.equal(pickUi(null, 'classic', true), 'classic');
   const s = setup();
   const get = async (q) => (await s.h.page(new Request(`${ORIGIN}${ROUTES.page}${q}`))).text();
-  const classic = await get('');
-  assert.ok(classic.includes('__pmStarmap') || classic.includes('class="pm"'), '默认是旧版');
-  assert.ok(!classic.includes("Rugu.define('home'"));
-  const next = await get('?ui=next&theme=dark');
-  assert.ok(next.includes("Rugu.define('home'"));
-  // 配置里切成新版
+  const dflt = await get('');
+  assert.ok(dflt.includes("Rugu.define('home'"), '默认是新版');
+  const classicPage = await get('?ui=classic');
+  assert.ok(classicPage.includes('__pmStarmap') || classicPage.includes('class="pm"'), '?ui=classic 是旧版');
+  assert.ok(!classicPage.includes("Rugu.define('home'"));
+  assert.ok((await get('?ui=next&theme=dark')).includes("Rugu.define('home'"));
+  // 默认配置本身就是新版（新装的用户没有任何配置、也没点过切换）
+  assert.equal(HOST_DEFAULTS.admin.ui, 'next');
+  assert.equal(mergeHost(HOST_DEFAULTS, {}).admin.ui, 'next');
+  assert.equal(mergeHost(HOST_DEFAULTS, { admin: { ui: 'classic' } }).admin.ui, 'classic', '主人写 classic 仍然尊重');
+  // 配置里写 classic：没给 ui 时是旧版，?ui=next 仍然能看新版
   const host = makeFakeHost();
   const get0 = host.config.get;
-  host.config.get = () => { const c = get0(); c.host.admin = { ui: 'next' }; return c; };
+  host.config.get = () => { const c = get0(); c.host.admin = { ui: 'classic' }; return c; };
   const s2 = setup({ host });
-  assert.ok((await (await s2.h.page(new Request(`${ORIGIN}${ROUTES.page}`))).text()).includes("Rugu.define('home'"));
-  assert.ok(!(await (await s2.h.page(new Request(`${ORIGIN}${ROUTES.page}?ui=classic`))).text()).includes("Rugu.define('home'"));
+  const page2 = (q) => s2.h.page(new Request(`${ORIGIN}${ROUTES.page}${q}`)).then((r) => r.text());
+  assert.ok(!(await page2('')).includes("Rugu.define('home'"));
+  assert.ok((await page2('?ui=next')).includes("Rugu.define('home'"));
   // 日志里记下开的是哪一版
   assert.ok(s.logs.some(([, ev, f]) => ev === 'admin.request' && f.route === 'page' && f.ui === 'next'));
+  assert.ok(s2.logs.some(([, ev, f]) => ev === 'admin.request' && f.route === 'page' && f.ui === 'classic'));
 });
 
-test('旧页面：认 ?tab= 直达页签，页头有去新版的链接', () => {
+test('旧页面：认 ?tab= 直达页签，页头有回新版的链接', () => {
   const page = fs.readFileSync(new URL('../../src/admin/page.html', import.meta.url), 'utf8');
   assert.ok(page.includes("new URLSearchParams(location.search).get('tab')"));
   assert.ok(page.includes("href: 'admin?ui=next'"));

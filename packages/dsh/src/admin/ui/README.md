@@ -1,6 +1,6 @@
-# 新管理页（D170，重做中）
+# 新管理页（D170）
 
-旧版是 `../page.html` 一个文件，现在仍是默认。新版在这个目录里，同一个地址加 `?ui=next` 打开（或配置 `host.admin.ui: 'next'`）。
+新版在这个目录里，是管理页的默认（D174）；旧版是 `../page.html` 一个文件，留作退路，同一个地址加 `?ui=classic` 打开（或配置 `host.admin.ui: 'classic'`）。
 这一页说明给接着做「记忆」「待处理 + 场合」「设置 + 关于 + 首次设置」三路的人：目录、模块怎么登记、公共函数、约定、怎么预览和截图、不许做的事。
 
 视觉和交互的标准是主人确认过的样稿（仓库外的私有材料；截图名和这里的去处、分段一一对应）。Token 和组件样式已经从样稿搬进 `shell.html`，**照着用，不要另起一套**。
@@ -12,11 +12,11 @@
 | `shell.html` | 骨架：`<head>`、设计 token（浅 / 深两套 CSS 变量）、全页公共组件的样式、挂载点 `#app` |
 | `base.js` | 地基：全页唯一的全局 `window.Rugu`（下文的 `R`）。`h()`、图标、请求层（含确认令牌流程）、路由、主题、公共组件、格式化、模块登记 |
 | `home.js` / `home.css` | 首页（数据：`admin.data?view=home`） |
-| `memory.js` / `memory.css` | 记忆（列表、人物、星图、成长）——现在是占位 |
-| `pending.js` / `pending.css` | 待处理——现在是占位 |
-| `places.js` / `places.css` | 场合（场合、规则、叮嘱）——现在是占位 |
-| `settings.js` / `settings.css` | 设置（基本、模型、接入、花费、备份、诊断、关于）——现在是占位 |
-| `wizard.js` / `wizard.css` | 首次设置——现在是占位（没有配置文件时服务端仍然给旧版的向导） |
+| `memory.js` / `memory.css` | 记忆（列表、人物、星图、成长，D171） |
+| `pending.js` / `pending.css` | 待处理（D172） |
+| `places.js` / `places.css` | 场合（场合、规则、叮嘱，D172） |
+| `settings.js` / `settings.css` | 设置（基本、模型、接入、花费、备份、诊断、关于，D173） |
+| `wizard.js` / `wizard.css` | 首次设置（一步一屏，没有核心时设置模式也走它，D173） |
 
 `../page.js` 的 `renderNextPage` 在响应时把它们拼成**一个** HTML：`shell.html` + 每个 `.css` 一个 `<style nonce>` + 每个 `.js` 一个 `<script nonce>`（`base.js` 第一个）+ 最后一个启动脚本 `Rugu.start()`。没有构建步骤、不加载外部资源。
 加新文件：在 `page.js` 的 `UI_SCRIPTS` / `UI_STYLES` 里加一行字面量的 `new URL('./ui/xxx.js', import.meta.url)`（打包检查靠它认文件），再在 `test/package/pack-smoke.test.js` 的清单里加上。

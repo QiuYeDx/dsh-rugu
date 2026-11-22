@@ -945,8 +945,8 @@
         return h('button', { type: 'button', 'aria-current': dest === k ? 'page' : null, onclick: () => go(k) },
           icon(ic, 16), label, n ? h('span', { class: 'count', 'aria-label': `${n} 件` }, n > 99 ? '99+' : String(n)) : null);
       }));
-    // 回旧版：新页面还在搬的这段时间留着（全部搬完、旧页删掉时去掉）
-    const back = h('a', { class: 'uiswitch', href: classicHref(cur?.path ?? 'home', theme.current), title: '回到旧版管理页（新版还在搬，没搬完的去处在旧版里）', 'aria-label': '回旧版', onclick: () => rememberUi('classic') },
+    // 回旧版：新版已是默认（D174），这个入口留作退路（旧页删掉时去掉）
+    const back = h('a', { class: 'uiswitch', href: classicHref(cur?.path ?? 'home', theme.current), title: '回到旧版管理页', 'aria-label': '回旧版', onclick: () => rememberUi('classic') },
       icon('undo', 14), h('span', null, '回旧版'));
     clear(topEl, h('div', { class: 'top-in' }, h('div', { class: 'brand' }, brandMark(28), h('b', null, '如故')), navEl, back));
   }
