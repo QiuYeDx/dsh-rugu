@@ -1,5 +1,5 @@
 // 新管理页「记忆」这一路（D171）：集成层的合并列表 / 按天计数 / 人物三个视图；memory.js 里能脱离浏览器测的纯函数（筛选参数、请求、
-// 行的元信息、状态标签、路由参数）；彻底删除「连备份一起删」默认勾上；星图两种挂载（旧页面自己带工具条和详情、新页面交给页面）都能用。
+// 行的元信息、状态标签、路由参数）；彻底删除「连备份一起删」默认勾上；星图两种挂载（自己带工具条和详情、交给页面）都能用。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -289,7 +289,7 @@ async function starmapApi() {
   return { get: async (view) => (view === 'starmap' ? snap : view === 'starmapPeek' ? { items: [] } : { now: NOW, rev: snap.rev, cursor: snap.cursor, traces: [], recalls: [], tells: [] }) };
 }
 
-test('星图：旧页面的挂载照旧——自己带工具条（按人 / 按时间、种类、场合、搜索、演示、放大）和详情卡', async () => {
+test('星图：独立挂载（不给 external）——自己带工具条（按人 / 按时间、种类、场合、搜索、演示、放大）和详情卡', async () => {
   const { window, h, clear, El } = fakeDom();
   const el = new El('div');
   const opened = [];

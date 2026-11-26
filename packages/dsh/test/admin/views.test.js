@@ -330,7 +330,7 @@ test('预算摘要接的是真的 BudgetPort 的形状：页面读的每个字�
   const { makeRealBudget } = await import('./fixtures.js');
   const real = makeRealBudget({ core: { budget: { preset: 'loose' } }, now: NOW, days: 14 });
   const b = budgetSummary(JSON.parse(JSON.stringify(real.status())), { embedding: { provider: 'ollama-native', url: 'http://127.0.0.1:11434' } });
-  // page.html 的 budgetBlock / costCard / guardCard 读的字段
+  // ui/settings.js 的花费页读的字段
   for (const k of ['calls', 'uncached', 'cached', 'out', 'review', 'bgYuan', 'bgPeakYuan', 'mainYuan', 'acctYuan', 'failed', 'denied', 'day']) assert.notEqual(b.today[k], null, `today.${k}`);
   for (const k of ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'egressReservePerDay', 'perSourceShare', 'balanceProtectDays']) assert.notEqual(b.limits[k], null, `limits.${k}`);
   for (const k of ['ratioToMain', 'shareOfAccount', 'prices']) assert.notEqual(b[k], null, k);
@@ -375,12 +375,11 @@ test('设置、总览、诊断都带后台花费；页面给每个后台用途�
   assert.deepEqual(e.budget.today.byUse, {});
   assert.equal(e.budget.recent.days.length, 1);
   const fs = await import('node:fs');
-  const page = fs.readFileSync(new URL('../../src/admin/page.html', import.meta.url), 'utf8');
+  const page = fs.readFileSync(new URL('../../src/admin/ui/settings.js', import.meta.url), 'utf8');
   const { BG_USES } = await import('../../src/ports/budget.js');
   const m = page.match(/const USE = \{([^}]*)\}/);
-  assert.ok(m, 'page.html 里有 USE 表');
+  assert.ok(m, 'ui/settings.js 里有 USE 表');
   for (const u of BG_USES) assert.match(m[1], new RegExp(`(?:^|[\\s,])${u}: '[^']+'`), `用途 ${u} 有中文名`);
-  assert.ok(page.includes('调用都走 DSH 的模型通道、用的是 DSH 账号余额；向量在本机算，不花钱'));
 });
 
 // ── 花费护栏：三档预设和自定义（D121） ──────────────────────────────────
@@ -392,11 +391,11 @@ test('花费护栏的数据：三档每一项的值（每天输出按宿主每�
   assert.equal(v.custom, true);
   assert.deepEqual(v.overrides, { dailyCalls: 1200, rerank: false }, '不认识的键、越界的值不算改过');
   assert.deepEqual(v.keys, ['dailyCalls', 'dailyUncachedTokens', 'dailyOutputTokens', 'perSourceShare', 'mainChatRatioCap', 'balanceProtectDays', 'stage2Scope', 'prefetchRewrite', 'rerank', 'sleepDepth',
-    'injectShare', 'injectPerSessionPerDay', 'room']);
+    'injectShare', 'injectPerSessionPerDay', 'room', 'sleepScale']);
   assert.deepEqual(v.presets.loose, { dailyCalls: 3000, dailyUncachedTokens: 5_000_000, dailyOutputTokens: 1_000_000, perSourceShare: 0.5, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.4, injectPerSessionPerDay: null, room: 1 });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: 0.4, injectPerSessionPerDay: null, room: 1, sleepScale: 1 });
   assert.deepEqual(v.presets.unlimited, { dailyCalls: null, dailyUncachedTokens: null, dailyOutputTokens: null, perSourceShare: 1, mainChatRatioCap: null,
-    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null, room: 2 });
+    balanceProtectDays: 1, stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', injectShare: null, injectPerSessionPerDay: null, room: 2, sleepScale: 2 });
   // 注入预算（D133）：节省档是原来的数
   assert.deepEqual([v.presets.saving.injectShare, v.presets.saving.injectPerSessionPerDay], [0.05, 8000]);
   assert.deepEqual([v.effective.injectShare, v.effective.injectPerSessionPerDay], [0.05, 8000]);
@@ -491,14 +490,23 @@ test('选人（D161）：记忆、规则、备份的数据里带能选的人（�
   assert.ok(r.pickable.some((x) => x.stored === false), '规则的数据里照样有名下没东西的人');
 });
 
-test('选人（D162）：记忆页签的「全部的人」只列名下有东西的，记住的人不在了回到「全部的人」；规则、部分恢复照旧列全部', async () => {
-  const fs = await import('node:fs');
-  const page = fs.readFileSync(new URL('../../src/admin/page.html', import.meta.url), 'utf8');
-  const filters = page.slice(page.indexOf('function renderFilters()'), page.indexOf('function renderFilters()') + 800);
-  assert.match(filters, /personOpts\(\{ stored: true \}\)/);
-  assert.match(filters, /pickedPerson\(s\.entityId, \{ stored: true \}\)/);
-  const rule = page.slice(page.indexOf('function ruleForm()'), page.indexOf('function ruleForm()') + 800);
-  assert.match(rule, /const entityOpts = personOpts\(\);/);
-  const restore = page.slice(page.indexOf('async function partialRestore('), page.indexOf('async function partialRestore(') + 200);
-  assert.match(restore, /const people = personOpts\(\);/);
+
+test('夜里整理做多少（D176）：花费护栏的数据带每一档和现在生效的「一晚最多做多少」；自定义 sleepScale 覆盖档位；管理页能填 0.5–3', () => {
+  const v = budgetConfigView({}, null);
+  assert.deepEqual([v.presets.saving.sleepScale, v.presets.loose.sleepScale, v.presets.unlimited.sleepScale], [0.6, 1, 2]);
+  assert.deepEqual(v.sleep.loose, { scale: 1, depth: 'full', calls: 16, correctFacts: 16, generalizeGroups: 12, impressionPeople: 10 });
+  assert.deepEqual([v.sleep.saving.calls, v.sleep.saving.correctFacts, v.sleep.saving.generalizeGroups, v.sleep.saving.impressionPeople], [6, 8, 0, 6]);
+  assert.ok(v.sleep.unlimited.correctFacts > v.sleep.loose.correctFacts);
+  assert.deepEqual(v.sleepEffective, v.sleep.loose, '没自定义：就是当前档');
+  const c = budgetConfigView({ budget: { preset: 'loose', overrides: { sleepScale: 1.5 } } }, null);
+  assert.equal(c.custom, true);
+  assert.deepEqual([c.sleepEffective.scale, c.sleepEffective.correctFacts, c.sleepEffective.impressionPeople, c.sleepEffective.calls], [1.5, 24, 15, 19]);
+  assert.equal(c.sleep.loose.correctFacts, 16, '每一档的数不被自定义改');
+  assert.ok(v.keys.includes('sleepScale') && v.ranges.sleepScale.min === 0.5 && v.ranges.sleepScale.max === 3);
+  assert.equal(budgetValue('sleepScale', 1.25), 1.25);
+  assert.equal(budgetValue('sleepScale', 3), 3);
+  assert.throws(() => budgetValue('sleepScale', 0.4), /0\.5–3/);
+  assert.throws(() => budgetValue('sleepScale', 3.5), /0\.5–3/);
+  assert.throws(() => budgetValue('sleepScale', null), /0\.5–3/);
+  assert.throws(() => budgetValue('sleepScale', '2'), /0\.5–3/);
 });

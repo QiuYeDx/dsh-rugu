@@ -8,7 +8,7 @@ import { makeFakePm, NOW } from './fixtures.js';
 import { makeStarmap } from './starmap-fixtures.js';
 import { checkStarmapSnapshot, checkStarmapLive, checkStarmapPeek, STAR_COLS } from './starmap-shape.js';
 import { createAdminHandlers, ROUTES, TOKEN_HEADER } from '../../src/admin/index.js';
-import { renderPage, pageCsp, pageTemplate, starmapScript, STARMAP_SLOT } from '../../src/admin/page.js';
+import { renderNextPage, pageCsp, UI_SCRIPTS } from '../../src/admin/page.js';
 import { traceSum } from '../../../core/src/dynamics/actr.js';
 
 const HOUR = 3_600_000;
@@ -173,11 +173,12 @@ test('视图名单里有星图的三个；设置模式下不开', async () => {
 });
 
 // ── 页面 ───────────────────────────────────────────────────────────────────
-test('renderPage 把星图脚本塞进主脚本前面的占位处；没有残留的占位符；CSP 没变', () => {
-  const html = renderPage({ nonce: 'abc123', token: 'tok' });
-  assert.ok(pageTemplate().includes(`<script nonce="__PM_NONCE__">${STARMAP_SLOT}</script>`));
-  assert.ok(html.includes(`<script nonce="abc123">${starmapScript()}</script>`));
-  assert.ok(html.indexOf('window.__pmStarmap = { mount, lib }') < html.indexOf("const TOKEN = document.querySelector('meta[name=\"pm-admin-token\"]')"), '在主脚本前面');
+test('管理页里星图的脚本在自己的 <script> 里，在 memory 之后、启动之前；没有残留的占位符；CSP 没变', () => {
+  const html = renderNextPage({ nonce: 'abc123', token: 'tok' });
+  assert.ok(UI_SCRIPTS.some(([n]) => n === 'starmap'));
+  assert.ok(html.includes(`<script nonce="abc123">${SRC}`.slice(0, 60)) || html.includes('window.__pmStarmap = { mount, lib }'));
+  assert.ok(html.indexOf('window.__pmStarmap = { mount, lib }') > html.indexOf("Rugu.define('memory'"));
+  assert.ok(html.indexOf('window.__pmStarmap = { mount, lib }') < html.lastIndexOf('Rugu.start'));
   assert.ok(!/__PM_[A-Z]+__/.test(html), '没有残留的占位符');
   assert.equal(pageCsp('abc123'), ["default-src 'none'", "script-src 'nonce-abc123'", "style-src 'nonce-abc123'", "connect-src 'self'", "img-src 'self' data:", "font-src 'self'",
     "frame-ancestors 'self'", "base-uri 'none'", "form-action 'none'"].join('; '));
@@ -189,10 +190,8 @@ test('星图脚本守管理页的规矩：没有 </script、不拼 HTML、不 ev
     assert.ok(!SRC.includes(bad), bad);
   }
   assert.ok(!/__PM_/.test(SRC), '脚本里不能有占位符的字样');
-  // 页面里的星图页签和样式
-  const page = pageTemplate();
-  assert.ok(page.includes("['starmap', '星图', Starmap]"));
-  assert.ok(/\.pm-sm-sky\{/.test(page));
+  // 样式在 ui/memory.css 里
+  assert.ok(/\.pm-sm-sky \{/.test(fs.readFileSync(new URL('../../src/admin/ui/memory.css', import.meta.url), 'utf8')));
 });
 
 // ── 纯函数 ─────────────────────────────────────────────────────────────────
@@ -303,6 +302,6 @@ test('按钮里的图标换掉也不丢点击：每帧都调的 updateTimeUi 只
   const swap = body.indexOf('playBtn.replaceChildren(');
   assert.ok(guard >= 0 && swap > guard, '换图标前先看播放状态变没变');
   assert.equal(body.split('replaceChildren(').length - 1, 1, 'updateTimeUi 里只有这一处重建子元素');
-  const css = pageTemplate();
-  assert.match(css, /\.pm-sm-sbtn svg,\.pm-sm-max svg\{pointer-events:none\}/);
+  const css = fs.readFileSync(new URL('../../src/admin/ui/memory.css', import.meta.url), 'utf8');
+  assert.match(css, /\.pm-sm-sbtn svg \{ pointer-events: none; \}/);
 });

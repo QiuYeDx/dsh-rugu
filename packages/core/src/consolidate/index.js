@@ -15,7 +15,7 @@
 // 契约细节：docs/实现/模块与接口.md §4.9。内部文件：sleep（编排、第 1/2/9/10 步）、today、storyline、communities、impressions、
 //   generalize、reflect、self、time、growth；params 把配置快照摆成方便用的形状，util、memory 是小工具。
 import { newRun, residentDirty } from './util.js';
-import { shouldSleepImpl, sleepImpl } from './sleep.js';
+import { shouldSleepImpl, sleepImpl, sleepSummary as sleepSummaryImpl } from './sleep.js';
 import { todaySoFarImpl } from './today.js';
 import { storylineBatch } from './storyline.js';
 import { impressionsBatch } from './impressions.js';
@@ -54,6 +54,14 @@ export function shouldSleep(core, at) { return shouldSleepImpl(core, at); }
  * @returns {Promise<import('../contract/types.js').SleepReport>}
  */
 export async function sleep(core, opt) { return sleepImpl(core, opt ?? {}); }
+
+/**
+ * 【D176】这套配置下夜里整理一晚最多做多少（整晚几次模型、对照原话核几条、泛化问几组、印象更新几个人），管理页「花费护栏」写给人看。
+ * 纯函数，不读库；不是 core 的函数（给的是配置快照），集成层从包的入口取，不经 core.mods。
+ * @param {object} cfg  core.config.get() 的快照（或 mergeConfig 合出来的 config）
+ * @returns {{scale: number, depth: string, calls: number, correctFacts: number, generalizeGroups: number, impressionPeople: number}}
+ */
+export function sleepSummary(cfg) { return sleepSummaryImpl(cfg); }
 
 /**
  * 今天到目前为止（§5.7，评审:UV-07）：她参与过、对话空闲 today.idleMin 分钟的场合，生成一句话小结（use='summary'；

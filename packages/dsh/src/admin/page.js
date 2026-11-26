@@ -1,41 +1,7 @@
-// 管理页的 HTML（§13.1）：page.html 是一个自带样式和脚本的文件，这里只把每次请求的 nonce 和管理页令牌填进去。
+// 管理页的 HTML（§13.1，D170 起 ui/ 下拼出来的单页；D176 删掉了旧版 page.html）：骨架、各去处的样式和脚本全部内联在响应里，带每次请求的 nonce 和管理页令牌。
 // 页面里的记忆、名字、昵称都是别人可控的字符串：页面脚本一律用文本节点渲染，不用 innerHTML、不渲染 markdown（§12.3）；
 // CSP 再兜一层：只许带 nonce 的脚本和样式、只许同源请求、只许被 DSH 自己的页面嵌入。
 import fs from 'node:fs';
-
-const PAGE_URL = new URL('./page.html', import.meta.url);
-// 星图（D163）的脚本单独一个文件，渲染时塞进 page.html 主脚本前面的占位处（同一个带 nonce 的 <script>）
-const STARMAP_URL = new URL('./starmap.client.js', import.meta.url);
-export const STARMAP_SLOT = '__PM_STARMAP__';
-let cached = null;
-let starmapCached = null;
-
-/** 读 page.html（只读一次；本地预览设 PM_ADMIN_PAGE_NOCACHE=1 时每次重读，改了页面不用重启）。 */
-export function pageTemplate() {
-  if (cached == null || process.env.PM_ADMIN_PAGE_NOCACHE === '1') cached = fs.readFileSync(PAGE_URL, 'utf8');
-  return cached;
-}
-
-/** 读 starmap.client.js（同上，只读一次）。文件里不能有 </script（会提前结束脚本块）。 */
-export function starmapScript() {
-  if (starmapCached == null || process.env.PM_ADMIN_PAGE_NOCACHE === '1') {
-    const src = fs.readFileSync(STARMAP_URL, 'utf8');
-    if (/<\/script/i.test(src)) throw new Error('starmap.client.js 里不能出现 </script');
-    starmapCached = src;
-  }
-  return starmapCached;
-}
-
-/**
- * @param {{nonce: string, token: string}} o   nonce 是 base64，token 是 base64url：都不含要转义的字符
- * @returns {string}
- */
-export function renderPage({ nonce, token }) {
-  if (!/^[A-Za-z0-9+/=]+$/.test(nonce) || !/^[A-Za-z0-9_-]+$/.test(token)) throw new TypeError('nonce / token 格式不对');
-  // 先填 nonce 和令牌，再塞星图脚本（用函数替换：脚本里的 $& 之类不会被当成替换模式）
-  const script = starmapScript();
-  return pageTemplate().replaceAll('__PM_NONCE__', nonce).replaceAll('__PM_TOKEN__', token).replace(STARMAP_SLOT, () => script);
-}
 
 // ── 新管理页（D170，管理页重做）：ui/ 下的骨架、地基、各去处的模块，响应时拼成一个 HTML ─────────────
 // 每个文件都写成字面量的 new URL(..., import.meta.url)：打包检查（scripts/pack-check.mjs）靠它认出这些文件要进包。
@@ -49,7 +15,7 @@ export const UI_SCRIPTS = Object.freeze([
   ['places', new URL('./ui/places.js', import.meta.url)],
   ['settings', new URL('./ui/settings.js', import.meta.url)],
   ['wizard', new URL('./ui/wizard.js', import.meta.url)],
-  // 【D171】星图的脚本（和旧页面是同一个文件）：记忆 · 星图 用 window.__pmStarmap.mount 的新挂载（工具条和详情由 memory.js 画）
+  // 【D171】星图的脚本：记忆 · 星图 用 window.__pmStarmap.mount（工具条和详情由 memory.js 画）
   ['starmap', new URL('./starmap.client.js', import.meta.url)],
 ]);
 /** 各去处自己的样式（类名带模块前缀）；读不到的跳过。 */
@@ -62,8 +28,8 @@ export const UI_STYLES = Object.freeze([
   ['wizard', new URL('./ui/wizard.css', import.meta.url)],
 ]);
 /**
- * 最后一个脚本：启动。base.js 坏了（没定义 Rugu）时不白屏：用最朴素的 DOM 写一句话和回旧版的链接。
- * 文字全走 textContent；回旧版的地址是固定的。
+ * 最后一个脚本：启动。base.js 坏了（没定义 Rugu）时不白屏：用最朴素的 DOM 写一句话和一个「刷新」按钮。
+ * 文字全走 textContent。
  */
 export const UI_BOOT = `(function () {
   var app = document.getElementById('app');
@@ -73,9 +39,9 @@ export const UI_BOOT = `(function () {
   var box = document.createElement('div');
   box.className = 'wrap';
   var t = document.createElement('h1'); t.className = 'ph'; t.textContent = '管理页没有打开';
-  var p = document.createElement('p'); p.className = 'quiet'; p.textContent = '新版管理页的基础脚本出错了。可以先回旧版：功能都在。';
-  var a = document.createElement('a'); a.className = 'btn btn-secondary'; a.href = 'admin?ui=classic'; a.textContent = '回旧版';
-  a.style.marginTop = '16px';
+  var p = document.createElement('p'); p.className = 'quiet'; p.textContent = '管理页的基础脚本出错了。刷新一下再试；还不行就彻底重启 DSH。';
+  var a = document.createElement('button'); a.type = 'button'; a.className = 'btn btn-secondary'; a.textContent = '刷新';
+  a.style.marginTop = '16px'; a.onclick = function () { window.location.reload(); };
   box.appendChild(t); box.appendChild(p); box.appendChild(a);
   app.replaceChildren(box); app.removeAttribute('aria-busy');
 })();`;
@@ -124,21 +90,6 @@ export function renderNextPage({ nonce, token, setupMode = false }, parts = uiPa
   return shell.replaceAll('__PM_NONCE__', nonce).replaceAll('__PM_TOKEN__', token)
     .replace('<!--__RUGU_STYLES__-->', () => css)
     .replace('<!--__RUGU_SCRIPTS__-->', () => `${js}\n${tag(UI_BOOT)}`);
-}
-
-/**
- * 这次打开哪一版：地址上的 ?ui=next|classic 优先，没有就按配置 host.admin.ui；配置没给、读不出来或写了别的，都是新版（D174）。
- * 只有明确写了 'classic'（配置，或页面里点「回旧版」后 DSH 外壳带的 ?ui=classic）才是旧版。
- * 首次设置（setupMode）也跟着这个开关走（D173）：新版用一步一屏的向导，旧版是一长页。
- * 删旧页：这里只剩 next。
- * @param {string|null} param   地址上的 ui
- * @param {unknown} configured  配置里的 host.admin.ui
- * @param {boolean} [_setupMode]  不再影响选哪一版（留着参数，调用方不用改）
- * @returns {'next'|'classic'}
- */
-export function pickUi(param, configured, _setupMode = false) {
-  if (param === 'next' || param === 'classic') return param;
-  return configured === 'classic' ? 'classic' : 'next';
 }
 
 /** 管理页的 CSP。 */

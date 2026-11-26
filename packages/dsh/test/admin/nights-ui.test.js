@@ -78,11 +78,9 @@ test('home 视图多带 night；核心没有 nights 时是 null，首页其余�
   assert.ok(o.headline, '其余的照旧');
 });
 
-test('新页面：「记忆」的分段多了日记、做梦；老地址 memory/diary、memory/dream 在旧版里对应记忆页签', () => {
+test('新页面：「记忆」的分段多了日记、做梦', () => {
   assert.match(BASE, /\['diary', '日记'\]/);
   assert.match(BASE, /\['dream', '做梦'\]/);
-  assert.match(BASE, /'memory\/diary': 'memory'/);
-  assert.match(BASE, /'memory\/dream': 'memory'/);
 });
 
 test('新页面的文字：做梦页和首页都只描述发生了什么，不替它下判断；用到的图标和路径都存在', () => {

@@ -589,8 +589,10 @@ export const DEFAULTS = deepFreeze({
     catchUpH: 24,                        // 距上次超过 24 小时，启动时补跑
     retryMin: 60,                        // 上次开始了没跑完（进程崩了）：至少隔这么久才重跑
     // 一晚的 LLM 调用总上限（D138）。null = 各步上限之和（sleep.js 的 stepCalls：复核 1 + 纠错 correct.maxCalls + 泛化 generalize.maxCalls
-    // + 反思 2 + 印象 2 + 回头问问 1 + 故事线和社区 2 + 她自己 1 + 经验回顾 lessons.maxCalls；完整做 14 次，节省档只做必要项 6 次）。
-    // 写成数字就按它封顶；不管多少，「她自己」和经验回顾的名额先留出来，前面的步骤用不到
+    // + 反思 2 + 印象 2 + 回头问问 1 + 故事线和社区 2 + 她自己 1 + 经验回顾 lessons.maxCalls；完整做 16 次，节省档只做必要项 6 次）。
+    // 写成数字就按它封顶；不管多少，「她自己」和经验回顾的名额先留出来，前面的步骤用不到。
+    // D176：下面几个「一晚做多少」的数（纠错 correct.maxCalls、泛化 generalize.maxCalls、印象 impressions.perCall）还要乘花费档位的
+    // sleepScale（budget.presets[档].sleepScale，自定义可以单独改；节省 0.6 / 平衡 1 / 效果优先 2），取整、至少 1，见 consolidate/params.js
     maxLlmCalls: null,
     planGraceH: 6,                       // 计划的时间点过了多久没下文才标 unknown（§5.5 第 5 条、第 6 步）
     extract: { maxJobs: 100, maxMs: 10 * MIN, retryFailedDays: 7, retryMax: 3, reviewLimit: 40 },   // 第 1 步：顺手跑的提炼、补跑失败批次、复核
@@ -598,8 +600,9 @@ export const DEFAULTS = deepFreeze({
     // 第 2 步（D122）：对照原话纠错。每晚挑最可能错、或最常被想起的事实，回到来源原话和之后的话核对；一次调用核 perCall 条，
     // 一晚最多 maxCalls 次（也算在 maxLlmCalls 里）。再次核对的间隔 = recheckDays × 2^连续确认次数 ÷ (1 + 最近用到的程度)，
     // 至少 minRecheckDays（不是硬窗口，只决定哪天再挑它）。用到的程度看最近 usageDays 天的注入和被提起。
+    // D176：maxCalls 2 → 4（一晚核 8 条 → 16 条；实测线上有近 4000 条事实，8 条一晚要一年多才轮一遍）；还要乘 sleepScale
     correct: {
-      perCall: 4, maxCalls: 2, poolMax: 3000,
+      perCall: 4, maxCalls: 4, poolMax: 3000,
       usageDays: 14, recheckDays: 7, minRecheckDays: 1, maxStreak: 8,
       sourceLines: 3, contextLines: 2, laterLines: 5, laterFacts: 3, behaviorSamples: 2,
       lineChars: 120, whyChars: 80,
@@ -628,7 +631,8 @@ export const DEFAULTS = deepFreeze({
       sameSim: 0.6,                      // 和已有洞见这么像就不再写
       deadlineMs: null,                  // 取证据的有意回想最多等多久；null = recall.deliberate.deadlineMs
     },
-    impressions: { perCall: 6, factsPerLayer: 30, maxChars: 160, maybeSamePerCall: 6, factsPerSide: 6 },   // 第 5 步
+    // D176：perCall（一晚最多更新几个人的印象，一次调用写一层）6 → 10，还要乘 sleepScale（实测线上有一百多个人，6 个一晚轮得太慢）
+    impressions: { perCall: 10, factsPerLayer: 30, maxChars: 160, maybeSamePerCall: 6, factsPerSide: 6 },   // 第 5 步
     followUp: { windowH: 72, perCall: 10 },   // §5.5 第 5 条「回头问问」的时间窗（之后没机会就 lapsed）
     storyline: { maxChars: 600, perCall: 5, episodesPerSetting: 12, rebuildEvery: 10, rebuildEpisodes: 20 },   // §5.8；每 10 个版本整体重写一次
     communities: {                       // 第 7 步（标签传播）
@@ -714,13 +718,13 @@ export const DEFAULTS = deepFreeze({
     presets: {
       loose: { mainChatRatioCap: null, dailyCalls: 3000, dailyUncachedTokens: 5_000_000, perSourceShare: 0.5,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: 0.4, injectPerSessionPerDay: null, room: 1, recollectScale: 1 },
+        injectShare: 0.4, injectPerSessionPerDay: null, room: 1, sleepScale: 1, recollectScale: 1 },
       saving: { mainChatRatioCap: 0.25, dailyCalls: 600, dailyUncachedTokens: 1_000_000, perSourceShare: 0.3,
         stage2Scope: 'direct', prefetchRewrite: false, rerank: true, sleepDepth: 'essential', balanceProtectDays: 3,
-        injectShare: 0.05, injectPerSessionPerDay: 8000, room: 0.6, recollectScale: 1 },
+        injectShare: 0.05, injectPerSessionPerDay: 8000, room: 0.6, sleepScale: 0.6, recollectScale: 1 },
       unlimited: { mainChatRatioCap: null, dailyCalls: null, dailyUncachedTokens: null, perSourceShare: 1,
         stage2Scope: 'all', prefetchRewrite: true, rerank: true, sleepDepth: 'full', balanceProtectDays: 1,
-        injectShare: null, injectPerSessionPerDay: null, room: 2, recollectScale: 1 },
+        injectShare: null, injectPerSessionPerDay: null, room: 2, sleepScale: 2, recollectScale: 1 },
       // 每档的 recollectScale 已弃用（D165）：读到了也忽略（并进 room）；留着只是不让旧的覆盖报未知字段
     },
     // 主人单独改过的项（管理页「花费护栏 → 自定义」或手改文件），覆盖预设。能写的键和取值见 BUDGET_OVERRIDE_KEYS / checkBudgetOverride；
@@ -829,12 +833,17 @@ const BUDGET_OVERRIDE_CHECKS = Object.freeze({
   injectPerSessionPerDay: capV,
   // 记忆给多少（D165）：回想各层的条数和总字数乘它（config/caps.js）
   room: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= ROOM_MIN && v <= ROOM_MAX ? null : `应为 ${ROOM_MIN}–${ROOM_MAX} 的数`),
+  // 夜里整理做多少（D176）：纠错的次数、泛化的次数、一晚更新几个人的印象乘它（consolidate/params.js）
+  sleepScale: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= SLEEP_SCALE_MIN && v <= SLEEP_SCALE_MAX ? null : `应为 ${SLEEP_SCALE_MIN}–${SLEEP_SCALE_MAX} 的数`),
   // 已弃用（D165）：回忆的名额并进 room。读到了也忽略；留着只是不让旧的覆盖报未知字段（不在 BUDGET_OVERRIDE_KEYS 里，管理页不再显示）
   recollectScale: (v) => (typeof v === 'number' && Number.isFinite(v) ? null : '应为数（已弃用，读到了也忽略）'),
 });
 /** room（D165）的取值范围：建议 0.5–3，校验放宽到 0.3–4（手改文件的余地）。 */
 export const ROOM_MIN = 0.3;
 export const ROOM_MAX = 4;
+/** sleepScale（D176，夜里整理做多少的倍数）的取值范围：建议 0.5–3，校验放宽到 0.3–4。 */
+export const SLEEP_SCALE_MIN = 0.3;
+export const SLEEP_SCALE_MAX = 4;
 /** 已弃用、读到了也忽略的预算项（D165：recollectScale 并进 room）。 */
 const DEPRECATED_BUDGET_KEYS = new Set(['recollectScale']);
 /** budget.overrides 能写的键（顺序就是管理页「自定义」里的顺序；已弃用的不在里面）。 */

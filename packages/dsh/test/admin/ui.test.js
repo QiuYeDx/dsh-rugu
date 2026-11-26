@@ -1,13 +1,13 @@
-// 新管理页（D170）：page.js 拼出来的页面（nonce、没有外部资源、没有 innerHTML、每个模块都在、缺了 / 坏了的表现）、新旧开关、
+// 管理页（D170；D176 起只有这一版）：page.js 拼出来的页面（nonce、没有外部资源、没有 innerHTML、每个模块都在、缺了 / 坏了的表现）、旧版已删、
 // base.js 里能脱离浏览器测的纯函数（路由、格式、出错的说法、主题消息的校验）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { ROUTES } from '../../src/admin/index.js';
-import { renderNextPage, uiParts, pickUi, UI_SCRIPTS, UI_STYLES, UI_BOOT, pageCsp } from '../../src/admin/page.js';
+import * as pageMod from '../../src/admin/page.js';
+import { renderNextPage, uiParts, UI_SCRIPTS, UI_STYLES, UI_BOOT, pageCsp } from '../../src/admin/page.js';
 import { HOST_DEFAULTS, mergeHost } from '../../src/host/config.js';
-import { makeFakeHost } from './fixtures.js';
 import { setup, ORIGIN } from './helpers.js';
 
 const BASE_SRC = fs.readFileSync(new URL('../../src/admin/ui/base.js', import.meta.url), 'utf8');
@@ -47,11 +47,10 @@ test('拼出来的新页面：每个 <script> / <style> 都带同一个 nonce；
   assert.throws(() => renderNextPage({ nonce: 'abc', token: '<script>' }), TypeError);
 });
 
-test('shell：内联 favicon，窄屏仍显示「回旧版」全文（不隐藏 span）', () => {
+test('shell：内联 favicon；没有「回旧版」的样式了', () => {
   const shell = fs.readFileSync(new URL('../../src/admin/ui/shell.html', import.meta.url), 'utf8');
   assert.match(shell, /rel="icon"[^>]+data:image\/svg\+xml/);
-  assert.ok(!/\.uiswitch span\s*\{\s*display:\s*none/.test(shell));
-  assert.ok(shell.includes('flex-shrink: 0') && shell.includes('.uiswitch'));
+  assert.ok(!shell.includes('uiswitch'));
 });
 
 test('新页面的源文件：没有 innerHTML / outerHTML / insertAdjacentHTML / document.write / eval；不加载外部资源；没有本机路径', () => {
@@ -66,7 +65,7 @@ test('新页面的源文件：没有 innerHTML / outerHTML / insertAdjacentHTML 
     assert.ok(!/<link\b|@import|url\(\s*['"]?(?!#)/.test(noExt), `${f}: 外部样式 / 字体`);
     assert.ok(!/[A-Z]:\\\\|[A-Z]:\\[^\\]/.test(src), `${f}: 本机路径`);
   }
-  // 拼出来的整页也一样（启动脚本里的回旧版只用 textContent）
+  // 拼出来的整页也一样（启动脚本里的兜底页只用 textContent）
   const html = renderNextPage({ nonce: 'n', token: 't' });
   assert.ok(!/innerHTML|<link\b(?!\s+rel="icon")|src="http/.test(html));
   assert.ok(!UI_BOOT.includes('innerHTML') && UI_BOOT.includes('textContent'));
@@ -98,49 +97,24 @@ test('每个模块一个 <script>：一个出语法错只坏它自己，别的�
   for (const m of ['home', 'memory', 'settings', 'wizard']) assert.equal(st[m], 'pending', m);
 });
 
-test('新旧开关：?ui= 优先，没给按 host.admin.ui（D174：默认新版，只有明确写 classic 才是旧版）；首次设置也跟着开关走（D173：新版有自己的向导）', async () => {
-  assert.equal(pickUi(null, undefined), 'next', '没配置：新版');
-  assert.equal(pickUi(null, null), 'next', '配置读不出来：新版');
-  assert.equal(pickUi(null, 'weird'), 'next', '配置写了别的：新版');
-  assert.equal(pickUi(null, 'next'), 'next');
-  assert.equal(pickUi(null, 'classic'), 'classic');
-  assert.equal(pickUi('classic', 'next'), 'classic');
-  assert.equal(pickUi('next', 'classic'), 'next');
-  assert.equal(pickUi('weird', 'classic'), 'classic', '地址上的值不认识：回头看配置');
-  assert.equal(pickUi('weird', undefined), 'next');
-  assert.equal(pickUi('next', 'next', true), 'next');
-  assert.equal(pickUi(null, 'next', true), 'next');
-  assert.equal(pickUi(null, undefined, true), 'next', '首次设置：默认也是新版的向导');
-  assert.equal(pickUi(null, 'classic', true), 'classic');
+test('只有一版管理页（D176）：旧版 page.html 和 pickUi、renderPage 都没了；?ui=classic、配置里的 admin.ui 都不再有用，老配置不报 warning', async () => {
+  assert.equal(fs.existsSync(new URL('../../src/admin/page.html', import.meta.url)), false);
+  for (const gone of ['pickUi', 'renderPage', 'pageTemplate', 'starmapScript', 'STARMAP_SLOT']) assert.equal(gone in pageMod, false, gone);
   const s = setup();
   const get = async (q) => (await s.h.page(new Request(`${ORIGIN}${ROUTES.page}${q}`))).text();
-  const dflt = await get('');
-  assert.ok(dflt.includes("Rugu.define('home'"), '默认是新版');
-  const classicPage = await get('?ui=classic');
-  assert.ok(classicPage.includes('__pmStarmap') || classicPage.includes('class="pm"'), '?ui=classic 是旧版');
-  assert.ok(!classicPage.includes("Rugu.define('home'"));
-  assert.ok((await get('?ui=next&theme=dark')).includes("Rugu.define('home'"));
-  // 默认配置本身就是新版（新装的用户没有任何配置、也没点过切换）
-  assert.equal(HOST_DEFAULTS.admin.ui, 'next');
-  assert.equal(mergeHost(HOST_DEFAULTS, {}).admin.ui, 'next');
-  assert.equal(mergeHost(HOST_DEFAULTS, { admin: { ui: 'classic' } }).admin.ui, 'classic', '主人写 classic 仍然尊重');
-  // 配置里写 classic：没给 ui 时是旧版，?ui=next 仍然能看新版
-  const host = makeFakeHost();
-  const get0 = host.config.get;
-  host.config.get = () => { const c = get0(); c.host.admin = { ui: 'classic' }; return c; };
-  const s2 = setup({ host });
-  const page2 = (q) => s2.h.page(new Request(`${ORIGIN}${ROUTES.page}${q}`)).then((r) => r.text());
-  assert.ok(!(await page2('')).includes("Rugu.define('home'"));
-  assert.ok((await page2('?ui=next')).includes("Rugu.define('home'"));
-  // 日志里记下开的是哪一版
-  assert.ok(s.logs.some(([, ev, f]) => ev === 'admin.request' && f.route === 'page' && f.ui === 'next'));
-  assert.ok(s2.logs.some(([, ev, f]) => ev === 'admin.request' && f.route === 'page' && f.ui === 'classic'));
-});
-
-test('旧页面：认 ?tab= 直达页签，页头有回新版的链接', () => {
-  const page = fs.readFileSync(new URL('../../src/admin/page.html', import.meta.url), 'utf8');
-  assert.ok(page.includes("new URLSearchParams(location.search).get('tab')"));
-  assert.ok(page.includes("href: 'admin?ui=next'"));
+  for (const q of ['', '?ui=next&theme=dark', '?ui=classic', '?ui=classic&tab=diagnostics']) assert.ok((await get(q)).includes("Rugu.define('home'"), `${q || '（没参数）'} 都是这一版`);
+  assert.ok(!(await get('')).includes('回旧版'));
+  // 配置里的 admin.ui（老的开关）：悄悄忽略，没有 warning，也不再是默认值里的键
+  assert.deepEqual(HOST_DEFAULTS.admin, {});
+  const w = [];
+  assert.deepEqual(mergeHost(HOST_DEFAULTS, { admin: { ui: 'classic' } }, '', w).admin, {});
+  assert.deepEqual(w, []);
+  mergeHost(HOST_DEFAULTS, { admin: { other: 1 } }, '', w);
+  assert.equal(w.length, 1, '别的不认识的键照样报');
+  // 启动失败的兜底页：一个刷新按钮，不指向旧版
+  assert.ok(!UI_BOOT.includes('classic') && UI_BOOT.includes('location.reload'));
+  // 日志里不再记「开的是哪一版」
+  assert.ok(s.logs.some(([, ev, f]) => ev === 'admin.request' && f.route === 'page' && f.ui === undefined));
 });
 
 test('路由：parseHash / buildHash（不认识的去处回首页，不认识的分段用默认的；参数来回一致）', () => {
@@ -157,13 +131,8 @@ test('路由：parseHash / buildHash（不认识的去处回首页，不认识�
   assert.equal(R.buildHash('home'), '#/home');
   const h = R.buildHash('pending/approve', { q: '一 & 二' });
   assert.deepEqual(p(h)[3], { q: '一 & 二' });
-  // 旧版对应的页签
-  assert.equal(R.classicTab('memory/starmap'), 'starmap');
-  assert.equal(R.classicTab('pending/approve'), 'review');
-  assert.equal(R.classicTab('settings/backup'), 'backups');
-  assert.equal(R.classicTab('nowhere'), 'overview');
-  assert.equal(R.classicHref('settings/diag', 'dark'), 'admin?ui=classic&tab=diagnostics&theme=dark');
-  assert.equal(R.classicHref('home', null), 'admin?ui=classic&tab=overview');
+  assert.equal(R.classicTab, undefined, '旧版对应页签的函数删了');
+  assert.equal(R.classicHref, undefined);
 });
 
 test('主题消息：只认同源、来自父窗口、{type: "rugu:theme", theme: light|dark}；别的一律不认', () => {

@@ -105,7 +105,6 @@
     file: [['path', { d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z' }], ['path', { d: 'M14 2v4a2 2 0 0 0 2 2h4' }]],
     map: [['path', { d: 'M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0' }], ['circle', { cx: 12, cy: 10, r: 3 }]],
     paw: [['circle', { cx: 11, cy: 4, r: 2 }], ['circle', { cx: 18, cy: 8, r: 2 }], ['circle', { cx: 20, cy: 16, r: 2 }], ['path', { d: 'M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z' }]],
-    construction: [['rect', { x: 2, y: 6, width: 20, height: 8, rx: 1 }], ['path', { d: 'M17 14v7M7 14v7M17 3v3M7 3v3M10 14 2.3 6.3M14 6l7.7 7.7M8 6l8 8' }]],
     // 「故」字形（packages/dsh/assets/glyph.svg，跟文字颜色）
     gu: [['path', { d: 'M2.5 7.5H11' }], ['path', { d: 'M6.75 3.5V12.5' }], ['path', { d: 'M3.5 12.5H10V19.5H3.5Z' }], ['path', { d: 'M15.75 3L14 8' }], ['path', { d: 'M14.5 6.5H21' }],
       ['path', { d: 'M19.25 6.5C18.5 13 16.25 18 12.5 21' }], ['path', { d: 'M15.25 12C16.75 15.75 18.75 18.75 21.5 20.5' }]],
@@ -252,26 +251,6 @@
     return `#/${String(path ?? 'home').replace(/^#?\/?/, '')}${s ? `?${s}` : ''}`;
   }
   R.DESTS = DESTS; R.SUBS = SUBS; R.parseHash = parseHash; R.buildHash = buildHash;
-
-  /**
-   * 旧版页面上对应的页签（还没搬过来的去处「去旧版里看」用；纯函数）。
-   * @param {string} path  '去处/分段'
-   */
-  const CLASSIC_TAB = {
-    home: 'overview', 'memory/list': 'memory', 'memory/people': 'memory', 'memory/diary': 'memory', 'memory/dream': 'memory', 'memory/starmap': 'starmap', 'memory/growth': 'growth',
-    'pending/all': 'needToKnow', 'pending/ntk': 'needToKnow', 'pending/approve': 'review', 'pending/blocked': 'discretion',
-    'places/list': 'settings', 'places/rules': 'settings', 'places/notes': 'discretion',
-    'settings/basic': 'config', 'settings/models': 'config', 'settings/connect': 'config', 'settings/cost': 'config',
-    'settings/backup': 'backups', 'settings/diag': 'diagnostics', 'settings/about': 'config',
-  };
-  function classicTab(path) { const p = parseHash(`#/${path}`); return CLASSIC_TAB[p.path] ?? CLASSIC_TAB[p.dest] ?? 'overview'; }
-  /** 旧版页面的地址（同一个路由加 ?ui=classic&tab=…；主题跟着带过去）。纯函数。 */
-  function classicHref(path, theme) {
-    const q = new URLSearchParams({ ui: 'classic', tab: classicTab(path) });
-    if (theme === 'light' || theme === 'dark') q.set('theme', theme);
-    return `admin?${q}`;
-  }
-  R.classicTab = classicTab; R.classicHref = classicHref;
 
   // ════════════════════════════════════════════════════════════════════════
   // 请求层
@@ -449,13 +428,12 @@
       ic ? icon(ic, 16) : null, label);
   }
   /**
-   * 文字链接（蓝色，带 › 箭头）。to 是路由（'memory/list'、{path, params}）或点击函数；href 是真的地址（旧版页面）。
+   * 文字链接（蓝色，带 › 箭头）。to 是路由（'memory/list'、{path, params}）或点击函数。
    * @param {string} label
    * @param {string|{path: string, params?: object}|Function} to
-   * @param {{arrow?: boolean, href?: string}} [o]
+   * @param {{arrow?: boolean}} [o]
    */
   function link(label, to, { arrow = true } = {}) {
-    if (typeof to === 'string' && /^admin\?/.test(to)) return h('a', { class: 'link', href: to }, label, arrow ? icon('right', 14) : null);
     const onclick = typeof to === 'function' ? to : () => go(typeof to === 'string' ? to : to.path, typeof to === 'string' ? undefined : { params: to.params });
     return h('button', { type: 'button', class: 'link', onclick }, label, arrow ? icon('right', 14) : null);
   }
@@ -877,32 +855,6 @@
   /** 给测试和截图看：每个模块的状态（loaded / missing / error / pending）。 */
   R.moduleStates = () => Object.fromEntries(Object.entries(modules).map(([k, m]) => [k, m.missing ? 'missing' : m.def ? 'loaded' : m.error ? 'error' : 'pending']));
 
-  /**
-   * 「这一块正在搬过来」：还没搬到新页面的去处用的占位（页头 + 分段 / 左侧小导航照样稿画，内容区一句话 + 去旧版对应页签的链接）。
-   * 搬完的去处不再用它。
-   * @param {HTMLElement} el
-   * @param {{dest: string, sub: string|null, path: string}} route
-   * @param {{title: string, desc?: string, subDesc?: Record<string, string>, sideNav?: boolean}} o
-   */
-  function placeholderPage(el, route, { title, desc, subDesc = {}, sideNav: useSide = false }) {
-    const subs = SUBS[route.dest] ?? [];
-    const subName = subs.find(([k]) => k === route.sub)?.[1] ?? title;
-    const body = h('div', { class: 'narrow' }, empty({
-      ic: 'construction', title: '这一块正在搬过来',
-      text: '新版的这一页还在做，功能都还在旧版里。',
-      actions: h('a', { class: 'btn btn-secondary', href: classicHref(route.path, theme.current) }, '去旧版里看', icon('right', 14)),
-    }));
-    if (useSide) {
-      const nav = sideNav(subs.map(([k, t, ic]) => [k, t, ic]), route.sub, (k) => go(`${route.dest}/${k}`, { focus: false }));
-      clear(el, h('div', { class: 'wrap' }, h('div', { class: 'sidenav-layout' }, nav,
-        h('div', { class: 'scontent' }, pageHead(subName, subDesc[route.sub] ?? desc), body))));
-      return;
-    }
-    const segEl = subs.length ? seg(subs.map(([k, t]) => [k, t]), route.sub, (k) => go(`${route.dest}/${k}`, { focus: false }), `${title}的分类`) : null;
-    clear(el, h('div', { class: 'wrap' }, pageHead(title, subDesc[route.sub] ?? desc, segEl), body));
-  }
-  R.placeholderPage = placeholderPage;
-
   // ════════════════════════════════════════════════════════════════════════
   // 页面：顶部、主导航、渲染、换页
   // ════════════════════════════════════════════════════════════════════════
@@ -945,14 +897,8 @@
         return h('button', { type: 'button', 'aria-current': dest === k ? 'page' : null, onclick: () => go(k) },
           icon(ic, 16), label, n ? h('span', { class: 'count', 'aria-label': `${n} 件` }, n > 99 ? '99+' : String(n)) : null);
       }));
-    // 回旧版：新版已是默认（D174），这个入口留作退路（旧页删掉时去掉）
-    const back = h('a', { class: 'uiswitch', href: classicHref(cur?.path ?? 'home', theme.current), title: '回到旧版管理页', 'aria-label': '回旧版', onclick: () => rememberUi('classic') },
-      icon('undo', 14), h('span', null, '回旧版'));
-    clear(topEl, h('div', { class: 'top-in' }, h('div', { class: 'brand' }, brandMark(28), h('b', null, '如故')), navEl, back));
+    clear(topEl, h('div', { class: 'top-in' }, h('div', { class: 'brand' }, brandMark(28), h('b', null, '如故')), navEl));
   }
-  /** 记下主人选的版本（DSH 外壳下次打开时按它给地址；同源的 localStorage）。 */
-  function rememberUi(v) { try { G.localStorage.setItem('rugu.admin.ui', v); } catch { /* 存不了就算了 */ } }
-  R.rememberUi = rememberUi;
 
   const TITLES = Object.fromEntries([...DESTS.map(([k, v]) => [k, v]), ['wizard', '首次设置']]);
   /** 画当前去处。模块抛错只坏这一块。 */
@@ -978,14 +924,13 @@
       el.querySelector('[data-page-title]')?.focus({ preventScroll: true });
     }
   }
-  /** 「这一块没打开」：一句话 + 重试 + 去旧版里看。 */
+  /** 「这一块没打开」：一句话 + 重试。 */
   function broken(route, e) {
     const mod = modules[route.dest];
     return h('div', { class: 'wrap broken' }, empty({
       ic: 'warn', tone: 'warn', title: '这一块没打开',
       text: e?.code === 'MISSING' || mod?.missing ? '这一页的脚本没有加载，别的页照常能用。' : `这一页出错了（${String(e?.name ?? 'Error')}），别的页照常能用。`,
-      actions: [btn('重试', { ic: 'refresh', onclick: () => { if (mod && !mod.missing) { mod.def = null; mod.error = null; } render(); } }),
-        h('a', { class: 'btn btn-ghost', href: classicHref(route.path, theme.current) }, '去旧版里看')],
+      actions: btn('重试', { ic: 'refresh', onclick: () => { if (mod && !mod.missing) { mod.def = null; mod.error = null; } render(); } }),
     }));
   }
   function onHash() {
@@ -1026,8 +971,6 @@
     // 离开页面、页面藏起来（DSH 换到别的设置项）时，还在等的延迟操作立刻提交
     G.addEventListener('pagehide', flushPending);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPending(); });
-    // 记下「在用新版」（DSH 外壳下次按它给地址）
-    if (q.get('ui') === 'next') rememberUi('next');
     cur = parseHash(G.location.hash);
     // D173：首次设置模式（page.js 放的标记：还没有核心，别的去处都打不开）——一打开就进向导
     if (document.querySelector('meta[name="rugu-setup-mode"]') && cur.dest !== 'wizard') { cur = parseHash('#/wizard'); G.history.replaceState(null, '', buildHash(cur.path)); }

@@ -58,7 +58,7 @@ export function shouldSleepImpl(core, at) {
   return at - last >= p.catchUpH * HOUR;
 }
 
-/** 必要项（节省预设下也做）。第 2 步的对照原话纠错也算（D122 评审：记错的认知每一轮都被注入，一晚最多 2 次、几分钱，见 docs/花费.md）。
+/** 必要项（节省预设下也做）。第 2 步的对照原话纠错也算（D122 评审：记错的认知每一轮都被注入，一晚最多 correct.maxCalls 次（乘 sleepScale，节省档 2 次）、几分钱，见 docs/花费.md）。
  * 第 11 步（D124）节省档只做纯代码的那一半（定哪些经验放进常驻区），不调模型。 */
 const ESSENTIAL = new Set([0, 1, 2, 5, 6, 7, 9, 10, 11]);
 
@@ -157,6 +157,24 @@ export function sleepCallPlan(p) {
     left -= k;
   }
   return { total, sum, steps, reserve };
+}
+
+/**
+ * 【D176】这套配置（core.config.get() 的快照）下夜里整理一晚最多做多少，给管理页写给人看：整晚最多几次模型、
+ * 对照原话最多核几条、泛化最多问几组、印象最多更新几个人。节省档不做的（泛化）记 0。
+ * @param {object} cfg
+ * @returns {{scale: number, depth: string, calls: number, correctFacts: number, generalizeGroups: number, impressionPeople: number}}
+ */
+export function sleepSummary(cfg) {
+  const p = params({ config: { get: () => cfg } });
+  const plan = sleepCallPlan(p);
+  const steps = plan.steps;
+  return {
+    scale: p.scale, depth: p.depth, calls: plan.total,
+    correctFacts: (steps.get(2) ?? 0) * (Number(p.correct.perCall) || 0),
+    generalizeGroups: (steps.get(3) ?? 0) * (Number(p.generalize.groupsPerCall) || 0),
+    impressionPeople: Math.max(0, Number(p.impressions.perCall) || 0),
+  };
 }
 
 /** 第 n 步这次能用到第几次（run.max）：不超过它自己登记的次数，也不动后面保留的名额。 */

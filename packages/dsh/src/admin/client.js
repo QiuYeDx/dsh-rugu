@@ -1,6 +1,6 @@
 // dsh-rugu 的界面入口：DSH 设置侧边栏里的「如故」（英文界面是「Rugu」，D167）。
 // DSH 的浏览器插件格式是 window.__ModuleLoader__.load({ id, factory })；这里手写，不需要构建步骤（照 dsh-bili-eyes 的写法）。
-// 管理页本身是主人专用 Fetch 路由给的一个页面（src/admin/page.html，§13.1）；这里只放一个同源 iframe 指向它，
+// 管理页本身是主人专用 Fetch 路由给的一个页面（src/admin/page.js 拼的，§13.1）；这里只放一个同源 iframe 指向它，
 // 并把 DSH 的主题变量（颜色、深浅色）抄进 iframe，让它看起来和设置页是一体的。数据都在 iframe 里经主人专用路由读写。
 window.__ModuleLoader__.load({
   id: 'dsh-rugu',
@@ -60,26 +60,20 @@ window.__ModuleLoader__.load({
       body.style.removeProperty('--pm-page');
     }
 
-    // ── D170：新旧两版管理页并存 + 深浅色同步 ───────────────────────────────
+    // ── 深浅色同步（D170；D176 起只有一版管理页）──────────────────────────────
     // DSH 的界面怎么表示深浅色（dsh-client-ui-layout 的 ThemePresenter）：解析好的配色写在 body 上，深色时有 data-ds-dark-theme；
     // <html> 上的 data-ds-theme-source 是主人的偏好（light / dark / system）。这里只看 body 的那个属性。
     const DARK_ATTR = 'data-ds-dark-theme';
     /** 和页面（ui/base.js 的 THEME_MESSAGE）约定的消息类型。页面只认同源、来自父窗口、这个形状的消息。 */
     const THEME_MESSAGE = 'rugu:theme';
     const themeNow = () => (document.body && document.body.hasAttribute(DARK_ATTR) ? 'dark' : 'light');
-    /** 主人上次选的是新版还是旧版（页面里点「回旧版」「回到新版」时记下的；同源的 localStorage）。没选过返回 null：按服务端的配置（默认新版）。 */
-    function chosenUi() {
-      try { const v = window.localStorage.getItem('rugu.admin.ui'); return v === 'next' || v === 'classic' ? v : null; } catch { return null; }
-    }
-    /** iframe 的地址：主题跟着带上（页面一打开就是对的颜色）；主人选过版本就带上 ui。 */
+    /** iframe 的地址：主题跟着带上（页面一打开就是对的颜色）。 */
     function pageUrl() {
       const q = new URLSearchParams();
-      const ui = chosenUi();
-      if (ui) q.set('ui', ui);
       q.set('theme', themeNow());
       return `${PAGE}?${q}`;
     }
-    /** 主题变了：告诉新版页面（postMessage，只发给同源）。旧版页面靠 syncTheme 直接写属性，不看这条消息。 */
+    /** 主题变了：告诉页面（postMessage，只发给同源）。 */
     function postTheme(frame) {
       try { frame.contentWindow && frame.contentWindow.postMessage({ type: THEME_MESSAGE, theme: themeNow() }, window.location.origin); } catch { /* iframe 还没好 */ }
     }
@@ -122,7 +116,7 @@ window.__ModuleLoader__.load({
           let ok = true;
           try { ok = !!frame.contentDocument && frame.contentDocument.title !== '' && !/^\s*\{/.test(frame.contentDocument.body?.textContent ?? ''); } catch { ok = false; }
           setFailed(!ok);
-          // 页面里换了版本（「回旧版」「回到新版」是 iframe 里的链接）以后也对上颜色
+          // 页面重新加载以后也对上颜色
           lastTheme = themeNow();
           postTheme(frame);
           later();

@@ -1,5 +1,5 @@
 /* 记忆（memory.js，D171）。类名都带 mem- 前缀；公共的列表行、下拉、面板、对话框用 shell.html 里的。
-   例外：pm-sm-* 是星图（starmap.client.js）自己画的星空和时间轴的类名，新页面里的样式写在这里（旧页面的在 page.html 里，两边各一份）。 */
+   例外：pm-sm-* 是星图（starmap.client.js）自己画的星空和时间轴的类名，样式写在这里。 */
 
 /* ── 列表 ──────────────────────────────────────────────────────────────── */
 .mem-toolbar { margin-bottom: 4px; }
@@ -138,7 +138,7 @@ html.pm-sm-maxed { overflow: hidden; }
 .mem-sky-max .mem-sky, .mem-sky-max .pm-sm, .mem-sky-max .pm-sm-sky { height: 100%; max-height: none; }
 .mem-sky-max .mem-starpanel { position: static; overflow: auto; }
 
-/* 星图自己画的部分（星空、说明、提示、时间轴）：和旧页面 page.html 里的同一套，只是换成这里的 token */
+/* 星图自己画的部分（星空、说明、提示、时间轴） */
 .pm-sm { display: flex; flex-direction: column; min-width: 0; }
 .pm-sm-sky { position: relative; height: max(400px, calc(100vh - 300px)); max-height: 900px; min-height: 0; border-radius: var(--radius-2xl); overflow: hidden; color: #E8ECF4;
   background: radial-gradient(120% 90% at 50% 38%, #0E1424 0%, #080B14 55%, #05070D 100%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), var(--shadow-card);

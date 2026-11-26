@@ -222,14 +222,14 @@ test('首次设置的草稿：只在设置模式下存、写进 host.setup.draft
   // 设置模式下别的设置视图和动作都不开
   assert.equal((await view('setBasic')).status, 503);
   assert.equal((await act('persona.save', { principalLabel: 'x' })).status, 503);
-  // 新版向导：页面带首次设置的标记；D174 起不带 ui 的新装用户也是它，要旧版得明说 ?ui=classic
+  // 向导：页面带首次设置的标记；新装的用户（没配置）直接进它；D176 起只有这一版，?ui=… 忽略
   const page = await (await h.page(new Request(`${ORIGIN}${ROUTES.page}?ui=next`))).text();
   assert.ok(page.includes('<meta name="rugu-setup-mode" content="1">'));
   assert.ok(page.includes("Rugu.define('wizard'"));
   const dflt = await (await h.page(new Request(`${ORIGIN}${ROUTES.page}`))).text();
   assert.ok(dflt.includes('<meta name="rugu-setup-mode" content="1">') && dflt.includes("Rugu.define('wizard'"), '新装的用户（没配置、没点过切换）直接进新版的向导');
   const classic = await (await h.page(new Request(`${ORIGIN}${ROUTES.page}?ui=classic`))).text();
-  assert.ok(!classic.includes("Rugu.define('wizard'"), '明说 classic 的是旧版的向导');
+  assert.ok(classic.includes("Rugu.define('wizard'"), '老地址上的 ?ui=classic 不再有旧版可去');
   assert.ok(!renderNextPage({ nonce: 'n', token: 't' }).includes('<meta name="rugu-setup-mode"'), '平时不带标记');
   // 设置完了：草稿不再存
   const s = setup();

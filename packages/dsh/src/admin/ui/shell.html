@@ -146,9 +146,6 @@ svg.i { flex: none; display: block; fill: none; stroke: currentColor; stroke-wid
 .nav button::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--blue); transform: scaleX(0); transition: transform var(--duration-base) var(--ease-out-quint); }
 .nav button[aria-current="page"]::after { transform: scaleX(1); }
 .count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--foreground); color: var(--background); font-size: 12px; font-weight: 600; line-height: 20px; text-align: center; letter-spacing: 0; font-variant-numeric: tabular-nums; }
-.uiswitch { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border);
-  background: transparent; color: var(--muted-foreground); font-size: 12px; font-weight: 500; letter-spacing: 0; text-decoration: none; white-space: nowrap; }
-@media (hover: hover) and (pointer: fine) { .uiswitch:hover { color: var(--foreground); border-color: color-mix(in oklab, var(--foreground) 20%, transparent); } }
 
 /* ── 页面骨架 ─────────────────────────────────────────────────────────── */
 .wrap { max-width: 1104px; margin: 0 auto; padding: 40px 32px 120px; }
@@ -396,7 +393,6 @@ details.more > .body { padding-top: 8px; }
   .top { padding: 6px 8px 0; }
   .top-in { flex-wrap: wrap; height: auto; padding: 0 14px; gap: 0; }
   .brand { height: 52px; }
-  .uiswitch { margin-left: auto; }
   .nav { order: 3; flex: 0 0 calc(100% + 32px); margin: 0 -16px; padding: 0 8px; height: 44px; }
   .nav button { padding: 0 10px; }
   .nav button::after { left: 10px; right: 10px; }
@@ -429,7 +425,6 @@ details.more > .body { padding-top: 8px; }
   .nav button::after { left: 9px; right: 9px; }
   .brand { flex: 1 1 auto; min-width: 0; }
   .brand b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .uiswitch { flex-shrink: 0; padding: 0 8px; font-size: 11px; gap: 4px; letter-spacing: -0.01em; }
 }
 
 /* 减少动态效果：去掉位移和缩放，只留短淡入淡出 */

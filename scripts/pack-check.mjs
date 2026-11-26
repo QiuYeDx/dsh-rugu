@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 打包检查：npm 包里会不会缺文件。用 `npm pack --dry-run --json` 拿到每个包会打进去的文件清单（不真的打包、不联网、不跑生命周期脚本），然后：
 //   1. 清单里的每个 JS 文件（浏览器端的除外）沿着 import / export from / import() / require() 的相对路径走一遍，
-//      再加上 `new URL('<相对路径>', import.meta.url)` 这种运行时按路径加载的文件（管理页的 page.html、starmap.client.js、
+//      再加上 `new URL('<相对路径>', import.meta.url)` 这种运行时按路径加载的文件（管理页的 ui/ 各文件、starmap.client.js、
 //      worker 脚本、读 package.json 的地方）：依赖的每个文件都要在清单里，不许指到包外；
 //   2. package.json 里声明的入口：main、exports（含 * 通配，磁盘上匹配到的每个文件都要进包）、icon、dsh.bundle.patch、
 //      scripts 里 `node <包内文件>` 用到的脚本（指到包外的 ../ 只在仓库里用，不查），再加上调用方给的额外文件（dsh.plugin.json 之类）；

@@ -1,7 +1,7 @@
 // 管理页的只读视图（GET，§13.1）。全部只经核心的公开 API（pm.status / pm.admin.*，§3.5）和宿主给的 host.*，不碰表。
 // 主人看得到全部记忆（§9.3.7 第 3 条），所以记忆列表照原样给；宿主的状态、预算、显卡只给数字和短状态（§13.3）。
 // 每个视图各自兜错：某一块出错只让那一块显示「读不出来」，别的照常（总览不能因为备份目录读不了就整页空白）。
-import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride, mergeConfig, recallCaps } from 'rugu-core';
+import { DEFAULTS, BUDGET_OVERRIDE_KEYS, checkBudgetOverride, mergeConfig, recallCaps, sleepSummary } from 'rugu-core';
 import { InputError, nonNegInt, numbersOnly, oneOf, opaque, posInt, text, timeMs } from './check.js';
 import { verdictOf } from '../ports/llm.js';
 import { createSettingsViews } from './settings-views.js';
@@ -115,6 +115,8 @@ export const BUDGET_RANGES = Object.freeze({
   injectPerSessionPerDay: { kind: 'cap', min: 1000, max: 10_000_000 },
   // 记忆给多少（D165）：回想各层的条数和总字数乘它；管理页建议 0.5–3（核心的校验更宽，留给手改文件）
   room: { kind: 'room', min: 0.5, max: 3 },
+  // 夜里整理做多少（D176）：纠错、泛化的次数和一晚更新几个人的印象乘它；管理页建议 0.5–3（核心的校验更宽，留给手改文件）
+  sleepScale: { kind: 'room', min: 0.5, max: 3 },
 });
 const fmtInt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 /**
@@ -177,8 +179,16 @@ export function budgetConfigView(core, hostCfg) {
     } catch { return null; }
   };
   const memory = Object.fromEntries(BUDGET_PRESETS.map((name) => [name, memoryOf(name, {})]));
+  // 夜里整理一晚最多做多少（D176）：每一档（和现在生效的），从核心的 sleepSummary 算
+  const sleepOf = (name, ov) => {
+    try {
+      const { config } = mergeConfig(DEFAULTS, { ...core, budget: { ...b, preset: name, overrides: ov } });
+      return sleepSummary(config);
+    } catch { return null; }
+  };
+  const sleep = Object.fromEntries(BUDGET_PRESETS.map((name) => [name, sleepOf(name, {})]));
   return { preset, custom: Object.keys(overrides).length > 0, overrides, presets, effective: { ...presets[preset], ...overrides }, keys: [...BUDGET_OVERRIDE_KEYS], ranges: BUDGET_RANGES,
-    memory, memoryEffective: memoryOf(preset, overrides) };
+    memory, memoryEffective: memoryOf(preset, overrides), sleep, sleepEffective: sleepOf(preset, overrides) };
 }
 /**
  * 「记忆给多少」（D165）给页面的几个数：想起来的最多几条、工作记忆最多几行、被问到以前的事时最多约多少字、她调记忆工具时最多约多少字、

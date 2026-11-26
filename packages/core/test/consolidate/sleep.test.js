@@ -120,13 +120,13 @@ test('LLM 调用一晚 ≤ sleep.maxLlmCalls：到了上限的步顺延（skippe
     // 第二晚：额度恢复（默认 = 各步之和），接着做
     core.config.update({ sleep: { maxLlmCalls: null } });
     const r2 = await core.mods.consolidate.sleep(core, { at: NEXT_0430 + DAY });
-    assert.equal(r2.llmMax, 14);
-    assert.ok(r2.llmCalls > 0 && r2.llmCalls <= 14);
+    assert.equal(r2.llmMax, 16);
+    assert.ok(r2.llmCalls > 0 && r2.llmCalls <= 16);
     assert.deepEqual(r2.capped, []);
   } finally { await w.cleanup(); }
 });
 
-test('D138 名额：前面的步骤把能用的全用满时，「她自己」和经验回顾照样跑；总上限默认 = 各步之和（宽松 14、节省 6），每一步不超过自己登记的次数', async () => {
+test('D138 名额：前面的步骤把能用的全用满时，「她自己」和经验回顾照样跑；总上限默认 = 各步之和（宽松 16、节省 6），每一步不超过自己登记的次数', async () => {
   const llm = new FakeLLM({ fallback: { sleep: [] } });
   // 前面的步骤这一晚想调 7 次（复核、泛化、反思、印象、故事线……），总上限只给 6：前面最多拿到 4 次，她自己和经验回顾各 1 次
   const w = await world({ llm, config: { sleep: { maxLlmCalls: 6 } }, mods: { encode: { reviewFlagged: async () => ({ reviewed: 2, llmCalls: 1 }) } } });
@@ -137,7 +137,7 @@ test('D138 名额：前面的步骤把能用的全用满时，「她自己」和
     for (let i = 0; i < 3; i++) core.mods.encode.lessonToolOutcome(core, { tool: 'some_tool', ok: false, error: 'timeout', sessionId: `s${i}`, at: T0 + i * MIN });
     const plan = sleepCallPlan(params(core));
     assert.equal(plan.total, 6);
-    assert.equal(plan.sum, 14);
+    assert.equal(plan.sum, 16);
     assert.deepEqual([...plan.reserve], [[8, 1], [11, 1]]);
     const r = await core.mods.consolidate.sleep(core, { at: NEXT_0430 });
     const by = Object.fromEntries(r.steps.map((s) => [s.name, s]));
@@ -152,12 +152,12 @@ test('D138 名额：前面的步骤把能用的全用满时，「她自己」和
     assert.equal(saved.llmMax, 6);
     assert.deepEqual(saved.capped, r.capped);
   } finally { await w.cleanup(); }
-  // 默认（宽松）：总上限 = 各步之和 14
+  // 默认（宽松）：总上限 = 各步之和 16
   const w1 = await world();
   try {
     const plan = sleepCallPlan(params(w1.core));
-    assert.equal(plan.total, 14);
-    assert.equal(plan.sum, 14);
+    assert.equal(plan.total, 16);
+    assert.equal(plan.sum, 16);
   } finally { await w1.cleanup(); }
   // 节省档：只做必要项，总量 6（复核 1 + 纠错 2 + 印象 2 + 故事线 1），她自己和经验回顾的模型部分不做、不留名额
   const w2 = await world({ config: { budget: { preset: 'saving' } } });
@@ -635,4 +635,33 @@ test('第 5 步先跑一遍认人的修复（D162，不调模型）：白天刚�
     assert.equal(step5.detail?.ghosts?.linked, 1, JSON.stringify(step5));
     assert.equal(E.belief(core, acctOnly, named).rel, 'same');
   } finally { await w.cleanup(); }
+});
+
+import { DEFAULTS, mergeConfig } from '../../src/config/defaults.js';
+import { sleepSummary } from '../../src/consolidate/index.js';
+
+test('夜里整理做多少（D176）：纠错次数、泛化次数、印象人数乘花费档位的 sleepScale；节省 0.6 / 平衡 1 / 效果优先 2，自定义能单独改；手写的 sleep.* 也乘', () => {
+  const at = (budget, sleep) => mergeConfig(DEFAULTS, { ...(budget ? { budget } : {}), ...(sleep ? { sleep } : {}) }).config;
+  const of = (cfg) => { const p = params({ config: { get: () => cfg } }); return [p.correct.maxCalls, p.generalize.maxCalls, p.impressions.perCall, p.scale]; };
+  assert.deepEqual(of(at()), [4, 2, 10, 1], '默认平衡：一晚核 16 条（4 次 × 4 条）、更新 10 个人');
+  assert.deepEqual(of(at({ preset: 'saving' })), [2, 1, 6, 0.6], '节省档的纠错、印象和原来一样（2 次、6 个人）');
+  assert.deepEqual(of(at({ preset: 'unlimited' })), [8, 4, 20, 2]);
+  assert.deepEqual(of(at({ overrides: { sleepScale: 1.5 } })), [6, 3, 15, 1.5], '自定义');
+  assert.deepEqual(of(at({ overrides: { sleepScale: 0.3 } })), [1, 1, 3, 0.3], '再小也至少 1');
+  assert.deepEqual(of(at({ overrides: { sleepScale: 2 } }, { correct: { maxCalls: 3 } })), [6, 4, 20, 2], '手写的 correct.maxCalls 也乘');
+  assert.deepEqual(of(at(null, { correct: { maxCalls: 0 } })), [0, 2, 10, 1], '手写 0 = 关着，乘了还是 0');
+  // 不合法的忽略（给 warning），按预设
+  const bad = mergeConfig(DEFAULTS, { budget: { overrides: { sleepScale: 10 } } });
+  assert.ok(bad.warnings.some((w) => /sleepScale/.test(w)));
+  assert.equal(of(bad.config)[3], 1);
+});
+
+test('sleepSummary（D176）：整晚几次、核几条、泛化问几组、更新几个人——和实际的调用计划一致，节省档泛化记 0', () => {
+  const at = (budget) => mergeConfig(DEFAULTS, budget ? { budget } : {}).config;
+  assert.deepEqual(sleepSummary(at()), { scale: 1, depth: 'full', calls: 16, correctFacts: 16, generalizeGroups: 12, impressionPeople: 10 });
+  const s = sleepSummary(at({ preset: 'saving' }));
+  assert.deepEqual([s.depth, s.calls, s.correctFacts, s.generalizeGroups, s.impressionPeople], ['essential', 6, 8, 0, 6]);
+  const u = sleepSummary(at({ preset: 'unlimited' }));
+  assert.ok(u.calls > 16 && u.correctFacts === 32 && u.impressionPeople === 20);
+  assert.equal(sleepSummary(mergeConfig(DEFAULTS, { sleep: { maxLlmCalls: 5 } }).config).calls, 5);
 });

@@ -1,5 +1,5 @@
 // 打包冒烟（scripts/pack-check.mjs）：dsh-rugu 从 npm 装下来以后，每个 exports 入口（含 locale/*.json）、package.json 里的 icon、
-// dsh.bundle.patch、scripts 用到的脚本、DSH 按约定读的 dsh.plugin.json、运行时按路径加载的文件（管理页的 page.html、starmap.client.js、
+// dsh.bundle.patch、scripts 用到的脚本、DSH 按约定读的 dsh.plugin.json、运行时按路径加载的文件（管理页的 starmap.client.js、
 // GPU 采样的 worker）依赖的都在包里；对 rugu-core 只用它 exports 里有的入口；测试文件不进包。浏览器端的入口（./client）只查在不在。
 //   用 `npm pack --dry-run --json` 拿清单（不真的打包、不联网）。npm 用不了时跳过并写明原因；设 RUGU_REQUIRE_PACK=1 时改成失败。
 import test from 'node:test';
@@ -15,10 +15,10 @@ test('dsh-rugu 的包：入口和运行时加载的文件依赖的都在包里�
     return;
   }
   assert.deepEqual(r.problems, []);
-  for (const f of ['src/index.js', 'src/admin/client.js', 'src/admin/page.html', 'src/admin/starmap.client.js', 'src/host/gpu/sampler-worker.js',
+  for (const f of ['src/index.js', 'src/admin/client.js', 'src/admin/starmap.client.js', 'src/host/gpu/sampler-worker.js',
     'locale/zh.json', 'locale/en.json', 'assets/icon.svg', 'dsh.plugin.json', 'cordis.patch.yml']) assert.ok(r.files.includes(f), `包里应该有 ${f}`);
   // 运行时按路径加载的几个确实被扫到了（不是碰巧在清单里）
-  for (const f of ['src/admin/page.html', 'src/admin/starmap.client.js', 'src/host/gpu/sampler-worker.js']) assert.ok(r.runtime.includes(f), `应该扫到运行时加载的 ${f}`);
+  for (const f of ['src/admin/starmap.client.js', 'src/host/gpu/sampler-worker.js']) assert.ok(r.runtime.includes(f), `应该扫到运行时加载的 ${f}`);
   // D170：新版管理页的骨架、地基、各模块和样式也是 page.js 按路径读的
   for (const n of ['shell.html', 'base.js', 'home.js', 'memory.js', 'pending.js', 'places.js', 'settings.js', 'wizard.js', 'home.css', 'memory.css', 'pending.css', 'places.css', 'settings.css', 'wizard.css']) {
     assert.ok(r.runtime.includes(`src/admin/ui/${n}`), `应该扫到 ui/${n}`);

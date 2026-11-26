@@ -1,7 +1,7 @@
 // 管理页的本地预览（不是测试文件）：不启动 DSH，用假 pm / 假 host 跑真的路由处理函数，给无头 Chrome 截图审稿用。
 //   node packages/dsh/test/admin/preview-server.mjs [--port 3471]
 //   http://127.0.0.1:3471/s/<normal|empty|errors|big|old>/api/rugu/admin    单独打开的管理页（big：星图 2 万颗星；old：老核心，没有星图）
-//   …/api/rugu/admin?ui=next&theme=dark#/home    重做中的新版（D170）；场景另有 llmdown / fallback / readonly / off（首页的几种状态）
+//   …/api/rugu/admin?theme=dark#/home    管理页（D176 起只有这一版）；场景另有 llmdown / fallback / readonly / off（首页的几种状态）
 //     截图：node packages/dsh/test/admin/ui-shots.mjs（按去处 / 状态 / 主题 / 宽度批量截，用法见那个文件）
 //     星图的调试开关：页面地址加 ?starmap=2d 强制走 2D 退路
 //   http://127.0.0.1:3471/shell/<normal|empty|errors|big|old>?theme=dark                       仿 DSH 设置面板，经 client.js 用 iframe 打开
@@ -15,7 +15,7 @@ import { Readable } from 'node:stream';
 import { createAdminHandlers, ROUTES } from '../../src/admin/index.js';
 import { makeFakePm, makeFakeHost, SETTINGS_VARIANTS, WIZARD_VARIANTS } from './fixtures.js';
 
-process.env.PM_ADMIN_PAGE_NOCACHE = '1';   // 改了 page.html 刷新就能看到
+process.env.PM_ADMIN_PAGE_NOCACHE = '1';   // 改了 ui/ 下的文件刷新就能看到
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT = path.join(HERE, '..', '..', 'src', 'admin', 'client.js');
 const i = process.argv.indexOf('--port');
@@ -38,7 +38,7 @@ for (const s of SCENARIOS) {
   const h = createAdminHandlers({ pm: makeFakePm({ scenario: s, now: previewNow, clock: skyClock }), host: makeFakeHost({ scenario: s, now: previewNow }), exportDir, now: skyClock, log: { info() {}, warn() {}, error() {} } });
   scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
 }
-// 首次设置模式（还没有核心）：和真的一样只开设置模式的路由（?ui=next 看新版的向导，不带是旧版的）
+// 首次设置模式（还没有核心）：和真的一样只开设置模式的路由（打开就是向导）
 for (const s of WIZARD_VARIANTS) {
   const h = createAdminHandlers({ pm: null, setupMode: true, host: makeFakeHost({ scenario: s, now: previewNow }), exportDir, now: skyClock, log: { info() {}, warn() {}, error() {} } });
   scenarios[s] = { [ROUTES.page]: h.page, [ROUTES.data]: h.data, [ROUTES.act]: h.act, [ROUTES.file]: h.file };
@@ -78,8 +78,6 @@ const SHELL = (scenario, theme) => `<!doctype html>
 <div class="panel"><nav><div>通用</div><div>模型</div><div>插件</div><div>B站伙伴</div><div class="on">如故</div></nav>
 <div class="content"><div class="header"></div><div class="options" id="root"></div></div></div>
 <script>
-  // ?ui=next|classic：当作主人在页面里选过这一版（client.js 读同一个 localStorage 键）
-  { const ui = new URLSearchParams(location.search).get('ui'); if (ui) try { localStorage.setItem('rugu.admin.ui', ui); } catch {} }
   // 一个只够 client.js 用的小 React：createElement 直接建 DOM，hook 只跑一次（预览不需要协调）
   const React = (() => {
     let hooks = []; let idx = 0; const effects = []; let root = null; let comp = null;

@@ -45,8 +45,8 @@ const jobs = [];
 for (const dest of dests) for (const state of states) for (const theme of themes) for (const width of widths) {
   const name = `${dest.replace(/\//g, '-')}-${state}-${width}-${theme}`;
   const url = shell
-    ? `http://127.0.0.1:${port}/shell/${state}?theme=${theme}&ui=next`
-    : `http://127.0.0.1:${port}/s/${state}/api/rugu/admin?ui=next&theme=${theme}#/${dest}`;
+    ? `http://127.0.0.1:${port}/shell/${state}?theme=${theme}`
+    : `http://127.0.0.1:${port}/s/${state}/api/rugu/admin?theme=${theme}#/${dest}`;
   const job = { name, url, width, height: width >= 760 ? 900 : 860, full: full && !shell, dark: theme === 'dark', wait: 1400 };
   // 外壳里：iframe 打开以后再把它里面的 hash 换到要的去处
   if (shell) job.script = `(async () => { const f = document.querySelector('iframe'); for (let i = 0; i < 50 && !(f.contentWindow && f.contentWindow.Rugu); i++) await new Promise((r) => setTimeout(r, 100)); f.contentWindow.location.hash = '#/${dest}'; await new Promise((r) => setTimeout(r, 900)); return f.contentWindow.Rugu.moduleStates(); })()`;

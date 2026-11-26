@@ -1387,7 +1387,7 @@ Rugu.define('memory', (R) => {
       : `每天 ${sc.at ?? '04:30'} 之后她会自己整理一次，刚装好的话要等到那个时间以后才有第一次。整理要用后台模型，所以后台模型要能用。`;
     return h('div', { class: 'card mem-dhead' }, h('div', { class: 'orb', 'aria-hidden': 'true' }, icon('moon', 20)),
       h('div', { class: 'main' }, h('b', null, title), h('p', null, text),
-        h('p', { class: 'links' }, R.link('后台模型', 'settings/models', { arrow: false }), R.link('后台花费', 'settings/cost', { arrow: false }), R.link('技术细节', 'settings/diag', { arrow: false }))));
+        h('p', { class: 'links' }, R.link('后台模型', 'settings/models', { arrow: false }), R.link('调整每晚做多少', 'settings/cost', { arrow: false }), R.link('后台花费', 'settings/cost', { arrow: false }), R.link('技术细节', 'settings/diag', { arrow: false }))));
   }
 
   async function renderDream(body) {

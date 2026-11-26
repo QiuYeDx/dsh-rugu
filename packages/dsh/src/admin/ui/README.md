@@ -1,6 +1,6 @@
 # 新管理页（D170）
 
-新版在这个目录里，是管理页的默认（D174）；旧版是 `../page.html` 一个文件，留作退路，同一个地址加 `?ui=classic` 打开（或配置 `host.admin.ui: 'classic'`）。
+这个目录就是管理页（D170 起；D176 删了旧版 `page.html` 和「回旧版」的入口，现在只有这一版，地址上的 `?ui=…` 忽略）。
 这一页说明给接着做「记忆」「待处理 + 场合」「设置 + 关于 + 首次设置」三路的人：目录、模块怎么登记、公共函数、约定、怎么预览和截图、不许做的事。
 
 视觉和交互的标准是主人确认过的样稿（仓库外的私有材料；截图名和这里的去处、分段一一对应）。Token 和组件样式已经从样稿搬进 `shell.html`，**照着用，不要另起一套**。
@@ -40,7 +40,7 @@ Rugu.define('memory', (R) => {
 ```
 
 - 去处的键固定：`home` / `memory` / `pending` / `places` / `settings` / `wizard`。分段在 `R.SUBS` 里（改分段先改那里，别在模块里写死另一份）。
-- 每个文件在自己的 `<script>` 里：一个出语法错只坏它自己。`factory` 或 `render` 抛错、返回的 Promise 失败，只坏那一页：显示「这一块没打开」+「重试」+「去旧版里看」，别的去处照常。文件读不到时 `page.js` 登记 `Rugu.missing(名字)`，效果一样。`base.js` 自己坏了，启动脚本写一句话和回旧版的链接。
+- 每个文件在自己的 `<script>` 里：一个出语法错只坏它自己。`factory` 或 `render` 抛错、返回的 Promise 失败，只坏那一页：显示「这一块没打开」+「重试」，别的去处照常。文件读不到时 `page.js` 登记 `Rugu.missing(名字)`，效果一样。`base.js` 自己坏了，启动脚本写一句话和一个「刷新」按钮。
 - 换去处时（`leave` 之前）还在等的延迟提交（`R.deferred`）会立刻提交。
 - 浏览器里看状态：`Rugu.moduleStates()` → `{home: 'loaded', memory: 'pending', …}`。
 
@@ -54,7 +54,6 @@ Rugu.define('memory', (R) => {
 | `R.setParams(params, {replace = true})` | 只改参数（打开 / 关掉详情、筛选），交给模块的 `update`；值为空的参数去掉 |
 | `R.route()` | 当前路由 |
 | `R.parseHash(hash)` / `R.buildHash(path, params)` | 纯函数 |
-| `R.classicHref(path, theme)` / `R.classicTab(path)` | 旧版对应页签的地址（`admin?ui=classic&tab=…`）；搬完的去处不再需要 |
 | `R.setPendingCount(n)` | 主导航「待处理」上的数字 |
 
 ## 请求层
@@ -106,7 +105,6 @@ if (r) R.toast('已彻底删除');
 | `more(summary, ...body)` | 折叠区（「技术细节」「更多」） |
 | `frow({title, hint?, control?, stack?, right?})` | 表单行：标签 + 说明 + 控件；放进 `.form` |
 | `kv(pairs)` | 键值对（详情面板里） |
-| `placeholderPage(el, route, {title, desc?, subDesc?, sideNav?})` | 「这一块正在搬过来」的占位；搬完删掉调用 |
 
 格式（纯函数，`now` 可以传）：`R.fmt.when(t, now)`（今天 14:32 / 昨天 09:05 / 11/3 08:00 / 2025/1/2，照旧页面的规矩）、`fmt.day`、`fmt.dayLabel`（按天分组的标题）、`fmt.clock`、`fmt.ago`、`fmt.num`（1.2 万）、`fmt.pct`、`fmt.yuan`、`fmt.spaced`（中文和英文、数字之间补空格；句子能直接写成带空格的模板字符串就直接写）。
 
@@ -125,7 +123,7 @@ if (r) R.toast('已彻底删除');
 
 ## 预览和截图
 
-- 假数据预览：`node packages/dsh/test/admin/preview-server.mjs`，打开 `http://127.0.0.1:3471/s/<场景>/api/rugu/admin?ui=next&theme=light#/memory/list`。场景：`normal`、`empty`、`errors`、`llmdown`、`fallback`、`readonly`、`off`（后四个是首页的几种状态，数据同 normal）、`big`、`old`。改了页面文件刷新就能看到。仿 DSH 设置面板（iframe）：`/shell/<场景>?theme=dark&ui=next`。
+- 假数据预览：`node packages/dsh/test/admin/preview-server.mjs`，打开 `http://127.0.0.1:3471/s/<场景>/api/rugu/admin?theme=light#/memory/list`。场景：`normal`、`empty`、`errors`、`llmdown`、`fallback`、`readonly`、`off`（后四个是首页的几种状态，数据同 normal）、`big`、`old`。改了页面文件刷新就能看到。仿 DSH 设置面板（iframe）：`/shell/<场景>?theme=dark`。
 - 假数据在 `test/admin/fixtures.js`（`makeFakePm` 的 `admin.*`、`makeFakeHost`）；新视图的假数据照核心的形状加在那里。
 - 截图（无头 Chrome，不开窗口）：
   `node packages/dsh/test/admin/ui-shots.mjs --dest memory/list,memory/people --state normal,empty --theme light,dark --width 1280,420`

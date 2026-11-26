@@ -722,6 +722,7 @@ Rugu.define('settings', (R) => {
         more('按用途的明细（今天）', useTable(bud, known)),
         more('每天的上限', limitsBlock(bud, bc, ro, setBudget)),
         more('记忆给多少', memoryRoom(bc)),
+        more('夜里整理做多少', sleepRoom(bc, ro, setBudget)),
         more('这些数准不准', accuracy(bud, t))) : null);
     if (ro) box.querySelectorAll('.set-tier').forEach((b) => { b.disabled = true; });
   }
@@ -765,6 +766,19 @@ Rugu.define('settings', (R) => {
     return h('div', null, kv(['saving', 'loose', 'unlimited'].map((k) => [PRESET[k], line(m[k])]).concat(bc?.custom && bc.memoryEffective ? [['现在（自定义）', line(bc.memoryEffective)]] : [])),
       h('p', { class: 'fhint set-after' }, '这些是上限，不是每轮都给满。每条记忆都尽量完整地给，不截半句；给得越多，她的对话长得越快、压缩得越早。'));
   }
+  /** 夜里整理一晚最多做多少（D176）：每一档的数，和调节的入口（「自定义每一项…」里的「夜里整理做多少」）。 */
+  function sleepRoom(bc, ro, setBudget) {
+    const m = bc?.sleep ?? {};
+    const line = (x) => {
+      if (!x) return '—';
+      const parts = [`整晚最多调 ${x.calls} 次模型`, `对照原话最多核 ${x.correctFacts} 条`, `最多更新 ${x.impressionPeople} 个人的印象`];
+      if (x.generalizeGroups) parts.push(`归纳规律最多问 ${x.generalizeGroups} 组经历`);
+      return parts.join('，');
+    };
+    return h('div', null, kv(['saving', 'loose', 'unlimited'].map((k) => [PRESET[k], line(m[k])]).concat(bc?.custom && bc.sleepEffective ? [['现在（自定义）', line(bc.sleepEffective)]] : [])),
+      h('p', { class: 'fhint set-after' }, '这些是一晚的上限。没活干的步骤不调，没处理完的留到下一晚接着做，所以调高了不一定每晚都用满。每次调用约 0.002–0.007 元。想调多少，在「自定义每一项…」里改「夜里整理做多少」：纠错和归纳的次数、每晚更新印象的人数都乘它。'),
+      h('div', { class: 'set-acts' }, btn('调节…', { size: 'sm', disabled: ro || !bc, onclick: () => customBudget(bc, setBudget) })));
+  }
   function accuracy(bud, t) {
     const p = bud.prices;
     const hrs = (p?.peakHours ?? []).map(([a, b]) => `${a}–${b}`).join('、');
@@ -781,6 +795,7 @@ Rugu.define('settings', (R) => {
     perSourceShare: ['一个群或私聊最多占', '%', 'pct'], mainChatRatioCap: ['后台最多是她聊天的', '%', 'pct'], balanceProtectDays: ['余额保护：余额只够几天时停后台', '天（0 = 关）', 'int'],
     stage2Scope: ['说话前的细看', [['all', '所有拿不准的'], ['direct', '只在对她说时']]], prefetchRewrite: ['先读懂问题再想', [[true, '开'], [false, '关']]], rerank: ['想起来以后再排一次序', [[true, '开'], [false, '关']]],
     sleepDepth: ['夜里整理', [['full', '完整'], ['essential', '只做必要的']]], injectShare: ['放进对话的记忆最多占对话增长的', '%', 'pct'], injectPerSessionPerDay: ['每个对话每天放进去的记忆', '字', 'int'], room: ['记忆给多少', '倍', 'dec'],
+    sleepScale: ['夜里整理做多少', '倍', 'dec'],
   };
   function customBudget(bc, setBudget) {
     let base = bc.preset;

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ROUTES, TOKEN_HEADER } from '../../src/admin/index.js';
-import { renderPage, pageCsp, pageTemplate } from '../../src/admin/page.js';
+import { renderNextPage, pageCsp } from '../../src/admin/page.js';
 import { setup, TOKEN, ORIGIN } from './helpers.js';
 
 const post = (h, body, headers = {}) => h.act(new Request(`${ORIGIN}${ROUTES.act}`, { method: 'POST', headers, body }));
@@ -84,24 +84,12 @@ test('响应头：no-store、nosniff、不带 referrer；页面带 nonce 的 CSP
   assert.notEqual(csp2, csp);
 });
 
-test('页面脚本只用文本节点渲染别人可控的字符串：没有 innerHTML / outerHTML / insertAdjacentHTML / document.write / eval', () => {
-  const html = pageTemplate();
-  const script = html.slice(html.indexOf('<script nonce='), html.lastIndexOf('</script>'));
-  for (const bad of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(', 'new Function']) assert.ok(!script.includes(bad), bad);
-  assert.throws(() => renderPage({ nonce: 'a"b', token: 'x' }), TypeError);
-  assert.throws(() => renderPage({ nonce: 'abc', token: '<script>' }), TypeError);
+test('页面脚本只用文本节点渲染别人可控的字符串：整页里没有 innerHTML / outerHTML / insertAdjacentHTML / document.write / eval；nonce、令牌格式不对直接拒绝', () => {
+  const html = renderNextPage({ nonce: 'abc', token: 'x' });
+  for (const bad of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(', 'new Function']) assert.ok(!html.includes(bad), bad);
+  assert.throws(() => renderNextPage({ nonce: 'a"b', token: 'x' }), TypeError);
+  assert.throws(() => renderNextPage({ nonce: 'abc', token: '<script>' }), TypeError);
   assert.match(pageCsp('abc'), /style-src 'nonce-abc'/);
-});
-
-test('页面在 DSH 设置面板的 iframe 里：只滚自己的容器（不用 scrollIntoView，它会连外层面板一起滚），滚动条样式不被 scrollbar-color 盖掉', () => {
-  const html = pageTemplate();
-  const script = html.slice(html.indexOf('<script nonce='), html.lastIndexOf('</script>'));
-  const css = html.slice(html.indexOf('<style nonce='), html.indexOf('</style>'));
-  assert.ok(!script.includes('.scrollIntoView('));
-  // Chrome 121+ 见到 scrollbar-color / scrollbar-width 就不认 ::-webkit-scrollbar：只许出现在「不支持 webkit 滚动条」的兜底里，或用来藏掉页签条的滚动条
-  const outside = css.replace(/@supports not selector\(::-webkit-scrollbar\)\{[^}]*\{[^}]*\}\}/g, '');
-  for (const m of outside.matchAll(/scrollbar-(?:color|width):([^;}]+)/g)) assert.equal(m[1].trim(), 'none', m[0]);
-  assert.match(css, /::-webkit-scrollbar-button\{display:none/);
 });
 
 test('下载：只认导出目录里、名字形如 pm-export-….jsonl / .pmpack 的文件，不收路径', async () => {

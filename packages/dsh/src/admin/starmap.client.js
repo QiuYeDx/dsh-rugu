@@ -1,11 +1,11 @@
 // 管理页的「星图」页签（D163）：把她的记忆画成一片能交互、能按时间回放的星空。
 // 一颗星是一条记忆（经历、知道的事、约定和打算、做事的经验），亮度是「此刻想不想得起来」（和核心 dynamics/actr.js 同一个式子，按痕迹现算）。
-// 这个文件是一个普通脚本，由 page.js 渲染时塞进 page.html 主脚本前面的占位处（同一个带 nonce 的块）；它只往 window 上挂
+// 这个文件是一个普通脚本，由 page.js 渲染时放进自己的 <script nonce>（UI_SCRIPTS 里登记）；它只往 window 上挂
 //   window.__pmStarmap = { mount(el, deps) → {show, hide, refresh, control}, lib }
-// 两种挂载（D171）：旧页面不给 deps.external，星图自己带工具条和详情卡（照旧）；新页面（ui/memory.js）给 deps.external，
-// 星图只画星空和时间轴，工具条和详情由页面用自己的组件画：页面经 control 改摆法、种类、场合、搜索、演示、放大，
+// 两种挂载（D171）：不给 deps.external，星图自己带工具条和详情卡（独立挂载；D176 删了旧版页面以后管理页不再用，留着没删）；
+// 管理页（ui/memory.js）给 deps.external，星图只画星空和时间轴，工具条和详情由页面用自己的组件画：页面经 control 改摆法、种类、场合、搜索、演示、放大，
 // 星图经 external 的回调把数据交给页面（onModel：种类计数、场合；onSelect：选中的那颗星；onSearch：搜索结果；onState：读不出来、老核心）。
-// 新页面也是同一个文件，单独一个 <script>（page.js 的 UI_SCRIPTS 里登记）；星空的绘制、数据、回放逻辑两种挂载完全一样。
+// 星空的绘制、数据、回放逻辑两种挂载完全一样。
 // lib 是不碰 DOM 的纯函数（亮度、布局、时间刻度），测试里用 vm 单独加载它。
 // 约束（和管理页一样）：CSP 只许带 nonce 的脚本和样式；不拼 HTML 字符串（记忆内容、名字是别人可控的字符串，一律文本节点）；
 // 不动态执行代码、不起后台线程；样式只经 el.style.x 或 CSS 变量。没有外部库：WebGL 和布局都在这里写。
