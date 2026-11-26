@@ -55,6 +55,8 @@ function memoryQuery(q, { paging }) {
   if ((state === 'hidden' || state === 'forgotten') && view === 'suppressed') query.state = state;
   if (q.settingKey && BY_SETTING.has(view)) query.settingKey = opaque(q.settingKey, 'settingKey');
   if (q.entityId && BY_ENTITY.has(view)) query.entityId = posInt(q.entityId, 'entityId');
+  // 【D175】经历的种类（新页面的「日记」：epKind=diary）
+  if (view === 'episodes' && q.epKind) query.epKind = oneOf(q.epKind, ['event', 'summary', 'diary', 'lapse', 'import'], 'epKind');
   // 夜里核对过的（D122）：默认只列改了的，all=1 连没问题的也列
   if (view === 'checks') query.changed = !(q.all === '1' || q.all === 1 || q.all === true);
   // 她的经验（D124）：默认只列现在这一版；按验证过没有筛
@@ -423,7 +425,8 @@ export function createViews(deps) {
       const tz = q.tz != null && q.tz !== '' ? tzMin(q.tz, 'tz') : null;
       const cfg = config();
       const hasHome = typeof pm?.admin?.home === 'function';
-      const [core, st, backup, embedding, spaces, retention, budget, hs, llm] = await Promise.all([
+      const hasNights = typeof pm?.admin?.nights === 'function';
+      const [core, st, backup, embedding, spaces, retention, budget, hs, llm, nights] = await Promise.all([
         hasHome ? part(() => pm.admin.home(tz != null ? { tzOffsetMin: tz } : {})) : { error: 'UNSUPPORTED' },
         part(() => pm.status()),
         part(() => pm.admin.backup.overview()),
@@ -433,6 +436,7 @@ export function createViews(deps) {
         part(async () => budgetSummary(await hostOf('budget')?.status?.(), { embedding: cfg.host?.embedding })),
         hostStatus(),
         part(async () => (hostOf('llmSetup') ? llmHealthRow(await hostOf('llmSetup').status()) : null)),
+        hasNights ? part(() => pm.admin.nights({ limit: 1, ...(tz != null ? { tzOffsetMin: tz } : {}) })) : null,
       ]);
       // 总览的提醒照样算一遍（同一套判断），首页按 key 分到标题、健康行和「需要你看一眼」里
       const host = hs == null ? null : hs.error ? hs : hostSummary(hs, now());
@@ -449,7 +453,7 @@ export function createViews(deps) {
         selfCheck: hs && !hs.error && isObj(hs.selfCheck) ? selfCheckSummaryOf(hs.selfCheck) : null,
       };
       const alerts = alertsOf(o);
-      return homeView({ core, o, alerts, hostCfg: cfg.host });
+      return homeView({ core, o, alerts, hostCfg: cfg.host, nights });
     },
 
     // ── 需要你知道（§9.3.7） ────────────────────────────────────────────
@@ -789,6 +793,18 @@ export function createViews(deps) {
       if (typeof q.month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(q.month)) throw new InputError('month', '应为 YYYY-MM');
       const d = pm.admin.feedDays({ ...feedQuery(q, { paging: false }), month: q.month });
       return { items: Array.isArray(d?.items) ? d.items.map((x) => ({ day: String(x.day), n: Number(x.n) || 0 })) : [], first: num(d?.first), last: num(d?.last) };
+    },
+    /**
+     * 【D175】「记忆 → 做梦」：夜间整理按晚列出来（每一晚写下的日记、改正、规律、想法、印象、性格变化、经验，和那一晚的运行报告）。
+     * limit 几晚（默认 7）、before 只看这个时刻（毫秒）之前的晚、tz 浏览器的时区；老核心没有 → unsupported。
+     */
+    nights(q) {
+      if (typeof pm?.admin?.nights !== 'function') return { unsupported: true };
+      const o = {};
+      if (q.limit) o.limit = posInt(q.limit, 'limit');
+      if (q.before != null && q.before !== '') o.before = timeMs(q.before, 'before');
+      if (q.tz != null && q.tz !== '') o.tzOffsetMin = tzMin(q.tz, 'tz');
+      return pm.admin.nights(o);
     },
     /** 人物卡片；id=… 时只给这个人，带详情（各档案的名字、关系、印象、链接）。 */
     people(q) {
@@ -1372,10 +1388,30 @@ export function homeHeadline({ o, entries, today, fresh }) {
 }
 
 /**
- * 核心的 home + 宿主的状态 → 首页要的样子。纯函数（测试直接喂数据）。
- * @param {{core: any, o: any, alerts: any[], hostCfg: any}} x
+ * 【D175】核心的 nights（limit 1）→ 首页「夜里整理」那一行要的：定好的时间、上次跑完的时间、在不在跑，和最近一晚的几个数。
+ * 读不出来或老核心没有就是 null（首页不画这一行）。纯函数。
  */
-export function homeView({ core, o, alerts, hostCfg }) {
+export function nightSummary(n) {
+  if (!isObj(n) || n.error || n.unsupported) return null;
+  const top = arr(n.items)[0] ?? null;
+  const sc = isObj(n.schedule) ? n.schedule : {};
+  const c = top && isObj(top.counts) ? top.counts : {};
+  const run = top && isObj(top.run) ? top.run : null;
+  return {
+    at: short(sc.at, 8) ?? '04:30', lastAt: num(sc.lastAt), running: !!sc.running, nights: num(sc.nights) ?? 0,
+    night: top ? {
+      dayStart: num(top.dayStart),
+      counts: Object.fromEntries(['diary', 'changed', 'checked', 'pattern', 'insight', 'impression', 'growth', 'lesson'].map((k) => [k, num(c[k]) ?? 0])),
+      run: run ? { at: num(run.at), llmCalls: num(run.llmCalls) ?? 0, problems: arr(run.problems).filter((p) => isObj(p) && (p.kind === 'failed' || p.kind === 'aborted')).length } : null,
+    } : null,
+  };
+}
+
+/**
+ * 核心的 home + 宿主的状态 → 首页要的样子。纯函数（测试直接喂数据）。
+ * @param {{core: any, o: any, alerts: any[], hostCfg: any, nights?: any}} x
+ */
+export function homeView({ core, o, alerts, hostCfg, nights }) {
   const ok = core && !core.error;
   const settings = {};
   if (ok) for (const [k, s] of Object.entries(core.settings ?? {})) settings[k] = settingTitle(s);
@@ -1405,7 +1441,7 @@ export function homeView({ core, o, alerts, hostCfg }) {
     now: o.now, dayStart: ok ? num(core.dayStart) : null, readOnly: !!o.store?.readOnly,
     headline, today, fresh,
     pending: ok ? { total: num(core.pending?.total) ?? 0, needToKnow: num(core.pending?.needToKnow) ?? 0, review: num(core.pending?.review) ?? 0, top: arr(core.pending?.top) } : null,
-    notices, recent, entries, health, spend, settings, names,
+    notices, recent, entries, health, spend, settings, names, night: nightSummary(nights),
     ...(ok ? {} : { error: core?.error ?? 'UNAVAILABLE' }),
   };
 }

@@ -16,7 +16,7 @@
 //     解开副本跑 integrity_check），不碰正在用的库。
 //   - 跑完给所有场合的常驻区标脏（context.markResidentDirty，§10.4），新文本等下一条真实消息再换上。
 //   - 同一时间只跑一个（state.consolidate.running）；dispose 时中止；整体恢复进行中不开始（§12.4.5）。
-import { getMeta, setMeta, setMetaJson, claimNextJob, failJob, enqueueJob, refOf, parseRef } from '../store/index.js';
+import { getMeta, getMetaJson, setMeta, setMetaJson, claimNextJob, failJob, enqueueJob, refOf, parseRef } from '../store/index.js';
 import { params } from './params.js';
 import {
   DAY, HOUR, MIN, errCode, localDay, localDayStart, metric, newRun, parseClock, safeJson, unit, warn, info, restoring, yieldLoop, residentDirty,
@@ -384,6 +384,22 @@ const short = (d) => {
   return out;
 };
 
+/** 【D175】最近每一晚的报告（管理页「记忆 → 做梦」按晚列出来）：meta 'sleep.history'，最多留这么多晚，同一次开始的只留一份。 */
+const HISTORY_KEY = 'sleep.history';
+const HISTORY_MAX = 30;
+/** 一晚的报告 → 留底的样子：和 lastReport 一样只有数字和步名（detail 已经过 short）。 */
+const slim = (r) => ({
+  startedAt: r.startedAt, finishedAt: r.finishedAt, llmCalls: r.llmCalls ?? 0, llmMax: r.llmMax ?? null, capped: [...new Set(r.capped ?? [])].slice(0, 12),
+  steps: (r.steps ?? []).slice(0, 16).map((s) => ({ step: s.step, name: s.name, ok: s.ok !== false, llmCalls: s.llmCalls ?? 0,
+    ...(s.skipped ? { skipped: String(s.skipped).slice(0, 40) } : {}), ...(s.capped ? { capped: true } : {}), ...(s.detail ? { detail: s.detail } : {}) })),
+});
+function pushHistory(core, report) {
+  const prev = getMetaJson(core.store, HISTORY_KEY);
+  const list = (Array.isArray(prev) ? prev : []).filter((x) => x && Number.isFinite(x.startedAt) && x.startedAt !== report.startedAt);
+  list.push(slim(report));
+  setMetaJson(core.store, HISTORY_KEY, list.slice(-HISTORY_MAX));
+}
+
 async function runSleep(core, at, signal) {
   const p = params(core);
   const plan = sleepCallPlan(p);
@@ -495,6 +511,7 @@ async function runSleep(core, at, signal) {
   if (!signal?.aborted) {
     setMeta(core.store, 'sleep.lastAt', at);
     try { setMetaJson(core.store, 'sleep.lastReport', report); } catch { /* 报告存不下不影响 */ }
+    try { pushHistory(core, report); } catch { /* 留底存不下不影响 */ }
   }
   metric(core, 'sleep.runs');
   metric(core, 'sleep.llmCalls', run.calls);

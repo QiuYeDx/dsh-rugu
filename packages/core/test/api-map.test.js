@@ -94,6 +94,8 @@ export const API_MAP = [
   ['admin.feed', [{}], 'admin.feed'],
   ['admin.feedDays', [{}], 'admin.feedDays'],
   ['admin.people', [{}], 'admin.people'],
+  // D175：「记忆 → 做梦」：夜间整理按晚列出来
+  ['admin.nights', [{}], 'admin.nights'],
   ['admin.backup.now', [], 'backup.createPack'],
   ['admin.backup.verify', ['p'], 'backup.verifyPack'],
   ['admin.backup.preview', ['p'], 'backup.previewRestore'],

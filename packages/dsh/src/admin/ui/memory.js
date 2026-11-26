@@ -4,6 +4,9 @@
 //            点一行打开右侧的详情面板（#/memory/list?open=<引用>，刷新后还在）。
 //   人物 —— 一个人一张卡（view=people，D161 的分组），点开是人物面板：印象、各场合的叫法、关系、关于他的记忆。
 //   星图 —— starmap.client.js 的新挂载：星空和时间轴是它画的，工具条和选中那颗星的详情是这里用公共组件画的。
+//   日记 —— 她每天夜里写的日记，一天一篇，新的在前（D175，view=memories 的 epKind=diary）。
+//   做梦 —— 夜间整理按晚列出来（D175，view=nights）：每一晚写了日记、改了哪几条记忆、归纳了什么规律、想到了什么、更新了谁的印象、
+//            性格有没有变化、总结了什么经验，和那一晚跑得怎么样（哪几步出错、到上限、省钱档没做）；改正可以在这里撤销。
 //   成长 —— 她的性格现在的样子、每一处变化（撤销这一处 / 回到这一版），清空在「更多」里。
 // 筛选条件都在地址栏的参数里（type / who / place / time / from / to / q / order / at），刷新、前进后退、从别处跳过来都对。
 // 规矩同 ui/README.md：全部用 DOM API 和文本节点建；样式在 memory.css，类名带 mem- 前缀；颜色只用 token。
@@ -42,6 +45,8 @@ Rugu.define('memory', (R) => {
   const PLAN = { planned: '打算做', in_progress: '在做', done: '做完了', cancelled: '取消了', missed: '错过了', unknown: '不确定' };
   const LESSON_ORIGIN = { owner: '你教的', tool: '她试出来的', confirmed: '你确认过', correction: '你纠正过', self: '她自己琢磨的', told: '别人说的', nightly: '夜里回顾时总结的' };
   const CHECK = { corrected: '改正了', changed: '后来变了', doubted: '把握降低了', confirmed: '核对过，没问题', unclear: '看不出来' };
+  /** 夜里整理自己推出来的事实：不是谁说过的（kind_hint）。 */
+  const HINT = { pattern: '她归纳的规律', insight: '她的想法' };
   const KIND_NAME = { assertion: '事实', episode: '经历', entity: '人与物', intention: '打算', percept: '原话', window: '原文片段', impression: '印象', storyline: '故事线',
     community: '圈子', link: '认人的线索', fact: '事实', intent: '打算', lesson: '经验' };
   const REF_KIND = { p: 'percept', w: 'window', e: 'episode', a: 'assertion', n: 'entity', i: 'impression', t: 'intention', s: 'storyline', c: 'community', l: 'link' };
@@ -191,6 +196,8 @@ Rugu.define('memory', (R) => {
     if (m.supersededBy != null) out.push(['被取代了', '']);
     if (m.expiredAt != null) out.push(['已经过时', '']);
     if (m._t === 'lesson' || m.kind === 'lesson') out.push(m.status === 'verified' ? ['验证过', 'ok'] : ['还没验证', 'warn']);
+    // 夜里整理推出来的事实（D175）：不是谁说过的，要和别的事实分得清
+    if (m._t === 'fact' && HINT[m.kindHint]) out.push([HINT[m.kindHint], '']);
     if (m.needsReview) out.push(['待复核', 'warn']);
     if (m._t === 'quote' && m.textState === 'expired') out.push(['原话已过保留期', '']);
     if (m._t === 'sup' && m.restorable === false) out.push(['已过恢复期', '']);
@@ -201,6 +208,8 @@ Rugu.define('memory', (R) => {
     if (m._t === 'quote') return m.textState === 'expired' && !m.text ? '（原话已过保留期）' : m.text ?? '';
     if (m._t === 'window') return m.text ? String(m.text).replace(/\n+/g, ' / ') : '（已过保留期）';
     if (m._t === 'check') return m.after && m.after.text !== m.before?.text ? `「${m.before?.text ?? ''}」→「${m.after.text}」` : m.before?.text ?? '';
+    // 日记：整篇都是她写的，日期只是标题（D175）
+    if (m._t === 'episode' && m.epKind === 'diary' && m.narrative) return `${m.title ? `${m.title}：` : ''}${m.narrative}`;
     if (m._t === 'sup') return m.preview || KIND_NAME[m.kind] || '记忆';
     return m.text ?? '';
   }
@@ -280,6 +289,9 @@ Rugu.define('memory', (R) => {
     sheet: null,
     personId: null,
     sky: null,
+    /** 「日记」「做梦」两个分段的状态（D175）。 */
+    diary: null,
+    dream: null,
   };
   const roNote = () => R.note('warn', '记忆库现在是只读的：能看，不能隐藏、忘掉、恢复或删除。');
   const roHint = '记忆库现在是只读的';
@@ -287,7 +299,9 @@ Rugu.define('memory', (R) => {
   // ════════════════════════════════════════════════════════════════════════
   // 页头
   // ════════════════════════════════════════════════════════════════════════
-  const DESC = { list: '她记得的事，你都看得到，包括对别人隐藏的。' };
+  const DESC = { list: '她记得的事，你都看得到，包括对别人隐藏的。',
+    diary: '她每天夜里把这一天写成一篇日记。聊到好几天以前的事、或者她要回想这几天过得怎么样时，会先翻日记。',
+    dream: '每天凌晨她会自己整理一遍白天的记忆，这就是她的「做梦」。每一晚改了什么、写了什么、性格有没有变化，都在这里。' };
   function head(route) {
     const segEl = R.seg(R.SUBS.memory.map(([k, t]) => [k, t]), route.sub, (k) => R.go(`memory/${k}`, { focus: false }), '记忆的分类');
     return R.pageHead('记忆', DESC[route.sub] ?? DESC.list, segEl);
@@ -340,7 +354,10 @@ Rugu.define('memory', (R) => {
     const typeOpts = [
       { value: 'all', label: '全部（事实、经历、打算、经验）' }, { sep: true },
       ...['fact', 'episode', 'intent', 'lesson', 'unverified'].map((k) => ({ value: k, label: TYPES[k].label })),
-      { sep: true }, { header: '原始的' }, ...['quote', 'window', 'check', 'checkall', 'old'].map((k) => ({ value: k, label: TYPES[k].label })),
+      // 夜里整理的产出（D175）：日记和做梦各有自己的分段，这里只是换个入口，免得只会翻列表的人找不到
+      { sep: true }, { header: '夜里整理的' }, { value: 'diary', label: '日记', run: () => R.go('memory/diary', { focus: false }) },
+      ...['check', 'checkall'].map((k) => ({ value: k, label: TYPES[k].label })), { value: 'dream', label: '每晚做了什么', run: () => R.go('memory/dream', { focus: false }) },
+      { sep: true }, { header: '原始的' }, ...['quote', 'window', 'old'].map((k) => ({ value: k, label: TYPES[k].label })),
       { sep: true }, { header: '收起来的' }, ...['hidden', 'forgotten'].map((k) => ({ value: k, label: TYPES[k].label })),
     ];
     const people = (S.meta?.pickable ?? []).filter((p) => p.stored !== false && !p.isSelf);
@@ -622,12 +639,13 @@ Rugu.define('memory', (R) => {
     if (el) { const fresh = memRow(m); el.replaceWith(fresh); S.list.rows.set(m.ref, fresh); }
     R.toast('已确认，这条算验证过');
   }
-  async function revertCheck(m) {
+  /** 撤销夜里的一次改正。done：撤销成功以后重画这一页（列表里是 loadFirst，「做梦」里是重读）。 */
+  async function revertCheck(m, done = () => loadFirst()) {
     const r = await R.api.confirmed('check.revert', { id: m.id }, {
       title: '撤销这次改正', danger: false, okText: '撤销改正',
       consequence: `原来那条「${clip(m.before?.text, 40)}」会按确认过恢复（把握 90%），夜里整理不会再改它。`,
     }).catch((e) => { R.toast(R.errorText(e), { tone: 'bad' }); return null; });
-    if (r) { R.toast('已撤销，原来那条恢复了'); loadFirst(); }
+    if (r) { R.toast('已撤销，原来那条恢复了'); done(); }
   }
 
   // ── 多选 ───────────────────────────────────────────────────────────────
@@ -1216,6 +1234,203 @@ Rugu.define('memory', (R) => {
   }
 
   // ════════════════════════════════════════════════════════════════════════
+  // 日记（她每天夜里写的）
+  // ════════════════════════════════════════════════════════════════════════
+  async function renderDiary(body) {
+    const D = S.diary = { items: 0, next: null, loading: false, lastDay: null, group: null, els: {} };
+    D.els.box = h('div', { class: 'mem-list' });
+    D.els.foot = h('div', { class: 'mem-pager' });
+    R.clear(body, h('div', { class: 'narrow' }, D.els.box, D.els.foot));
+    await diaryLoad(D, true);
+  }
+  async function diaryLoad(D, first) {
+    if (D.loading) return;
+    D.loading = true;
+    R.clear(D.els.foot, R.loading(first ? '正在读她的日记…' : '正在往下读…'));
+    let d;
+    try { d = await R.api.get('memories', { list: 'episodes', epKind: 'diary', order: 'desc', limit: '14', next: D.next ?? '' }); } catch (e) {
+      D.loading = false;
+      if (S.diary !== D) return;
+      R.clear(D.els.foot, first ? R.errorBox(e, () => diaryLoad(D, true), { title: '日记读不出来' })
+        : h('div', { class: 'mem-endnote' }, R.errorText(e, 'read'), ' ', btn('重试', { size: 'sm', kind: 'ghost', onclick: () => diaryLoad(D, false) })));
+      return;
+    }
+    D.loading = false;
+    if (S.diary !== D) return;
+    D.next = d.next ?? null;
+    for (const m of d.items ?? []) {
+      if (m.state === 'forgotten') continue;
+      const day = new Date(m.tEnd).toDateString();
+      if (day !== D.lastDay || !D.group) {
+        D.lastDay = day;
+        const [a, b] = fmt.dayLabel(m.tEnd);
+        D.els.box.append(h('div', { class: 'mem-dayhead' }, a, b ? h('span', null, b) : null));
+        D.group = h('div', { class: 'list', role: 'list' });
+        D.els.box.append(D.group);
+      }
+      const el = R.row({ title: m.narrative || m.title || '', clamp: false, tags: m.state === 'hidden' ? [tag('已隐藏')] : [],
+        meta: metaLine('她夜里写的日记', m.title), onOpen: () => R.setParams({ open: m.ref }), cls: 'mem-diary' });
+      el.setAttribute('role', 'listitem');
+      D.group.append(el);
+      D.items += 1;
+    }
+    if (!D.items) {
+      R.clear(D.els.foot, R.empty({ ic: 'book', title: '她还没写过日记',
+        text: '每天夜里整理时，她会把当天的经历写成一篇日记。刚装好、或者这几天聊得很少，就还没有。想知道她夜里有没有在整理，去「做梦」里看看。',
+        actions: btn('看做梦', { ic: 'moon', onclick: () => R.go('memory/dream', { focus: false }) }) }));
+      return;
+    }
+    R.clear(D.els.foot, D.next ? h('div', { class: 'mem-more' }, btn('看更早的', { kind: 'secondary', size: 'sm', onclick: () => diaryLoad(D, false) }))
+      : h('p', { class: 'mem-endnote' }, `共 ${D.items} 篇，已经是最早的了`));
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 做梦（夜间整理，按晚列出来）
+  // ════════════════════════════════════════════════════════════════════════
+  /** 夜间整理的每一步在页面上叫什么（和「诊断」里的叫法对得上）。 */
+  const DREAM_STEP = { backup: '备份', 'seal-review': '复核', replay: '对照原话纠错', generalize: '归纳规律', reflect: '反思', entities: '更新印象', time: '回头问问',
+    settings: '故事线和圈子', self: '写日记和性格', vectors: '补算索引', ops: '整理记忆库', lessons: '回顾经验' };
+  /** 一晚产出的各类：[键, 小标题, 图标]。顺序就是页面上的顺序。 */
+  const DREAM_GROUPS = [['diary', '写了日记', 'book'], ['changed', '对照原话，改了这些', 'pen'], ['pattern', '归纳出的规律', 'stars'], ['insight', '她想到的', 'sun'],
+    ['impression', '对人的印象', 'user'], ['growth', '性格的变化', 'sprout'], ['lesson', '总结的经验', 'file']];
+  const LAYER = { shared: '大家都知道的', private: '私下了解的' };
+
+  /** 一晚的一句话总结（只数数，不下判断）。 */
+  function nightSummary(n) {
+    const c = n.counts ?? {};
+    const parts = [];
+    if (c.diary) parts.push(`写了 ${c.diary} 篇日记`);
+    if (c.checked) parts.push(c.changed ? `对照原话核对了 ${c.checked} 条，改了 ${c.changed} 条` : `对照原话核对了 ${c.checked} 条，都没问题`);
+    if (c.pattern) parts.push(`归纳出 ${c.pattern} 条规律`);
+    if (c.insight) parts.push(`想到了 ${c.insight} 件事`);
+    if (c.impression) parts.push(`更新了 ${c.impression} 处对人的印象`);
+    if (c.growth) parts.push(`性格有了 ${c.growth} 处变化`);
+    if (c.lesson) parts.push(`总结了 ${c.lesson} 条经验`);
+    return parts.length ? `${parts.join('，')}。` : n.run ? '这一晚没有要整理的新东西。' : '';
+  }
+  /** 一晚里没做成的事：[{tone, text}]。 */
+  function nightProblems(n) {
+    const run = n.run;
+    if (!run) return [];
+    const names = (kind) => run.problems.filter((p) => p.kind === kind).map((p) => DREAM_STEP[p.name] ?? p.name).join('、');
+    const out = [];
+    if (names('failed')) out.push({ tone: 'warn', text: `这几步出错了，这一晚没做成：${names('failed')}。之后每晚都会再试。` });
+    if (names('aborted')) out.push({ tone: 'warn', text: `这几步被中途打断了：${names('aborted')}。` });
+    if (names('capped')) out.push({ tone: 'info', text: `这几步碰到了每晚的模型调用上限，先停了，留到下一晚：${names('capped')}。` });
+    if (names('preset')) out.push({ tone: 'info', text: `现在是省钱档，这几步不做：${names('preset')}。` });
+    if (run.diaryPending) out.push({ tone: 'info', text: `日记还缺 ${run.diaryPending} 天，下一晚接着补。` });
+    return out;
+  }
+  const diffLine = (sign, text, cls) => h('div', { class: cls ?? null }, h('span', { class: 'sign', 'aria-hidden': 'true' }, sign), h('span', null, text));
+
+  /** 一晚里一条产出 → 一行。 */
+  function dreamRow(N, cat, x) {
+    const ctx = { names: N.names, settings: N.settings, allSettings: {}, people: [] };
+    const open = (ref) => (ref ? () => R.setParams({ open: ref }) : undefined);
+    if (cat === 'diary') return R.row({ title: x.text, clamp: false, meta: metaLine(x.title ? `写的是 ${x.title} 的事` : '日记'), onOpen: open(x.ref) });
+    if (cat === 'changed') {
+      const t = x.after && x.after.text !== x.before?.text ? `「${x.before?.text ?? ''}」→「${x.after.text}」` : `「${x.before?.text ?? ''}」`;
+      const items = [
+        ...(x.before?.ref ? [{ label: x.after ? '看原来那条' : '详情', ic: 'file', onSelect: () => R.setParams({ open: x.before.ref }) }] : []),
+        ...(x.after?.ref ? [{ label: '看改成的那条', ic: 'file', onSelect: () => R.setParams({ open: x.after.ref }) }] : []),
+        ...(x.revertable ? [{ label: '撤销这次改正', ic: 'undo', disabled: N.readOnly, onSelect: () => revertCheck(x, () => reloadDream()) }] : []),
+        ...(N.readOnly && x.revertable ? [{ hint: `${roHint}，改不了。` }] : [])];
+      return R.row({ title: t, clamp: false, tags: x.reverted ? [tag('已撤销')] : [], meta: metaLine(x.withdrawn ? '收回了' : CHECK[x.verdict] ?? '改了', x.why), onOpen: open(x.after?.ref ?? x.before?.ref),
+        trail: items.length ? R.moreButton(items, '这次改正的操作') : null });
+    }
+    if (cat === 'pattern' || cat === 'insight') {
+      const about = (x.subjects ?? []).map((id) => whoName(ctx, id)).filter(Boolean).slice(0, 3).join('、');
+      return R.row({ title: x.text, clamp: false, tags: x.current ? [] : [tag('被取代了')], meta: metaLine(about ? `关于${about}` : null, cat === 'pattern' ? '她从很多次经历里归纳的' : '她自己想到的',
+        x.confidence != null ? `把握 ${fmt.pct(x.confidence)}` : null), onOpen: open(x.ref) });
+    }
+    if (cat === 'impression') {
+      const who = whoName(ctx, x.who) ?? '某个人';
+      return R.row({ title: `${who}：${x.text}`, clamp: false, meta: metaLine(LAYER[x.layer] ?? null, x.first ? '第一次形成印象' : `第 ${x.version} 版`),
+        onOpen: () => R.go('memory/people', { params: { person: x.who }, focus: false }) });
+    }
+    if (cat === 'growth') {
+      const title = h('div', null, OP[x.op] ?? '有了变化', ' ', x.revokedAt ? tag('已撤销') : null, h('div', { class: 'mem-diff' },
+        x.before ? diffLine('−', x.before, 'del') : null, x.after ? diffLine('+', x.after) : null));
+      return R.row({ title, clamp: false, meta: metaLine(`第 ${x.version} 版`, x.evidence ? `依据 ${x.evidence} 段经历` : null), onOpen: () => R.go('memory/growth', { focus: false }) });
+    }
+    return R.row({ title: x.text, clamp: false, tags: [x.status === 'verified' ? tag('验证过', 'ok') : tag('还没验证', 'warn')], meta: metaLine('夜里回顾做事时总结的'), onOpen: open(x.ref) });
+  }
+
+  function nightNode(N, n) {
+    const mid = n.dayStart + 12 * 3_600_000;
+    const [a, b] = fmt.dayLabel(mid);
+    const aside = [b, n.run?.at ? `${fmt.clock(n.run.at)} 开始` : null, n.run ? `调了 ${n.run.llmCalls} 次模型` : null].filter(Boolean).join(' · ');
+    const probs = nightProblems(n);
+    const sum = nightSummary(n);
+    const groups = DREAM_GROUPS.map(([cat, label, ic]) => {
+      const g = n.groups.find((x) => x.cat === cat);
+      if (!g) return null;
+      const rest = g.total - g.items.length;
+      return h('div', { class: 'mem-ngroup' },
+        h('h3', null, icon(ic, 16), label, h('span', { class: 'n' }, fmt.num(g.total))),
+        R.list(g.items.map((x) => dreamRow(N, cat, x))),
+        rest > 0 ? h('p', { class: 'mem-nmore' }, `还有 ${rest} 条没列出来。`, ' ',
+          cat === 'changed' ? R.link('去「夜里改过的」看全部', { path: 'memory/list', params: { type: 'check' } }, { arrow: false })
+            : cat === 'diary' ? R.link('去读她的日记', 'memory/diary', { arrow: false }) : null) : null);
+    });
+    return R.section(a, aside, sum ? h('p', { class: 'mem-nsum' }, sum) : null,
+      probs.length ? R.note(probs.some((p) => p.tone === 'warn') ? 'warn' : 'info', h('div', { class: 'mem-nprobs' }, probs.map((p) => h('p', null, p.text)))) : null,
+      !n.run ? h('p', { class: 'mem-faint mem-nnorun' }, '这一晚没有留下运行记录（升级前跑的），只能看到它写下的东西。') : null,
+      ...groups);
+  }
+
+  function dreamHead(N) {
+    const sc = N.schedule ?? {};
+    const title = sc.running ? '她正在整理…' : sc.lastAt ? `上次整理：${fmt.when(sc.lastAt)}` : '还没整理过';
+    const text = sc.lastAt || sc.running
+      ? `每天 ${sc.at ?? '04:30'} 之后她会自己整理一次；那时电脑关着的话，开机以后补上。`
+      : `每天 ${sc.at ?? '04:30'} 之后她会自己整理一次，刚装好的话要等到那个时间以后才有第一次。整理要用后台模型，所以后台模型要能用。`;
+    return h('div', { class: 'card mem-dhead' }, h('div', { class: 'orb', 'aria-hidden': 'true' }, icon('moon', 20)),
+      h('div', { class: 'main' }, h('b', null, title), h('p', null, text),
+        h('p', { class: 'links' }, R.link('后台模型', 'settings/models', { arrow: false }), R.link('后台花费', 'settings/cost', { arrow: false }), R.link('技术细节', 'settings/diag', { arrow: false }))));
+  }
+
+  async function renderDream(body) {
+    const N = S.dream = { nights: 0, next: null, more: false, loading: false, names: {}, settings: {}, schedule: null, readOnly: false, els: {} };
+    N.els.head = h('div');
+    N.els.box = h('div', { class: 'mem-nights' });
+    N.els.foot = h('div', { class: 'mem-pager' });
+    R.clear(body, h('div', { class: 'narrow' }, N.els.head, N.els.box, N.els.foot));
+    await dreamLoad(N, true);
+  }
+  function reloadDream() { if (S.sub === 'dream' && host && lastRoute) render(host, lastRoute); }
+  async function dreamLoad(N, first) {
+    if (N.loading) return;
+    N.loading = true;
+    R.clear(N.els.foot, R.loading(first ? '正在读她夜里做的事…' : '正在往前读…'));
+    let d;
+    try { d = await R.api.get('nights', { limit: '7', before: N.next ?? '' }); } catch (e) {
+      N.loading = false;
+      if (S.dream !== N) return;
+      R.clear(N.els.foot, first ? R.errorBox(e, () => dreamLoad(N, true), { title: '夜里整理读不出来' })
+        : h('div', { class: 'mem-endnote' }, R.errorText(e, 'read'), ' ', btn('重试', { size: 'sm', kind: 'ghost', onclick: () => dreamLoad(N, false) })));
+      return;
+    }
+    N.loading = false;
+    if (S.dream !== N) return;
+    if (d?.unsupported) { R.clear(N.els.foot, R.empty({ ic: 'warn', tone: 'warn', title: '这个版本的核心还不能按晚列出夜里整理', text: '更新核心以后再来看；日记在「日记」里，夜里改过的在「记忆」的类型里。' })); return; }
+    if (first) { N.schedule = d.schedule; N.readOnly = !!d.readOnly; R.clear(N.els.head, dreamHead(N)); }
+    Object.assign(N.names, d.names ?? {});
+    Object.assign(N.settings, d.settings ?? {});
+    N.next = d.next ?? null; N.more = !!d.more;
+    for (const n of d.items ?? []) { N.els.box.append(nightNode(N, n)); N.nights += 1; }
+    if (!N.nights) {
+      R.clear(N.els.foot, R.empty({ ic: 'moon', title: '还没有夜里整理的记录',
+        text: N.schedule?.lastAt ? '上次整理时没有要整理的新东西。多聊几天，她夜里就有东西可整理了。'
+          : `她还没整理过。每天 ${N.schedule?.at ?? '04:30'} 之后会自动整理一次；刚装好的话，聊几天再来看。后台模型不能用的时候也不会整理，去「后台模型」看看。`,
+        actions: btn('看后台模型', { onclick: () => R.go('settings/models') }) }));
+      return;
+    }
+    R.clear(N.els.foot, N.more ? h('div', { class: 'mem-more' }, btn('看更早的几晚', { kind: 'secondary', size: 'sm', onclick: () => dreamLoad(N, false) }))
+      : h('p', { class: 'mem-endnote' }, '没有更早的了。运行记录从升级到这一版以后才开始留，更早的只能看到她写下的东西。'));
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
   // 模块
   // ════════════════════════════════════════════════════════════════════════
   let host = null;
@@ -1232,6 +1447,8 @@ Rugu.define('memory', (R) => {
     if (route.sub === 'people') await renderPeople(body, route);
     else if (route.sub === 'starmap') renderStarmap(body);
     else if (route.sub === 'growth') await renderGrowth(body);
+    else if (route.sub === 'diary') await renderDiary(body);
+    else if (route.sub === 'dream') await renderDream(body);
     else await renderList(body, route);
     if (route.sub !== 'list' && route.params.open) openDetail(route.params.open);
   }
@@ -1263,6 +1480,7 @@ Rugu.define('memory', (R) => {
     document.querySelector('.mem-bulk')?.remove();
     S.sky?.inst?.hide();
     S.list?.io?.disconnect();
+    S.diary = null; S.dream = null;
     S.meta = null;
   }
 

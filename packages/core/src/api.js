@@ -452,6 +452,8 @@ function buildApi(core, { startup, files }) {
       feed: (q) => core.mods.admin.feed(core, q && typeof q === 'object' ? q : {}),
       feedDays: (q) => core.mods.admin.feedDays(core, q && typeof q === 'object' ? q : {}),
       people: (q) => core.mods.admin.people(core, q && typeof q === 'object' ? q : {}),
+      /** 【D175】管理页「记忆 → 做梦」：夜间整理按晚列出来（每一晚写下了什么、跑得怎么样）。只读，只读库也能用。 */
+      nights: (q) => core.mods.admin.nights(core, q && typeof q === 'object' ? q : {}),
       simulate: (s) => core.mods.admin.simulate(core, s),
       review: {
         list: () => core.mods.admin.listReview(core, { status: 'pending' }),

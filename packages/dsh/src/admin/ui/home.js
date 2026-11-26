@@ -1,4 +1,4 @@
-// 首页（D170）：一句话状态；需要你看一眼（最多 3 条 + 去全部）；她最近记住的；入口；四行健康；今天的花费。
+// 首页（D170）：一句话状态；需要你看一眼（最多 3 条 + 去全部）；她最近记住的；入口；夜里整理一行（D175）；四行健康；今天的花费。
 // 数据只来自一个视图 admin.data?view=home（packages/dsh/src/admin/views.js 的 home + 核心的 admin.home）。工程数字一个都不上首页。
 Rugu.define('home', (R) => {
   const { h, icon, fmt, section, link, row, list, metaLine, status, btn } = R;
@@ -142,8 +142,26 @@ Rugu.define('home', (R) => {
       h('div', null, icon('book', 18), h('div', null, h('b', null, '过一会儿回来看看'), h('span', null, '她记住的事会出现在这里和「记忆」里。')))));
   }
 
+  // ── 夜里整理（D175）：最近一晚做了什么，点进「记忆 → 做梦」 ───────────────
+  const NIGHT_PARTS = [['diary', (n) => `写了 ${n} 篇日记`], ['changed', (n) => `改正了 ${n} 条`], ['pattern', (n) => `归纳了 ${n} 条规律`],
+    ['insight', (n) => `想到了 ${n} 件事`], ['impression', (n) => `更新了 ${n} 处印象`], ['growth', (n) => `性格有 ${n} 处变化`], ['lesson', (n) => `总结了 ${n} 条经验`]];
+  /** @returns {{name: string, sub: string|null, right: Node|string}|null} 没有这个数据（老版本、读不出来）就不画。 */
+  function nightText(d) {
+    const n = d.night;
+    if (!n) return null;
+    if (n.running) return { name: '正在整理', sub: '她正在整理白天的记忆', right: status('进行中', 'ok') };
+    if (!n.lastAt && !n.night) return { name: '还没整理过', sub: `每天 ${n.at ?? '04:30'} 自动整理`, right: status('等第一次', 'dim') };
+    const last = n.night;
+    const parts = last ? NIGHT_PARTS.filter(([k]) => last.counts?.[k]).map(([k, f]) => f(last.counts[k])) : [];
+    const day = last ? fmt.day(last.dayStart + 12 * 3_600_000, d.now) : null;
+    const probs = (last?.run?.problems ?? 0) > 0;
+    const sub = parts.length ? `${day ? `${day}：` : ''}${parts.slice(0, 3).join('，')}` : '没有要整理的新东西';
+    return { name: n.lastAt ? `上次整理 ${fmt.when(n.lastAt, d.now)}` : '夜里整理', sub, right: probs ? status('有几步没做成', 'warn') : status('看看', 'dim') };
+  }
+
   function side(d) {
     const entries = d.entries ?? [];
+    const night = d.fresh ? null : nightText(d);
     const health = d.health ?? [];
     const sp = d.spend;
     const toneOf = { ok: 'ok', warn: 'warn', bad: 'bad', dim: 'dim' };
@@ -152,6 +170,7 @@ Rugu.define('home', (R) => {
         const t = entryText(d, e);
         return miniRow({ ic: ENTRY_ICON[e.adapter] ?? 'plug', name: e.name, sub: t.sub, right: t.right, to: t.to });
       })) : h('p', { class: 'home-quiet' }, d.error ? '读不出来。' : '还没有入口。')),
+      night ? section('夜里整理', link('去看', 'memory/dream'), h('div', null, miniRow({ ic: 'moon', name: night.name, sub: night.sub, right: night.right, to: 'memory/dream' }))) : null,
       section('状态', null, h('div', null, health.map((x) => miniRow({ name: x.label, right: x.state === 'plain' ? x.text : status(x.text, toneOf[x.state] ?? 'dim'), to: x.to })))),
       sp ? section('今天的花费', null, h('div', { class: 'home-spend' },
         h('b', null, sp.priceKnown ? fmt.yuan(sp.yuan ?? 0) : '只记用量'),

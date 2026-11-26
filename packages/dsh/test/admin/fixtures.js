@@ -1016,6 +1016,28 @@ function addMemoryFakes(pm, d) {
     const ts = all.map((m) => m.at);
     return { items: [...by].sort().map(([day, n]) => ({ day, n })), first: ts.length ? Math.min(...ts) : null, last: ts.length ? Math.max(...ts) : null, tzOffsetMin: 480 };
   };
+  // 【D175】夜间整理按晚列出来（照核心 admin.nights 的形状）：昨晚有产出和一次没做成的运行，前天只有产出（升级前没有运行报告）
+  pm.admin.nights = (q = {}) => {
+    rec('admin.nights', q);
+    if (d.scenario === 'errors') throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT' });
+    const off = (Number.isInteger(q.tzOffsetMin) ? q.tzOffsetMin : 480) * 60_000;
+    const day0 = Math.floor((now + off) / DAY) * DAY - off;
+    const night = (k, run, counts, groups) => ({ day: new Date(day0 - k * DAY + off).toISOString().slice(0, 10), dayStart: day0 - k * DAY, run, counts, groups });
+    const items = full ? [
+      night(0, { at: day0 + 4.5 * HOUR, finishedAt: day0 + 4.6 * HOUR, llmCalls: 9, llmMax: 14, problems: [{ name: 'reflect', kind: 'failed' }, { name: 'entities', kind: 'capped' }], diaryPending: 1 },
+        { diary: 1, checked: 6, changed: 2, impression: 1 }, [
+          { cat: 'diary', total: 1, items: [{ ref: 'e4', title: '11月25日', text: '今天大家聊了周末的安排。', tStart: day0 - 20 * HOUR, tEnd: day0 - HOUR, at: day0 + 4.5 * HOUR }] },
+          { cat: 'changed', total: 2, items: [
+            { id: 31, at: day0 + 4.5 * HOUR, verdict: 'corrected', why: '原话里说的是周六', withdrawn: false, before: { ref: 'a1', text: '周末去爬山', current: false }, after: { ref: 'a2', text: '周六去爬山', current: true }, reverted: false, revertable: true },
+            { id: 32, at: day0 + 4.5 * HOUR, verdict: 'doubted', why: null, withdrawn: true, before: { ref: 'a3', text: '喜欢吃香菜', current: false }, after: null, reverted: true, revertable: false }] },
+          { cat: 'impression', total: 1, items: [{ ref: 'i1', who: 10, layer: 'shared', text: '爱开玩笑', version: 1, first: true, current: true, at: day0 + 4.5 * HOUR }] }]),
+      night(1, null, { diary: 1, pattern: 1, growth: 1 }, [
+        { cat: 'diary', total: 1, items: [{ ref: 'e8', title: '11月24日', text: '今天很安静。', tStart: day0 - 44 * HOUR, tEnd: day0 - 25 * HOUR, at: day0 - 20 * HOUR }] },
+        { cat: 'pattern', total: 1, items: [{ ref: 'a9', text: '他每次熬夜以后都会在群里抱怨', confidence: 0.7, current: true, at: day0 - 20 * HOUR, subjects: [10] }] },
+        { cat: 'growth', total: 1, items: [{ version: 5, op: 'revise', before: '喜欢安静', after: '喜欢安静，偶尔开话头', evidence: 5, revokedAt: null, at: day0 - 20 * HOUR }] }])] : [];
+    return { now, schedule: { at: '04:30', lastAt: full ? day0 + 4.5 * HOUR : null, running: false, nights: full ? 1 : 0 },
+      items, more: false, names: { 10: { name: '阿明' } }, settings: {}, readOnly: d.isReadOnly() };
+  };
   const IMPRESSIONS = { 2: '在赶一个设计稿；喜欢偏暖的照片色调', 10: '爱开玩笑，常在群里发表情包', 25: '在学车，说话很直', 14: '组局的那个人', 15: '喜欢吃辣' };
   pm.admin.people = (q = {}) => {
     rec('admin.people', q);

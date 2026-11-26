@@ -138,7 +138,7 @@ function shape(core, r, stmts) {
     const subjects = (x.entities ?? []).filter((e) => e.role === 'subject').map((e) => e.entityId);
     return { ref: x.ref, kind, id: x.id, text: x.text, at: x.recordedAt, who: s?.speaker ?? subjects[0] ?? null, settingKey: s?.perceived_in ?? null, subjects: subjects.slice(0, 6),
       certainty: x.certainty, confidence: x.confidence, supersededBy: x.supersededBy ?? null, expiredAt: x.expiredAt ?? null, planStatus: x.planStatus ?? null,
-      needsReview: !!x.needsReview, pinned: !!x.pinned, state: x.state ?? null };
+      needsReview: !!x.needsReview, pinned: !!x.pinned, kindHint: x.kindHint ?? null, state: x.state ?? null };
   }
   if (kind === 'episode') {
     return { ref: x.ref, kind, id: x.id, text: x.title || x.narrative || '', title: x.title ?? null, narrative: x.narrative ?? null, epKind: x.epKind, at: x.tEnd, tStart: x.tStart,
@@ -153,7 +153,7 @@ function shape(core, r, stmts) {
 }
 
 /** 用到的场合和人的名字（和首页同一种形状：只给用到的，不列全表）。 */
-function namesOf(core, items) {
+export function namesOf(core, items) {
   const keys = new Set();
   const ids = new Set();
   for (const m of items) {

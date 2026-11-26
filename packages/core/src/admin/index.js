@@ -462,3 +462,16 @@ export function feedDays(core, q) { return feedMod.feedDays(core, q ?? {}); }
  * @returns {{items: object[], total: number, readOnly: boolean, detail?: object}}
  */
 export function people(core, q) { return feedMod.people(core, q ?? {}); }
+
+// ── 【D175】管理页「记忆 → 做梦」：夜间整理按晚列出来（只读，只读库也能用；口径见 nights.js） ─────────
+import * as nightsMod from './nights.js';
+/**
+ * 夜间整理按晚列出来：每一晚（本地日）写下的日记、改正、归纳的规律、反思的想法、对人的印象、性格的变化、总结的经验，
+ * 和那一晚的运行报告（调了几次模型、哪几步没做成）。
+ * @param {import('../core-types.js').CoreContext} core
+ * @param {{limit?: number, before?: number, tzOffsetMin?: number}} [q]
+ * @returns {{now: number, schedule: {at: string, lastAt: number|null, running: boolean, nights: number},
+ *   items: {day: string, dayStart: number, run: object|null, counts: object, groups: object[]}[], more: boolean, next?: number,
+ *   names: object, settings: object, readOnly: boolean}}
+ */
+export function nights(core, q) { return nightsMod.nights(core, q ?? {}); }

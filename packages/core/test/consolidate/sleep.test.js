@@ -74,8 +74,16 @@ test('sleep：开始前先做备份；11 步按顺序都在报告里（D124 的�
     assert.equal(Number(getMeta(core.store, 'sleep.lastAt')), NEXT_0430);
     const saved = getMetaJson(core.store, 'sleep.lastReport');
     assert.equal(saved.steps.length, 12);
+    // D175：每晚留底（管理页「记忆 → 做梦」按晚列出来）：同一次开始的只留一份，只有数字和步名
+    const hist = getMetaJson(core.store, 'sleep.history');
+    assert.equal(hist.length, 1);
+    assert.equal(hist[0].startedAt, NEXT_0430);
+    assert.deepEqual(hist[0].steps.map((s) => s.name), STEP_NAMES);
+    assert.equal(hist[0].llmCalls, 1);
+    assert.equal(hist[0].steps[1].ok, false);
     assert.equal(core.mods.consolidate.shouldSleep(core, NEXT_0430 + HOUR), false);
     w.logger.assertNoText('boom', 'disk');
+    assert.ok(!JSON.stringify(hist).includes('boom'));
   } finally { await w.cleanup(); }
 });
 

@@ -216,7 +216,7 @@
   const DESTS = [['home', '首页', 'home'], ['memory', '记忆', 'book'], ['pending', '待处理', 'inbox'], ['places', '场合', 'chat'], ['settings', '设置', 'sliders']];
   /** 各去处的分段：[键, 名字, 图标?]。第一项是默认的。 */
   const SUBS = {
-    memory: [['list', '记忆'], ['people', '人物'], ['starmap', '星图'], ['growth', '成长']],
+    memory: [['list', '记忆'], ['people', '人物'], ['diary', '日记'], ['dream', '做梦'], ['starmap', '星图'], ['growth', '成长']],
     pending: [['all', '全部'], ['ntk', '需要你知道'], ['approve', '等你批准'], ['blocked', '被拦下的话']],
     places: [['list', '场合'], ['rules', '规则'], ['notes', '叮嘱']],
     settings: [['basic', '基本', 'user'], ['models', '模型', 'cpu'], ['connect', '接入', 'plug'], ['cost', '花费', 'coins'], ['backup', '备份', 'archive'], ['diag', '诊断', 'activity'], ['about', '关于', 'info']],
@@ -258,7 +258,7 @@
    * @param {string} path  '去处/分段'
    */
   const CLASSIC_TAB = {
-    home: 'overview', 'memory/list': 'memory', 'memory/people': 'memory', 'memory/starmap': 'starmap', 'memory/growth': 'growth',
+    home: 'overview', 'memory/list': 'memory', 'memory/people': 'memory', 'memory/diary': 'memory', 'memory/dream': 'memory', 'memory/starmap': 'starmap', 'memory/growth': 'growth',
     'pending/all': 'needToKnow', 'pending/ntk': 'needToKnow', 'pending/approve': 'review', 'pending/blocked': 'discretion',
     'places/list': 'settings', 'places/rules': 'settings', 'places/notes': 'discretion',
     'settings/basic': 'config', 'settings/models': 'config', 'settings/connect': 'config', 'settings/cost': 'config',

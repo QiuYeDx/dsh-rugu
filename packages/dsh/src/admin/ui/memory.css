@@ -213,6 +213,23 @@ html.pm-sm-maxed { overflow: hidden; }
 .mem-ev { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; line-height: 18px; position: relative; z-index: 1; }
 .mem-more-sec { margin-top: 40px; }
 
+/* ── 日记、做梦（D175） ─────────────────────────────────────────────────── */
+.mem-diary .ttl { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mem-dhead { display: flex; gap: 16px; align-items: flex-start; padding: 16px 20px; margin: 12px 0 8px; }
+.mem-dhead .orb { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--secondary); color: var(--muted-foreground); }
+.mem-dhead .main { min-width: 0; }
+.mem-dhead b { font-size: 15px; line-height: 22px; }
+.mem-dhead p { margin-top: 2px; font-size: 13px; line-height: 20px; color: var(--muted-foreground); }
+.mem-dhead .links { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.mem-nights .sec { margin-top: 28px; }
+.mem-nsum { margin: 0 0 12px; font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
+.mem-nprobs p + p { margin-top: 4px; }
+.mem-nnorun { margin: 0 0 8px; font-size: 13px; line-height: 20px; }
+.mem-ngroup { margin-top: 16px; }
+.mem-ngroup h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--muted-foreground); }
+.mem-ngroup h3 .n { font-weight: 400; }
+.mem-nmore { margin-top: 6px; font-size: 13px; line-height: 20px; color: var(--muted-foreground); }
+
 /* ── 窄屏 ─────────────────────────────────────────────────────────────── */
 @media (max-width: 960px) {
   .mem-skyw { grid-template-columns: minmax(0, 1fr); }
