@@ -147,7 +147,10 @@ test('starmapPeek：引用逐个过 opaque、最多 24 个；标题和正文截�
   pm.admin.starmap = () => ({ items: [{ ref: 'a1', title: '题'.repeat(300), text: '字'.repeat(500), at: NOW }] });
   const s2 = setup({ pm });
   const d = (await s2.view('starmapPeek', { refs: 'a1' })).body.data.items[0];
-  assert.ok([...d.title].length <= 81 && [...d.text].length <= 201);
+  assert.ok([...d.title].length <= 201 && [...d.text].length <= 601);
+  // D177：一般长度的文字（几百字以内）不再被省略号截掉
+  pm.admin.starmap = () => ({ items: [{ ref: 'a1', title: '题', text: '字'.repeat(500), at: NOW }] });
+  assert.equal([...(await setup({ pm }).view('starmapPeek', { refs: 'a1' })).body.data.items[0].text].length, 500);
 });
 
 test('老核心（没有 admin.starmap）：三个视图都给 {unsupported: true}；读不出来照常报错', async () => {

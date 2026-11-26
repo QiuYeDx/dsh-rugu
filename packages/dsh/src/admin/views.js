@@ -555,7 +555,7 @@ export function createViews(deps) {
           try {
             const d = pm.admin.get(x.ref);
             const row = d?.row ?? {};
-            return { ...x, kind: d?.kind ?? null, preview: clip(row.text ?? row.narrative ?? row.title ?? row.display_name ?? null, 160) };
+            return { ...x, kind: d?.kind ?? null, preview: clip(row.text ?? row.narrative ?? row.title ?? row.display_name ?? null, 400) };
           } catch { return x; }
         });
       }
@@ -670,7 +670,7 @@ export function createViews(deps) {
       const r = pm.admin.starmap({ peek: refs });
       return {
         items: arr(r?.items).filter(isObj).slice(0, STARMAP_PEEK_MAX).map((x) => ({
-          ref: typeof x.ref === 'string' ? x.ref.slice(0, 128) : null, title: clip(x.title, 80), text: clip(x.text, 200), at: num(x.at),
+          ref: typeof x.ref === 'string' ? x.ref.slice(0, 128) : null, title: clip(x.title, 200), text: clip(x.text, 600), at: num(x.at),
         })),
       };
     },
@@ -724,7 +724,7 @@ export function createViews(deps) {
         try {
           const d = ref ? pm.admin.get(ref) : null;
           const row = d?.row ?? null;
-          return row ? { ref, text: clip(row.text ?? row.narrative ?? row.title ?? row.display_name ?? null, 200) } : null;
+          return row ? { ref, text: clip(row.text ?? row.narrative ?? row.title ?? row.display_name ?? null, 400) } : null;
         } catch { return null; }
       };
       // 忘掉请求、分寸要改：那条记忆的一句话；只有你能做的操作：那条消息的原话（核心批准时也是从这条消息取文字）
@@ -774,7 +774,7 @@ export function createViews(deps) {
           let row = null;
           try { row = pm.admin.get(x.ref)?.row ?? null; } catch { row = null; }
           return { ...x, settingKey: row?.settingKey ?? row?.setting_key ?? null, at: num(row?.at ?? row?.recordedAt ?? row?.recorded_at ?? row?.created_at),
-            about: clip(row?.text ?? row?.narrative ?? row?.title ?? null, 120) };
+            about: clip(row?.text ?? row?.narrative ?? row?.title ?? null, 400) };
         }),
       };
       const retention = await part(() => pm.admin.retention.get());

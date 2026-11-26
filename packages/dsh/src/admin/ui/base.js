@@ -514,10 +514,48 @@
    */
   function row({ lead, title, strong, clamp = true, meta, tags, trail, onOpen, sel, cls = '', check, label }) {
     const titleNode = h('div', { class: `ttl${strong ? ' strong' : ''}${clamp ? ' clamp' : ''}` }, title, tags?.length ? [' ', tags] : null);
+    const hit = onOpen ? h('button', { type: 'button', class: 'hit', onclick: onOpen, 'aria-label': label ?? null }, titleNode) : null;
+    // D177：被截成两行的主文，看得出来、拿得到全文（可以点开的行：悬停给全文，点一下开详情；不能点开的：点一下就地展开）
+    if (clamp) revealClipped(titleNode, { full: typeof title === 'string' ? title : null, tipEl: hit ?? titleNode, toggle: !onOpen });
     return h('div', { class: `row${onOpen ? ' click' : ''}${sel ? ' sel' : ''}${cls ? ` ${cls}` : ''}` },
       check, lead,
-      h('div', { class: 'main' }, onOpen ? h('button', { type: 'button', class: 'hit', onclick: onOpen, 'aria-label': label ?? null }, titleNode) : titleNode, meta),
+      h('div', { class: 'main' }, hit ?? titleNode, meta),
       trail ? h('div', { class: 'trail' }, trail) : null);
+  }
+  /**
+   * 被省略号截掉的文字不能让人看不全（D177）：el 的文字被截了（行数超了、或一行放不下）就给 tipEl 一个 title（悬停看全文）；
+   * toggle 时在 el 后面再放一个「展开 / 收起」小按钮（点文字本身也行），就地展开全文。没截的时候什么都不加。
+   * 靠 ResizeObserver 判断「有没有截」（改了宽度、字体加载完都会重判）；没有 ResizeObserver 的环境，有 full 就一直给 title。
+   * @param {HTMLElement} el  被截的那个元素（要有 overflow: hidden，行数截断用 .clamp 或自己的 line-clamp）
+   * @param {{full?: string|null, tipEl?: HTMLElement, toggle?: boolean}} [o]  full：全文（不给用 el.textContent）；tipEl：挂 title 的元素
+   * @returns {HTMLElement} el
+   */
+  function revealClipped(el, { full = null, tipEl = el, toggle = false } = {}) {
+    const whole = () => String(full ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const cutNow = () => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+    let more = null;
+    const flip = () => {
+      if (!more) return;
+      const open = el.classList.toggle('open');
+      more.textContent = open ? '收起' : '展开';
+      more.setAttribute('aria-expanded', String(open));
+      if (open) tipEl.removeAttribute('title'); else mark();
+    };
+    function mark() {
+      if (el.classList.contains('open')) return;
+      const cut = cutNow();
+      el.classList.toggle('cut', cut);
+      if (cut) tipEl.setAttribute('title', whole()); else tipEl.removeAttribute('title');
+      if (!toggle) return;
+      if (cut && !more) more = h('button', { type: 'button', class: 'cut-more', 'aria-expanded': 'false', onclick: flip }, '展开');
+      if (cut && el.parentNode && !more.parentNode) el.after(more);
+      else if (!cut && more?.parentNode) more.remove();
+    }
+    if (typeof G.ResizeObserver === 'function') new G.ResizeObserver(mark).observe(el);
+    else if (whole()) tipEl.setAttribute('title', whole());
+    // 点文字本身也能展开 / 收起（拖选文字、点里面的链接和按钮时不算）
+    if (toggle) el.addEventListener('click', (e) => { if (e.target?.closest?.('a, button')) return; if (G.getSelection?.()?.toString()) return; flip(); });
+    return el;
   }
   /** 一组列表行。 */
   const list = (rows) => h('div', { class: 'list' }, rows);
@@ -571,7 +609,7 @@
   }
   /** 键值对（详情面板里用）：[[键, 值], …]，空的跳过。 */
   const kv = (pairs) => h('dl', { class: 'kv' }, pairs.filter(Boolean).map(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
-  Object.assign(R, { btn, link, pageHead, seg, edgeFade, sideNav, section, metaLine, row, list, tag, status, sw, empty, loading, errorBox, note, more, frow, kv });
+  Object.assign(R, { btn, link, pageHead, seg, edgeFade, sideNav, section, metaLine, row, revealClipped, list, tag, status, sw, empty, loading, errorBox, note, more, frow, kv });
 
   // ── 浮层：菜单 ───────────────────────────────────────────────────────────
   let openMenu = null;
@@ -600,7 +638,7 @@
       if (it.header) { el.append(h('div', { class: 'mlabel' }, it.header)); continue; }
       if (it.hint) { el.append(h('div', { class: 'mnote' }, it.hint)); continue; }
       const b = h('button', { type: 'button', role: it.checked != null ? 'menuitemradio' : 'menuitem', 'aria-checked': it.checked != null ? String(!!it.checked) : null,
-        'aria-disabled': it.disabled ? 'true' : null, class: it.danger ? 'danger' : '', tabindex: '-1' },
+        'aria-disabled': it.disabled ? 'true' : null, class: it.danger ? 'danger' : '', tabindex: '-1', title: it.title ?? null },
       it.ic ? icon(it.ic, 16) : null, h('span', null, it.label), it.checked ? h('span', { class: 'ck' }, icon('check', 16)) : null);
       b.addEventListener('click', () => { if (it.disabled) return; closeMenu(true); it.onSelect?.(); });
       el.append(b); focusables.push(b);
@@ -636,13 +674,13 @@
   }
   /**
    * 下拉筛选：一个胶囊按钮 + 单选菜单。value 不等于 allValue 时按钮高亮并写出选了什么。
-   * options：[{value, label}]，可以夹 {sep}、{header}、{hint}；{value, label, run} 选了以后调 run 而不是 onChange。
+   * options：[{value, label, title?}]（label 太长被缩短时 title 放全称，悬停能看），可以夹 {sep}、{header}、{hint}；{value, label, run} 选了以后调 run 而不是 onChange。
    */
   function dropdown(name, options, value, onChange, { allValue = '' } = {}) {
     const cur = options.find((o) => !o.sep && !o.header && !o.hint && o.value === value);
     const on = value !== allValue;
-    const b = h('button', { type: 'button', class: `chip${on ? ' on' : ''}`, 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, on ? `${name}：${cur?.label ?? ''}` : name, icon('down', 14));
-    b.addEventListener('click', () => menu(b, options.map((o) => (o.sep || o.header || o.hint ? o : { label: o.label, checked: o.value === value, onSelect: () => (o.run ? o.run() : onChange(o.value)) })), { align: 'start' }));
+    const b = h('button', { type: 'button', class: `chip${on ? ' on' : ''}`, 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: on && cur?.title ? `${name}：${cur.title}` : null }, on ? `${name}：${cur?.label ?? ''}` : name, icon('down', 14));
+    b.addEventListener('click', () => menu(b, options.map((o) => (o.sep || o.header || o.hint ? o : { label: o.label, title: o.title, checked: o.value === value, onSelect: () => (o.run ? o.run() : onChange(o.value)) })), { align: 'start' }));
     return b;
   }
   Object.assign(R, { menu, closeMenu, moreButton, dropdown });

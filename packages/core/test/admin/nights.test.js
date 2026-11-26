@@ -88,6 +88,20 @@ test('nights：一晚的产出按本地日归在一起，每一类各自的总�
   assert.equal(r.items[1].counts.diary, 0);
 }));
 
+test('nights：几百字的日记、印象整段给（不再在 160 字处截成「…」）；真长到离谱才截', withCore('nights-long', (core) => {
+  const w = world(core);
+  const longDiary = '日记'.repeat(200);
+  core.store.run('UPDATE episodes SET narrative = ? WHERE id = ?', longDiary, w.diary);
+  const longImp = '印象'.repeat(120);
+  core.store.run('UPDATE entity_impressions SET text = ? WHERE id = ?', longImp, w.imp);
+  const n = core.mods.admin.nights(core, { tzOffsetMin: TZ }).items[0];
+  assert.equal(cat(n, 'diary').items[0].text, longDiary);
+  assert.equal(cat(n, 'impression').items[0].text, longImp);
+  core.store.run('UPDATE episodes SET narrative = ? WHERE id = ?', '长'.repeat(3000), w.diary);
+  const cut = cat(core.mods.admin.nights(core, { tzOffsetMin: TZ }).items[0], 'diary').items[0].text;
+  assert.ok([...cut].length <= 1201 && cut.endsWith('…'));
+}));
+
 test('nights：每一晚的运行报告——调用、哪几步出错 / 到上限 / 节省档没做、日记缺几天；没有留底的晚 run 是 null', withCore('nights-run', (core) => {
   const w = world(core);
   core.store.run("UPDATE assertions SET recorded_at = recorded_at - 6 * 86400000, updated_at = updated_at - 6 * 86400000 WHERE id = ?", w.old);

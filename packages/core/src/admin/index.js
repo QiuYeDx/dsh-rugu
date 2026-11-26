@@ -80,7 +80,7 @@ export function home(core, q) { return views.home(core, q ?? {}); }
  *       nights：replay 痕迹按本地日聚簇取每簇最早的时刻，加上 meta 'sleep.lastAt'。
  *   (b) 实时增量 {since: {inj, trace, told}} → {now, rev, cursor, traces: [[ref, t, w, d, r]], recalls: [[ts, placeKey, [[ref, layerCode]], rawN]],
  *       tells: [[at, placeKey, ref, level]]}：id 大于游标的，每样最多 500 行（多了取最早的，cursor 只前进到给出的最后一行）。
- *   (c) 看一眼 {peek: [ref…]}（最多 24 个）→ {items: [{ref, title, text, at}]}：text 截到 160 字；隐藏的、不是星的不给。
+ *   (c) 看一眼 {peek: [ref…]}（最多 24 个）→ {items: [{ref, title, text, at}]}：text 截到 600 字；隐藏的、不是星的不给。
  * @param {import('../core-types.js').CoreContext} core
  * @param {{maxStars?: number, recallDays?: number}|{since: {inj: number, trace: number, told: number}}|{peek: string[]}} [q]
  * @returns {object}

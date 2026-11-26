@@ -36,7 +36,7 @@ const MOOD_POINTS = 2000;
 const HEARD_DAYS = 90;
 const LIVE_ROWS = 500;
 const PEEK_MAX = 24;
-const PEEK_TEXT = 160;
+const PEEK_TEXT = 600;
 const WHO_MAX = 4;
 
 const bad = (path, message) => new ContractError('admin.starmap', [{ path, message }]);

@@ -136,12 +136,18 @@ Rugu.define('memory', (R) => {
     if (p) return p.isSelf ? '她' : p.name;
     return '没认出是谁的人';
   }
-  /** 场合的叫法（场合名最多 14 个字：群名可以很长）。 */
+  /**
+   * 结尾是省略号的文字（D177）：那是存进去的时候带上的（写进记忆时字数超了，在核心里就截短了），记忆里保存的就是这么多，
+   * 不是页面没显示全。说清楚，免得以为是界面的问题；想知道当初怎么说的，看「她是怎么知道的」里的原话。
+   */
+  const cutNote = (text) => (typeof text === 'string' && /…\s*$/u.test(text)
+    ? h('p', { class: 'mem-p mem-faint mem-cut' }, '结尾的省略号是存的时候带上的：记忆里保存的就到这里，不是页面没显示全。当初的原话可以在「她是怎么知道的」里看。') : null);
+  /** 场合的叫法（D177：不再截短，群名再长也写全；用在小字一行里，放不下会自己换行）。 */
   function placeName(ctx, key) {
     if (!key) return null;
     const s = ctx.settings?.[key] ?? ctx.allSettings?.[key];
     const label = typeof s === 'string' ? s : s?.label;
-    return clip(label || '某个场合', 14);
+    return String(label || '某个场合').replace(/\s+/g, ' ').trim();
   }
   const span = (a, b, now) => (a != null && b != null && b - a > 60_000 && fmt.day(a, now) === fmt.day(b, now)
     ? `${fmt.day(b, now) === '今天' ? '' : `${fmt.day(b, now)} `}${fmt.clock(a)}–${fmt.clock(b)}` : fmt.when(b ?? a, now));
@@ -181,7 +187,7 @@ Rugu.define('memory', (R) => {
         m.textState === 'edited' ? '编辑过' : m.textState === 'retracted' ? '撤回了' : null, m.historical ? '补进来的旧消息' : null, fmt.when(m.at, now)];
     }
     if (k === 'window') return ['原文片段', placeName(ctx, m.settingKey), span(m.tStart, m.tEnd, now)];
-    if (k === 'check') return [m.withdrawn ? '收回了' : CHECK[m.verdict] ?? '核对过', m.why ? clip(m.why, 40) : null, fmt.when(m.at, now)];
+    if (k === 'check') return [m.withdrawn ? '收回了' : CHECK[m.verdict] ?? '核对过', m.why || null, fmt.when(m.at, now)];
     if (k === 'sup') {
       return [KIND_NAME[m.kind] ?? '记忆', m.by === 'owner' ? '你操作的' : /^cascade:/.test(m.reason ?? '') ? '跟着别的一起收起来的' : /^purged:/.test(m.reason ?? '') ? '还复述着被删掉的内容' : null,
         fmt.when(m.at, now)];
@@ -367,7 +373,7 @@ Rugu.define('memory', (R) => {
       ...people.map((p) => ({ value: String(p.id), label: `${p.name}${p.aliases?.length ? `（也叫${p.aliases[0]}）` : ''}${dup.get(p.name) > 1 && p.place ? ` · ${placeName(ctxOf(L), p.place)}` : ''}` }))];
     if (f.who && !pOpts.some((o) => o.value === f.who)) pOpts.push({ value: f.who, label: whoName(ctxOf(L), Number(f.who)) ?? '这个人' });
     const places = Object.entries(mergeAllSettings(S.meta?.allSettings, L.settings));
-    const plOpts = [{ value: '', label: '全部场合' }, { sep: true }, ...places.map(([k, v]) => ({ value: k, label: clip(v, 24) }))];
+    const plOpts = [{ value: '', label: '全部场合' }, { sep: true }, ...places.map(([k, v]) => ({ value: k, label: clip(v, 24), title: [...String(v)].length > 24 ? v : undefined }))];
     if (f.place && !plOpts.some((o) => o.value === f.place)) plOpts.push({ value: f.place, label: placeName(ctxOf(L), f.place) });
     const tOpts = [...Object.entries(TIMES).map(([k, v]) => ({ value: k, label: v })),
       ...(f.time === 'range' ? [{ value: 'range', label: rangeText(f), run: () => customRange() }] : []),
@@ -643,7 +649,7 @@ Rugu.define('memory', (R) => {
   async function revertCheck(m, done = () => loadFirst()) {
     const r = await R.api.confirmed('check.revert', { id: m.id }, {
       title: '撤销这次改正', danger: false, okText: '撤销改正',
-      consequence: `原来那条「${clip(m.before?.text, 40)}」会按确认过恢复（把握 90%），夜里整理不会再改它。`,
+      consequence: `原来那条「${m.before?.text ?? ''}」会按确认过恢复（把握 90%），夜里整理不会再改它。`,
     }).catch((e) => { R.toast(R.errorText(e), { tone: 'bad' }); return null; });
     if (r) { R.toast('已撤销，原来那条恢复了'); done(); }
   }
@@ -700,7 +706,7 @@ Rugu.define('memory', (R) => {
           const live = (pv?.items ?? []).filter((x) => !x.missing && !x.purged);
           const used = pv?.sessions ? h('p', null, `她已经在 ${pv.sessions} 个对话里用过${n > 1 ? '它们' : '它'}，那些对话记录里的字收不回。`) : null;
           return [live.length === 1 ? h('div', { class: 'item' }, live[0].text ?? KIND_NAME[live[0].kind] ?? '') : live.length > 1
-            ? h('div', { class: 'item mem-purge-list' }, live.slice(0, 5).map((x) => h('div', null, clip(x.text ?? KIND_NAME[x.kind], 60))), live.length > 5 ? h('div', { class: 'mem-faint' }, `还有 ${live.length - 5} 条`) : null) : null,
+            ? h('div', { class: 'item mem-purge-list' }, live.slice(0, 5).map((x) => h('div', null, x.text ?? KIND_NAME[x.kind])), live.length > 5 ? h('div', { class: 'mem-faint' }, `还有 ${live.length - 5} 条`) : null) : null,
           used];
         },
         extra: (state) => {
@@ -789,6 +795,7 @@ Rugu.define('memory', (R) => {
     const place = (k) => placeName(ctx, k) ?? '某个场合';
     const parts = [];
     parts.push(h('div', { class: 'mem-big' }, text));
+    if (kind !== 'window') parts.push(cutNote(row.text ?? row.narrative));
     if (kind === 'episode' && row.title && row.narrative) parts.push(h('p', { class: 'mem-p' }, row.narrative));
     parts.push(listItem ? metaLine(metaParts(listItem, { ...ctxOf(S.list) })) : metaLine(fmt.when(row.recorded_at ?? row.t_end ?? row.at ?? row.formed_at ?? row.updated_at)));
     // 她是怎么知道的（来源原话，看前后）
@@ -842,7 +849,7 @@ Rugu.define('memory', (R) => {
       if (x.names?.length) parts.push(ss('大家怎么叫', h('div', { class: 'mem-chips' }, x.names.slice(0, 30).map((n) => tag(`${n.text}${n.scope ? ` · 在「${place(n.scope)}」` : ''} · ${n.count} 次`)))));
       if (x.descriptors?.length) parts.push(ss('关系', x.descriptors.map((r) => h('p', { class: 'mem-p' }, `${who(r.anchor)}的${r.relation}${r.text ? `：${r.text}` : ''}`))));
       const imps = (x.impressions ?? []).filter((i) => i.isCurrent);
-      if (imps.length) parts.push(ss('她的印象', imps.map((i) => h('p', { class: 'mem-p' }, h('span', { class: 'mem-faint' }, i.layer === 'shared' ? '大家都知道的：' : '她私下了解的：'), i.text))));
+      if (imps.length) parts.push(ss('她的印象', imps.map((i) => h('div', null, h('p', { class: 'mem-p' }, h('span', { class: 'mem-faint' }, i.layer === 'shared' ? '大家都知道的：' : '她私下了解的：'), i.text), cutNote(i.text)))));
     }
     if (kind === 'assertion' && x.entities?.length) parts.push(ss('说的是谁', h('p', { class: 'mem-p' }, [...new Set(x.entities.filter((e) => e.role === 'subject').map((e) => who(e.entityId)))].join('、') || '没认出是谁')));
     // 放进过哪些对话 + 想起来过
@@ -986,7 +993,7 @@ Rugu.define('memory', (R) => {
     return h('div', { class: 'card mem-pcard', role: 'listitem' }, leadOf(p),
       h('div', { class: 'main' },
         h('button', { type: 'button', class: 'hit', onclick: () => R.setParams({ person: String(p.id) }) }, h('div', { class: 'nm' }, p.principal ? '你' : p.name, p.principal ? [' ', tag('主人', 'gold')] : null)),
-        p.impression ? h('div', { class: 'imp' }, p.impression) : sub ? h('div', { class: 'imp' }, sub) : null,
+        p.impression ? R.revealClipped(h('div', { class: 'imp' }, p.impression), { toggle: true }) : sub ? R.revealClipped(h('div', { class: 'imp' }, sub), { toggle: true }) : null,
         metaLine(`记得 ${fmt.num(p.n)} 件事`, p.lastAt ? `最近 ${fmt.day(p.lastAt)}` : null)));
   }
   const KIND_NAME_ENT = { person: '人', place: '地方', thing: '东西', group: '群体', org: '组织', pet: '宠物' };
@@ -1022,7 +1029,7 @@ Rugu.define('memory', (R) => {
     const parts = [
       h('div', { class: 'mem-phead' }, leadOf(p, true), h('div', null, h('div', { class: 'mem-big' }, p.principal ? '你' : p.name),
         metaLine(p.aliases?.length ? `也叫${p.aliases.join('、')}` : null, `记得 ${fmt.num(p.n)} 件事`, p.lastAt ? `最近一次 ${fmt.when(p.lastAt)}` : null))),
-      ss('她的印象', imps.length ? imps.map((i) => h('p', { class: 'mem-p' }, imps.length > 1 ? h('span', { class: 'mem-faint' }, i.layer === 'shared' ? '大家都知道的：' : '她私下了解的：') : null, i.text))
+      ss('她的印象', imps.length ? imps.map((i) => h('div', null, h('p', { class: 'mem-p' }, imps.length > 1 ? h('span', { class: 'mem-faint' }, i.layer === 'shared' ? '大家都知道的：' : '她私下了解的：') : null, i.text), cutNote(i.text)))
         : h('p', { class: 'mem-p mem-faint' }, p.impression ?? '还没形成印象。和他聊得多了，夜里整理时会慢慢有。')),
       names.length ? ss('大家怎么叫', h('div', { class: 'mem-names' }, names.slice(0, 16).map((n) => h('div', { class: 'mem-name' }, h('b', null, n.text),
         h('span', null, [n.scope ? `在「${place(n.scope)}」` : '各处', `${n.count} 次`].join(' · ')))))) : null,
@@ -1128,7 +1135,7 @@ Rugu.define('memory', (R) => {
     const keep = document.activeElement;
     const where = [ui.placeSlot, ui.demoSlot, ui.maxSlot].find((sl) => sl.contains(keep));
     const placeOpts = m.places.map((p, i) => (i === 1 ? [{ sep: true }, p] : [p])).flat()
-      .map((p) => (p.sep ? p : { value: p.value, label: p.n != null ? `${clip(p.label, 18)}（${fmt.num(p.n)}）` : p.label }));
+      .map((p) => (p.sep ? p : { value: p.value, label: p.n != null ? `${clip(p.label, 18)}（${fmt.num(p.n)}）` : p.label, title: p.n != null && [...String(p.label)].length > 18 ? `${p.label}（${fmt.num(p.n)}）` : undefined }));
     R.clear(ui.placeSlot, R.dropdown('场合', placeOpts, m.place, (v) => ctl()?.setPlace(v), { allValue: 'all' }));
     const demo = btn(m.demo ? '退出演示' : '演示模式', { kind: 'ghost', size: 'sm', ic: 'eyeoff', attrs: { 'aria-pressed': String(m.demo), title: '名字换成代称、不显示内容（截图、录屏用）' }, onclick: () => ctl()?.setDemo(!m.demo) });
     const max = btn('', { kind: 'ghost', size: 'sm', ic: m.max ? 'min' : 'max', title: m.max ? '缩回（Esc）' : '放大', onclick: () => ctl()?.toggleMax() });
@@ -1153,7 +1160,7 @@ Rugu.define('memory', (R) => {
         : peek ? [peek.title ? h('div', { class: 'mem-sp-t' }, peek.title) : null, peek.text && peek.text !== peek.title ? h('p', { class: 'mem-p' }, peek.text) : null]
           : h('p', { class: 'mem-faint' }, '读不到内容（可能刚被隐藏或删掉）');
     R.clear(sky.panel,
-      h('div', { class: 'mem-sp-h' }, dot, h('span', null, info.kindName), h('span', { class: 'when' }, info.when),
+      h('div', { class: 'mem-sp-h' }, dot, h('span', null, info.kindName), R.revealClipped(h('span', { class: 'when' }, info.when)),
         btn('', { kind: 'ghost', size: 'sm', ic: 'x', title: '取消选中', onclick: () => info.close() })),
       h('div', { class: 'mem-sp-body' }, text),
       R.kv([['在哪儿', info.place], ['有关的人', info.who], ['状态', [info.status, info.newer ? [' ', R.link('看新的那条', info.newer, { arrow: false })] : null, info.older ? [' ', R.link('看旧的那条', info.older, { arrow: false })] : null]],
@@ -1161,7 +1168,7 @@ Rugu.define('memory', (R) => {
       h('div', { class: 'mem-ss' }, h('h3', null, '亮度'), h('p', { class: 'mem-p' }, `${info.live ? '此刻' : '这时'} ${info.bright}%`, h('span', { class: 'mem-faint' }, ` · 痕迹 ${info.traces} 条`)),
         h('div', { class: 'mem-curve' }, info.curve)),
       h('div', { class: 'mem-ss' }, h('h3', null, `想起过 ${info.recalls} 次${info.tells ? ` · 讲给别人 ${info.tells} 次` : ''}`),
-        info.last.length ? h('ul', { class: 'mem-recs' }, info.last.map((r) => { const ln = h('i'); ln.style.borderColor = r.color; return h('li', null, ln, h('span', null, r.when), h('span', { class: 'p' }, `在「${r.place}」· ${r.layer}`)); }))
+        info.last.length ? h('ul', { class: 'mem-recs' }, info.last.map((r) => { const ln = h('i'); ln.style.borderColor = r.color; return h('li', null, ln, h('span', null, r.when), R.revealClipped(h('span', { class: 'p' }, `在「${r.place}」· ${r.layer}`))); }))
           : h('p', { class: 'mem-faint' }, info.recalls ? '这个时刻之前还没想起过' : '还没被想起过')),
       h('div', { class: 'mem-sp-f' }, btn('打开这条记忆', { size: 'sm', onclick: () => info.open() })));
   }
@@ -1327,7 +1334,7 @@ Rugu.define('memory', (R) => {
   function dreamRow(N, cat, x) {
     const ctx = { names: N.names, settings: N.settings, allSettings: {}, people: [] };
     const open = (ref) => (ref ? () => R.setParams({ open: ref }) : undefined);
-    if (cat === 'diary') return R.row({ title: x.text, clamp: false, meta: metaLine(x.title ? `写的是 ${x.title} 的事` : '日记'), onOpen: open(x.ref) });
+    if (cat === 'diary') return R.row({ title: x.text, meta: metaLine(x.title ? `写的是 ${x.title} 的事` : '日记'), onOpen: open(x.ref) });
     if (cat === 'changed') {
       const t = x.after && x.after.text !== x.before?.text ? `「${x.before?.text ?? ''}」→「${x.after.text}」` : `「${x.before?.text ?? ''}」`;
       const items = [
@@ -1335,17 +1342,17 @@ Rugu.define('memory', (R) => {
         ...(x.after?.ref ? [{ label: '看改成的那条', ic: 'file', onSelect: () => R.setParams({ open: x.after.ref }) }] : []),
         ...(x.revertable ? [{ label: '撤销这次改正', ic: 'undo', disabled: N.readOnly, onSelect: () => revertCheck(x, () => reloadDream()) }] : []),
         ...(N.readOnly && x.revertable ? [{ hint: `${roHint}，改不了。` }] : [])];
-      return R.row({ title: t, clamp: false, tags: x.reverted ? [tag('已撤销')] : [], meta: metaLine(x.withdrawn ? '收回了' : CHECK[x.verdict] ?? '改了', x.why), onOpen: open(x.after?.ref ?? x.before?.ref),
+      return R.row({ title: t, tags: x.reverted ? [tag('已撤销')] : [], meta: metaLine(x.withdrawn ? '收回了' : CHECK[x.verdict] ?? '改了', x.why), onOpen: open(x.after?.ref ?? x.before?.ref),
         trail: items.length ? R.moreButton(items, '这次改正的操作') : null });
     }
     if (cat === 'pattern' || cat === 'insight') {
       const about = (x.subjects ?? []).map((id) => whoName(ctx, id)).filter(Boolean).slice(0, 3).join('、');
-      return R.row({ title: x.text, clamp: false, tags: x.current ? [] : [tag('被取代了')], meta: metaLine(about ? `关于${about}` : null, cat === 'pattern' ? '她从很多次经历里归纳的' : '她自己想到的',
+      return R.row({ title: x.text, tags: x.current ? [] : [tag('被取代了')], meta: metaLine(about ? `关于${about}` : null, cat === 'pattern' ? '她从很多次经历里归纳的' : '她自己想到的',
         x.confidence != null ? `把握 ${fmt.pct(x.confidence)}` : null), onOpen: open(x.ref) });
     }
     if (cat === 'impression') {
       const who = whoName(ctx, x.who) ?? '某个人';
-      return R.row({ title: `${who}：${x.text}`, clamp: false, meta: metaLine(LAYER[x.layer] ?? null, x.first ? '第一次形成印象' : `第 ${x.version} 版`),
+      return R.row({ title: `${who}：${x.text}`, meta: metaLine(LAYER[x.layer] ?? null, x.first ? '第一次形成印象' : `第 ${x.version} 版`),
         onOpen: () => R.go('memory/people', { params: { person: x.who }, focus: false }) });
     }
     if (cat === 'growth') {
@@ -1353,7 +1360,7 @@ Rugu.define('memory', (R) => {
         x.before ? diffLine('−', x.before, 'del') : null, x.after ? diffLine('+', x.after) : null));
       return R.row({ title, clamp: false, meta: metaLine(`第 ${x.version} 版`, x.evidence ? `依据 ${x.evidence} 段经历` : null), onOpen: () => R.go('memory/growth', { focus: false }) });
     }
-    return R.row({ title: x.text, clamp: false, tags: [x.status === 'verified' ? tag('验证过', 'ok') : tag('还没验证', 'warn')], meta: metaLine('夜里回顾做事时总结的'), onOpen: open(x.ref) });
+    return R.row({ title: x.text, tags: [x.status === 'verified' ? tag('验证过', 'ok') : tag('还没验证', 'warn')], meta: metaLine('夜里回顾做事时总结的'), onOpen: open(x.ref) });
   }
 
   function nightNode(N, n) {

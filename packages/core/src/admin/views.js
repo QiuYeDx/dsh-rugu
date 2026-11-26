@@ -648,7 +648,7 @@ export function home(core, q = {}) {
     const p = r.percept_id ? percept.get(r.percept_id) : null;
     const who = r.source_entity_id ?? p?.actor_entity_id ?? null;
     return { source: 'needToKnow', id: r.id, kind: r.kind, reason: r.reason, severity: r.severity, urgent: r.severity >= 2, at: r.created_at,
-      settingKey: p?.setting_key ?? null, who, quote: clipText(p?.text, 80) };
+      settingKey: p?.setting_key ?? null, who, quote: clipText(p?.text, 300) };
   });
   const held = core.store.prepare('SELECT held_text, setting_key FROM utterances WHERE token = ?');
   for (const r of core.store.all("SELECT * FROM review_queue WHERE status = 'pending' ORDER BY created_at DESC, id DESC LIMIT ?", nTop)) {
@@ -659,12 +659,12 @@ export function home(core, q = {}) {
     if (r.kind === 'held_utterance' && typeof p.token === 'string') {
       const u = held.get(p.token);
       item.settingKey = u?.setting_key ?? null;
-      item.quote = clipText(u?.held_text, 80);
+      item.quote = clipText(u?.held_text, 300);
     } else if (r.kind === 'merge') {
       item.who = Number.isSafeInteger(p.a) ? p.a : null;
       item.other = Number.isSafeInteger(p.b) ? p.b : null;
-    } else if (r.kind === 'growth') item.quote = clipText(p.change?.after ?? p.text, 80);
-    else if (r.kind === 'setting_rule_relax') { item.settingKey = typeof p.settingKey === 'string' ? p.settingKey : null; item.quote = clipText(p.rule?.text, 80); }
+    } else if (r.kind === 'growth') item.quote = clipText(p.change?.after ?? p.text, 300);
+    else if (r.kind === 'setting_rule_relax') { item.settingKey = typeof p.settingKey === 'string' ? p.settingKey : null; item.quote = clipText(p.rule?.text, 300); }
     else if (Number.isSafeInteger(p.entityId)) item.who = p.entityId;
     top.push(item);
   }

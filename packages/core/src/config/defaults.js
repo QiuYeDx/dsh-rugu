@@ -164,7 +164,7 @@ export const DEFAULTS = deepFreeze({
     timeoutMs: 60_000,
     minSpacingMs: 5000,                  // 两次调用至少隔 5 秒
     concurrency: 1,
-    factTextMax: 120,
+    factTextMax: 300,                    // D177：一条事实存下来最长多少字（120 → 300）。提取的提示词里仍写「≤120字」当目标，这是兜底：模型写长了不再在半句话处截成「…」
     quoteMax: 60,
     futureQMax: 3,
     miniCardChars: 120,
@@ -225,7 +225,7 @@ export const DEFAULTS = deepFreeze({
   // 存成关于她自己的事实（kind_hint='lesson'），范围（工具、场合、人）是结构化字段，话题靠词和回想。
   lessons: {
     enabled: true,
-    textMax: 120, trapMax: 60, howMax: 60, toolMax: 64,
+    textMax: 300, trapMax: 60, howMax: 60, toolMax: 64,   // D177：textMax 120 → 300（和 extract.factTextMax 一样，兜底别截半句）
     sameSim: 0.5,                        // 和已有的一条（同一个工具、同一个范围）这么像就并进那一条，不另记
     perDay: 12,                          // 她一天（本地日）最多新记几条（并进已有的不算；主人教的不受这个限制）
     proofMin: 30,                        // 这个工具这么多分钟内「先没成、换了做法后成了」：她这时记下的这个工具的经验算验证过（宿主看到的工具结果）
@@ -632,7 +632,7 @@ export const DEFAULTS = deepFreeze({
       deadlineMs: null,                  // 取证据的有意回想最多等多久；null = recall.deliberate.deadlineMs
     },
     // D176：perCall（一晚最多更新几个人的印象，一次调用写一层）6 → 10，还要乘 sleepScale（实测线上有一百多个人，6 个一晚轮得太慢）
-    impressions: { perCall: 10, factsPerLayer: 30, maxChars: 160, maybeSamePerCall: 6, factsPerSide: 6 },   // 第 5 步
+    impressions: { perCall: 10, factsPerLayer: 30, maxChars: 500, maybeSamePerCall: 6, factsPerSide: 6 },   // 第 5 步
     followUp: { windowH: 72, perCall: 10 },   // §5.5 第 5 条「回头问问」的时间窗（之后没机会就 lapsed）
     storyline: { maxChars: 600, perCall: 5, episodesPerSetting: 12, rebuildEvery: 10, rebuildEpisodes: 20 },   // §5.8；每 10 个版本整体重写一次
     communities: {                       // 第 7 步（标签传播）

@@ -190,7 +190,7 @@ test('memory.js：行的小字（谁说的 · 在哪儿 · 什么时候 · 把�
   eq(lib.metaParts({ _t: 'intent', who: 10, intentState: 'formed', until: now + 2 * DAY, at }, ctx, now).filter(Boolean).slice(0, 2), ['她打算做的', '对阿明']);
   assert.equal(lib.metaParts({ _t: 'lesson', origin: 'tool', tool: 'read_file', at }, ctx, now)[2], '用 read_file 时');
   const long = { names: {}, settings: { k: { label: '一个名字特别特别长的群聊名字用来看截断的' } } };
-  assert.ok([...lib.placeName(long, 'k')].length <= 15);
+  assert.equal(lib.placeName(long, 'k'), '一个名字特别特别长的群聊名字用来看截断的', 'D177：场合名不再截短（小字一行放不下会自己换行）');
   const forgot = lib.tagsOf({ state: 'forgotten', restoreUntil: now + 22 * DAY + 1 }, now);
   eq(forgot, [['已忘掉 · 还剩 23 天能恢复', '']]);
   assert.ok(!lib.tagsOf({ state: 'hidden', supersededBy: 3, _t: 'lesson', status: 'unverified' }, now).some(([, tone]) => tone === 'bad'), '没有红色的');

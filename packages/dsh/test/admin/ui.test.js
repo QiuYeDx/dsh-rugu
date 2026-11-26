@@ -204,3 +204,67 @@ test('base.js 加载时不碰 DOM（模块在 Rugu.start 之前就能登记）�
   assert.deepEqual(plain(R.moduleStates()), { x: 'pending', y: 'missing' });
   assert.equal(R.DESTS.map(([k]) => k).join(','), 'home,memory,pending,places,settings');
 });
+
+test('被省略号截掉的文字能看全（D177）：截了才有 title；能展开的多一个「展开」按钮、点了就地展开、再点收起；没截的什么都不加', () => {
+  let observer = null;
+  class FakeRO { constructor(fn) { this.fn = fn; observer = this; } observe() {} }
+  const made = [];
+  const node = (extra = {}) => {
+    const cls = new Set();
+    const attrs = new Map();
+    const handlers = {};
+    const n = { textContent: '很长的一段话  要被截掉', scrollHeight: 60, clientHeight: 48, scrollWidth: 100, clientWidth: 100, parentNode: null, ...extra,
+      classList: { contains: (c) => cls.has(c), toggle(c, on) { const v = on ?? !cls.has(c); if (v) cls.add(c); else cls.delete(c); return v; } },
+      setAttribute: (k, v) => attrs.set(k, String(v)), getAttribute: (k) => attrs.get(k) ?? null, removeAttribute: (k) => attrs.delete(k), attrs,
+      append() {}, after(x) { x.parentNode = this.parentNode ?? {}; }, remove() { this.parentNode = null; },
+      addEventListener: (t, fn) => { handlers[t] = fn; }, fire: (t, e = {}) => handlers[t]({ target: null, ...e }) };
+    return n;
+  };
+  const document = { createElement: () => { const n = node(); made.push(n); return n; }, createTextNode: (t) => ({ t }) };
+  const { R } = loadBase({ ResizeObserver: FakeRO, document, Node: class {} });
+  // 行数超了：给 title（空白折成一个空格），能展开的多一个按钮
+  const a = node({ parentNode: {} });
+  R.revealClipped(a, { toggle: true });
+  observer.fn();
+  assert.equal(a.attrs.get('title'), '很长的一段话 要被截掉');
+  assert.ok(a.classList.contains('cut'));
+  const more = made.at(-1);
+  assert.ok(more.parentNode, '展开按钮放在文字后面');
+  more.fire('click');
+  assert.ok(a.classList.contains('open'));
+  assert.equal(more.textContent, '收起');
+  assert.equal(a.attrs.has('title'), false, '展开了就不再给提示');
+  a.fire('click');
+  assert.ok(!a.classList.contains('open'), '点文字本身也能收起');
+  assert.equal(more.textContent, '展开');
+  assert.equal(a.attrs.get('title'), '很长的一段话 要被截掉');
+  a.scrollHeight = 48; // 窗口变宽了，不截了：按钮撤掉、title 去掉
+  observer.fn();
+  assert.equal(more.parentNode, null);
+  assert.equal(a.attrs.has('title'), false);
+  // 没截：什么都不加；title 可以挂在别的元素上（可以点开的行：title 在整行的按钮上），全文用传进来的
+  const b = node({ scrollHeight: 48 });
+  const tip = node();
+  R.revealClipped(b, { tipEl: tip, full: '全文' });
+  observer.fn();
+  assert.equal(tip.attrs.has('title'), false);
+  b.scrollWidth = 200; // 一行放不下也算截了
+  observer.fn();
+  assert.equal(tip.attrs.get('title'), '全文');
+  assert.equal(made.length, 1, '没要 toggle 的不生成按钮');
+  // 没有 ResizeObserver 的环境：有全文就一直给 title
+  const { R: R2 } = loadBase({ document, Node: class {} });
+  const d = node();
+  R2.revealClipped(d, { full: '全文二' });
+  assert.equal(d.attrs.get('title'), '全文二');
+});
+
+test('截断的地方都给得出全文（D177）：列表行、人物卡的印象、星图卡片的小字都经 revealClipped；做梦那一页不再 clamp:false 硬展开', () => {
+  assert.match(BASE_SRC, /if \(clamp\) revealClipped\(titleNode/);
+  const mem = fs.readFileSync(new URL('memory.js', UI_DIR), 'utf8');
+  assert.match(mem, /R\.revealClipped\(h\('div', \{ class: 'imp' \}/);
+  assert.match(mem, /R\.revealClipped\(h\('span', \{ class: 'p' \}/);
+  const dream = mem.slice(mem.indexOf('function dreamRow'), mem.indexOf('function nightNode'));
+  assert.equal((dream.match(/clamp: false/g) ?? []).length, 1, '只有性格变化那行（自己画了前后对照）不 clamp');
+  assert.match(mem, /cutNote/, '结尾是省略号的记忆要说清楚是存的时候就被截短的');
+});

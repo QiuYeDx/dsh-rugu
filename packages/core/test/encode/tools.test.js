@@ -193,7 +193,7 @@ test('importRecords：来源方式 imported、不加激活痕迹、不写谁知�
     const recs = [
       { subjects: ['阿明'], text: '阿明喜欢钓鱼', sourceMeta: { speaker: '阿杰', at: Date.UTC(2025, 0, 1), settingLabel: '旧日志' }, norm: { restriction: 'soft', scope: { deny: ['阿杰'] } } },
       { subjects: ['小新'], text: '小新是阿明的同事', sourceMeta: {} },
-      { subjects: ['阿明'], text: '很长的一段经历。'.repeat(30), sourceMeta: { at: Date.UTC(2025, 0, 2) } },
+      { subjects: ['阿明'], text: '很长的一段经历。'.repeat(50), sourceMeta: { at: Date.UTC(2025, 0, 2) } },
       { subjects: [], text: '没有主体', sourceMeta: {} },
       { subjects: ['阿明'], text: '阿明喜欢钓鱼', sourceMeta: { speaker: '阿杰' } },
     ];

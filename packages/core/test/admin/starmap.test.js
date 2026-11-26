@@ -330,13 +330,13 @@ test('实时增量：只给 since 之后的、用引用和场合键；每样最�
 
 test('看一眼：三种星各给什么；隐藏的、不是星的不给；超过 24 个抛错', withCore('sm-peek', (core) => {
   const w = world(core);
-  run(core, "UPDATE episodes SET title = '编的下棋', header = '' , narrative = ? WHERE id = ?", '长'.repeat(300), w.e1);
+  run(core, "UPDATE episodes SET title = '编的下棋', header = '' , narrative = ? WHERE id = ?", '长'.repeat(700), w.e1);
   run(core, "UPDATE episodes SET title = '', header = '编的日记头' WHERE id = ?", w.e2);
   core.mods.admin.suppress(core, `a${w.a3}`, { state: 'hidden', by: 'owner', at: core.now() });
   const r = S(core, { peek: [`a${w.a1}`, `e${w.e1}`, `e${w.e2}`, `t${w.t1}`, `a${w.a3}`, `e${w.e3}`, `p${w.p1}`, 'zz', `a${w.a1}`, 'a999999'] });
   assert.deepEqual(r.items, [
     { ref: `a${w.a1}`, title: null, text: '编的阿木喜欢下棋', at: w.now - 8 * DAY },
-    { ref: `e${w.e1}`, title: '编的下棋', text: '长'.repeat(160), at: w.now - 3 * DAY },
+    { ref: `e${w.e1}`, title: '编的下棋', text: '长'.repeat(600), at: w.now - 3 * DAY },
     { ref: `e${w.e2}`, title: null, text: '编的日记头', at: w.now - 2 * DAY },
     { ref: `t${w.t1}`, title: null, text: '下次问问她编的那本书看完没', at: w.now - DAY },
   ]);

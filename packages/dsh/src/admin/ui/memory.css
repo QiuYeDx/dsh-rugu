@@ -81,6 +81,7 @@
 .mem-pcard .main { flex: 1; min-width: 0; }
 .mem-pcard .nm { font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
 .mem-pcard .imp { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.mem-pcard .imp.open { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .mem-plead { width: 36px; height: 36px; }
 .mem-plead.big { width: 48px; height: 48px; font-size: 18px; }
 .mem-phead { display: flex; gap: 14px; align-items: center; }

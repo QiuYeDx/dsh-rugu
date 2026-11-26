@@ -84,7 +84,8 @@ if (r) R.toast('已彻底删除');
 | `seg(options, value, onChange, label)` | 分段控件：`[[键, 名字, 计数?]]`；左右键 / Home / End；放不下时两头渐隐 |
 | `sideNav(items, value, onChange)` | 设置的左侧小导航（`[[键, 名字, 图标?, 有提醒?]]`），放进 `.sidenav-layout` 的第一列、内容放 `.scontent`；窄屏变成上面一排 |
 | `section(title, aside?, ...body)` | 一节：h2 + 右边的小字或 `link()` |
-| `row({lead?, title, strong?, clamp = true, meta?, tags?, trail?, onOpen?, sel?, check?, label?})` / `list(rows)` | 列表行（全页唯一一种）：主文 + 小字元信息 + 行尾。`onOpen` 让整行可点、可聚焦 |
+| `row({lead?, title, strong?, clamp = true, meta?, tags?, trail?, onOpen?, sel?, check?, label?})` / `list(rows)` | 列表行（全页唯一一种）：主文 + 小字元信息 + 行尾。`onOpen` 让整行可点、可聚焦；主文默认截成两行，截了会给 title 和（不能点开的行）「展开」按钮（D177） |
+| `revealClipped(el, {full?, tipEl?, toggle?})` | 被省略号截掉的文字要能看全（D177）：真的被截了才给 `title`；`toggle` 时再多一个「展开 / 收起」按钮。自己用 `-webkit-line-clamp` 或 `text-overflow: ellipsis` 截文字的地方都要经它 |
 | `metaLine(...parts)` | 「·」隔开的小字，空的跳过 |
 | `moreButton(items)` | 行尾的「⋯」（悬停 / 聚焦 / 选中时出现）；items 同 `menu` |
 | `menu(anchor, items, {align})` / `closeMenu()` | 弹出菜单：`[{label, ic?, onSelect, danger?, checked?, disabled?}]`，可夹 `{sep}`、`{header}`、`{hint}`；上下键、Esc、Tab |

@@ -81,18 +81,18 @@ function outputsOf(core, a, b) {
 
   // 日记
   add('diary', cnt('diary'), rows('diary', 't.id, t.title, t.narrative, t.t_start, t.t_end, t.created_at', ' ORDER BY t.created_at DESC').map((e) => ({
-    ref: refOf('episode', e.id), title: e.title || null, text: clip(e.narrative, 160), tStart: e.t_start, tEnd: e.t_end, at: e.created_at })));
+    ref: refOf('episode', e.id), title: e.title || null, text: clip(e.narrative, 1200), tStart: e.t_start, tEnd: e.t_end, at: e.created_at })));
 
   // 对照原话纠错：改了的列出来（和 views.js 的 checks 同一个口径），没改的只数个数
   const checked = cnt('check');
   const fact = core.store.prepare('SELECT id, text, confidence, superseded_by FROM assertions WHERE id = ?');
-  const factOf = (id) => { const x = id == null ? null : fact.get(id); return x ? { ref: refOf('assertion', x.id), text: clip(x.text, 160), current: x.superseded_by == null } : null; };
+  const factOf = (id) => { const x = id == null ? null : fact.get(id); return x ? { ref: refOf('assertion', x.id), text: clip(x.text, 400), current: x.superseded_by == null } : null; };
   const changedWhere = " AND t.verdict IN ('corrected','changed','doubted')";
   const changed = Number(core.store.get(`SELECT count(*) AS n FROM memory_checks t WHERE t.at >= ? AND t.at < ?${changedWhere}`, a, b).n);
   counts.checked = checked;
   const changedItems = changed ? core.store.all(`SELECT t.id, t.at, t.verdict, t.why, t.assertion_id, t.result_id, t.after_conf, t.reverted_at FROM memory_checks t
       WHERE t.at >= ? AND t.at < ?${changedWhere} ORDER BY t.at DESC, t.id DESC LIMIT ${PER_CAT}`, a, b).map((c) => ({
-    id: c.id, at: c.at, verdict: c.verdict, why: c.why ? clip(c.why, 80) : null,
+    id: c.id, at: c.at, verdict: c.verdict, why: c.why ? clip(c.why, 300) : null,
     withdrawn: c.verdict === 'doubted' && c.result_id == null && c.after_conf === 0,
     before: factOf(c.assertion_id), after: factOf(c.result_id), reverted: c.reverted_at != null,
     revertable: c.reverted_at == null })) : [];
@@ -102,25 +102,25 @@ function outputsOf(core, a, b) {
   for (const k of ['pattern', 'insight']) {
     const subj = core.store.prepare("SELECT entity_id FROM assertion_entities WHERE assertion_id = ? AND role = 'subject' LIMIT 4");
     add(k, cnt(k), rows(k, 't.id, t.text, t.confidence, t.superseded_by, t.recorded_at', ' ORDER BY t.recorded_at DESC, t.id DESC').map((x) => ({
-      ref: refOf('assertion', x.id), text: clip(x.text, 160), confidence: x.confidence, current: x.superseded_by == null, at: x.recorded_at,
+      ref: refOf('assertion', x.id), text: clip(x.text, 400), confidence: x.confidence, current: x.superseded_by == null, at: x.recorded_at,
       subjects: subj.all(x.id).map((r) => r.entity_id) })));
   }
 
   // 对人的印象：这一晚写下的那一版；version = 1 是第一次有印象
   add('impression', cnt('impression'), rows('impression', 't.id, t.entity_id, t.layer, t.text, t.version, t.is_current, t.built_at', ' ORDER BY t.built_at DESC, t.id DESC').map((x) => ({
-    ref: refOf('impression', x.id), who: x.entity_id, layer: x.layer, text: clip(x.text, 160), version: x.version, first: x.version === 1, current: !!x.is_current, at: x.built_at })));
+    ref: refOf('impression', x.id), who: x.entity_id, layer: x.layer, text: clip(x.text, 400), version: x.version, first: x.version === 1, current: !!x.is_current, at: x.built_at })));
 
   // 性格（成长块）的变化
   add('growth', cnt('growth'), rows('growth', 't.version, t.change_json, t.evidence_ids, t.created_at, t.revoked_at', ' ORDER BY t.version DESC').map((x) => {
     const c = safeJson(x.change_json, {});
-    return { version: x.version, op: typeof c.op === 'string' ? c.op : null, before: typeof c.before === 'string' ? clip(c.before, 120) : null,
-      after: typeof c.after === 'string' ? clip(c.after, 120) : null, evidence: safeJson(x.evidence_ids, []).length, revokedAt: x.revoked_at ?? null, at: x.created_at };
+    return { version: x.version, op: typeof c.op === 'string' ? c.op : null, before: typeof c.before === 'string' ? clip(c.before, 600) : null,
+      after: typeof c.after === 'string' ? clip(c.after, 600) : null, evidence: safeJson(x.evidence_ids, []).length, revokedAt: x.revoked_at ?? null, at: x.created_at };
   }));
 
   // 夜里回顾做事时总结的经验
   add('lesson', cnt('lesson'), rows('lesson', 't.id, t.text, t.updated_at, t.certainty, t.value', ' ORDER BY t.updated_at DESC, t.id DESC').map((x) => {
     const v = safeJson(x.value, {});
-    return { ref: refOf('assertion', x.id), text: clip(x.text, 160), status: v.status === 'verified' ? 'verified' : 'unverified', at: x.updated_at };
+    return { ref: refOf('assertion', x.id), text: clip(x.text, 400), status: v.status === 'verified' ? 'verified' : 'unverified', at: x.updated_at };
   }));
   return { counts, groups };
 }
